@@ -65,8 +65,7 @@
     <script type="text/babel">
         const { useState, useEffect, useCallback, useRef } = React;
 
-        // Firebase Config — REPLACE WITH YOUR OWN FIREBASE PROJECT CREDENTIALS
-        // See the Firebase Setup Guide for step-by-step instructions
+        // Firebase Config
         const firebaseConfig = {
             apiKey: "AIzaSyD5CGBbHbCb-nv1qYVzvxQQDKddj7JEsIw",
             authDomain: "pokedoke-staff-app.firebaseapp.com",
@@ -342,40 +341,86 @@
         // Menu Data
         const MENU_DATA = [
             {
-                category: "Build Your Own Bowls", categoryEs: "Arma Tu Propio Bowl",
+                category: "Signature Bowls", categoryEs: "Bowls Signature",
                 items: [
-                    { nameEn: "Mini Bowl (1 Scoop)", nameVi: "", descEn: "One protein scoop, choice of base, up to 3 toppings, 2 drizzles", descEs: "Una bola de proteína, elección de base, hasta 3 toppings, 2 salsas", price: "$9.99" },
-                    { nameEn: "Small Bowl (2 Scoops)", nameVi: "", descEn: "Two protein scoops, choice of base, up to 3 toppings, 2 drizzles", descEs: "Dos bolas de proteína, elección de base, hasta 3 toppings, 2 salsas", price: "$14.50" },
-                    { nameEn: "Regular Bowl (3 Scoops)", nameVi: "", descEn: "Three protein scoops, choice of base, up to 4 toppings, 2 drizzles", descEs: "Tres bolas de proteína, elección de base, hasta 4 toppings, 2 salsas", price: "$17.50" },
-                    { nameEn: "Large Bowl (4 Scoops)", nameVi: "", descEn: "Four protein scoops, choice of base, up to 4 toppings, 2 drizzles", descEs: "Cuatro bolas de proteína, elección de base, hasta 4 toppings, 2 salsas", price: "$19.50" }
+                    { nameEn: "Volcano Bowl", nameVi: "", descEn: "Spicy tuna (RAW), salmon (RAW), crabmeat, cucumbers, onions, pineapple, edamame, green onions, fried onions, spicy mayo, wasabi mayo, togarashi, masago — white rice", descEs: "Atún picante (CRUDO), salmón (CRUDO), cangrejo, pepinos, cebollas, piña, edamame, cebollín, cebolla frita, mayo picante, mayo wasabi, togarashi, masago — arroz blanco", price: "$18.95" },
+                    { nameEn: "PokeDoke Bowl", nameVi: "", descEn: "Ahi tuna (RAW), cucumbers, onions, pineapple, edamame, crabmeat, masago, seaweed salad, fried onions, spicy mayo, eel sauce, sesame seeds — white rice", descEs: "Atún ahi (CRUDO), pepinos, cebollas, piña, edamame, cangrejo, masago, ensalada de algas, cebolla frita, mayo picante, salsa anguila, semillas de sésamo — arroz blanco", price: "$18.95" },
+                    { nameEn: "Shrimptastic Bowl", nameVi: "", descEn: "Shrimp, tempura shrimp, cucumbers, onions, mango, green onions, purple cabbage, carrots, crabmeat, fried onions, sweet thai chili — white rice", descEs: "Camarón, camarón tempura, pepinos, cebollas, mango, cebollín, col morada, zanahorias, cangrejo, cebolla frita, chile thai dulce — arroz blanco", price: "$18.95" },
+                    { nameEn: "Cali Bowl", nameVi: "", descEn: "Crabmeat, cucumbers, avocado, masago, nori, eel sauce, sesame seeds — white rice", descEs: "Cangrejo, pepinos, aguacate, masago, nori, salsa anguila, semillas de sésamo — arroz blanco", price: "$16.95" },
+                    { nameEn: "King Maui Moa Bowl", nameVi: "", descEn: "Batter fried chicken, sweet & tangy glaze, pineapple, shredded carrots, purple cabbage, green onions, sesame seeds — white rice", descEs: "Pollo frito empanizado, glaseado agridulce, piña, zanahoria rallada, col morada, cebollín, semillas de sésamo — arroz blanco", price: "$15.95" },
+                    { nameEn: "Karaage Bowl", nameVi: "", descEn: "Japanese fried chicken, shredded carrots, purple cabbage, green onions, choice of drizzle — white rice", descEs: "Pollo frito japonés, zanahoria rallada, col morada, cebollín, elección de salsa — arroz blanco", price: "$15.95" }
+                ]
+            },
+            {
+                category: "Build Your Bowl", categoryEs: "Arma Tu Bowl",
+                items: [
+                    { nameEn: "Mini (1 Protein, 3 Toppings)", nameVi: "", descEn: "Choose base, protein, mix-ins, poke sauce, toppings, drizzle & shakers", descEs: "Elige base, proteína, mix-ins, salsa poke, toppings, salsa y especias", price: "$11.95" },
+                    { nameEn: "Small (2 Proteins, 5 Toppings)", nameVi: "", descEn: "Choose base, protein, mix-ins, poke sauce, toppings, drizzle & shakers", descEs: "Elige base, proteína, mix-ins, salsa poke, toppings, salsa y especias", price: "$15.95" },
+                    { nameEn: "Regular (3 Proteins, 6 Toppings)", nameVi: "", descEn: "Choose base, protein, mix-ins, poke sauce, toppings, drizzle & shakers", descEs: "Elige base, proteína, mix-ins, salsa poke, toppings, salsa y especias", price: "$18.95" },
+                    { nameEn: "Large (4 Proteins, Unlimited Toppings)", nameVi: "", descEn: "Choose base, protein, mix-ins, poke sauce, toppings, drizzle & shakers", descEs: "Elige base, proteína, mix-ins, salsa poke, toppings, salsa y especias", price: "$21.95" },
+                    { nameEn: "Extra Protein", nameVi: "", descEn: "Add an extra scoop of any protein", descEs: "Agrega una porción extra de cualquier proteína", price: "+$3.00" },
+                    { nameEn: "Extra Topping", nameVi: "", descEn: "Add an additional topping", descEs: "Agrega un topping adicional", price: "+$1.00" }
+                ]
+            },
+            {
+                category: "BYO — Bases & Proteins", categoryEs: "Arma — Bases y Proteínas",
+                items: [
+                    { nameEn: "Bases", nameVi: "", descEn: "White rice (GF), Brown rice (GF), Spring mix (GF), Soba noodles, Wonton chips", descEs: "Arroz blanco (GF), Arroz integral (GF), Mix de verduras (GF), Fideos soba, Chips de wonton", price: "" },
+                    { nameEn: "Proteins", nameVi: "", descEn: "Ahi tuna (GF, RAW), Salmon (GF, RAW), Spicy tuna (GF, RAW), Chicken (GF), Shrimp (GF), Tofu (GF)", descEs: "Atún ahi (GF, CRUDO), Salmón (GF, CRUDO), Atún picante (GF, CRUDO), Pollo (GF), Camarón (GF), Tofu (GF)", price: "" },
+                    { nameEn: "Premium Proteins", nameVi: "", descEn: "Soft-shell crab (+$4.50), Tempura shrimp (+$2.50), Fried ahi or salmon", descEs: "Cangrejo de caparazón suave (+$4.50), Camarón tempura (+$2.50), Atún o salmón frito", price: "" },
+                    { nameEn: "Toppings", nameVi: "", descEn: "Avocado (GF, +$2), Corn (GF), Masago, Edamame (GF), Fried onions, Ginger (GF), Kimchi (GF, +$1.50), Mango (GF), Pineapple (GF), Purple cabbage (GF), Seaweed salad, Shredded carrots (GF), Green onions (GF), Crabmeat", descEs: "Aguacate (GF, +$2), Maíz (GF), Masago, Edamame (GF), Cebolla frita, Jengibre (GF), Kimchi (GF, +$1.50), Mango (GF), Piña (GF), Col morada (GF), Ensalada de algas, Zanahoria rallada (GF), Cebollín (GF), Cangrejo", price: "" },
+                    { nameEn: "Drizzles", nameVi: "", descEn: "Spicy mayo (GF), Wasabi mayo (GF), Teriyaki mayo, Sweet thai chili (GF), Sriracha (GF), Eel sauce, Ponzu, Gochujang", descEs: "Mayo picante (GF), Mayo wasabi (GF), Mayo teriyaki, Chile thai dulce (GF), Sriracha (GF), Salsa anguila, Ponzu, Gochujang", price: "" },
+                    { nameEn: "Shakers", nameVi: "", descEn: "Sesame seeds, Furikake, Togarashi", descEs: "Semillas de sésamo, Furikake, Togarashi", price: "" }
                 ]
             },
             {
                 category: "Sushi Push Pops", categoryEs: "Sushi Push Pops",
                 items: [
-                    { nameEn: "Spicy Tuna Crunch Pop", nameVi: "", descEn: "Spicy tuna, sushi rice, tempura flakes, sriracha aioli", descEs: "Atún picante, arroz sushi, hojuelas tempura, aioli sriracha", price: "$8.99" },
-                    { nameEn: "Salmon Avocado Pop", nameVi: "", descEn: "Fresh salmon, avocado, sushi rice, sesame, ponzu", descEs: "Salmón fresco, aguacate, arroz sushi, sésamo, ponzu", price: "$8.99" },
-                    { nameEn: "Shrimp Tempura Pop", nameVi: "", descEn: "Shrimp tempura, sushi rice, eel sauce, masago", descEs: "Camarón tempura, arroz sushi, salsa anguila, masago", price: "$8.99" },
-                    { nameEn: "California Pop", nameVi: "", descEn: "Crab, avocado, cucumber, sushi rice, spicy mayo", descEs: "Cangrejo, aguacate, pepino, arroz sushi, mayo picante", price: "$7.99" }
+                    { nameEn: "The Cali", nameVi: "", descEn: "California roll — cucumber, crabmeat, avocado. Choice of sauce", descEs: "Rollo California — pepino, cangrejo, aguacate. Elección de salsa", price: "$12" },
+                    { nameEn: "Sunset Roll", nameVi: "", descEn: "Salmon roll — cucumber, crabmeat, avocado. Choice of sauce", descEs: "Rollo de salmón — pepino, cangrejo, aguacate. Elección de salsa", price: "$15" },
+                    { nameEn: "Lava Tube", nameVi: "", descEn: "Spicy tuna roll — cucumber, crabmeat, avocado. Choice of sauce", descEs: "Rollo de atún picante — pepino, cangrejo, aguacate. Elección de salsa", price: "$14" },
+                    { nameEn: "Crunchy Wave", nameVi: "", descEn: "Tempura shrimp roll — cucumber, crabmeat, avocado. Choice of sauce", descEs: "Rollo de camarón tempura — pepino, cangrejo, aguacate. Elección de salsa", price: "$14" },
+                    { nameEn: "Kani King", nameVi: "", descEn: "Spider roll — cucumber, crabmeat, avocado. Choice of sauce", descEs: "Rollo araña — pepino, cangrejo, aguacate. Elección de salsa", price: "$16" },
+                    { nameEn: "Kim-Bap", nameVi: "", descEn: "Korean-style rice roll (no avocado). Choice of sauce", descEs: "Rollo de arroz estilo coreano (sin aguacate). Elección de salsa", price: "$10" }
                 ]
             },
             {
-                category: "Sides & Appetizers", categoryEs: "Acompañamientos y Aperitivos",
+                category: "Island Plates", categoryEs: "Platos de la Isla",
                 items: [
-                    { nameEn: "Miso Soup", nameVi: "", descEn: "Traditional miso with tofu and seaweed", descEs: "Miso tradicional con tofu y algas", price: "$3.99" },
-                    { nameEn: "Edamame", nameVi: "", descEn: "Steamed with sea salt", descEs: "Al vapor con sal de mar", price: "$4.99" },
-                    { nameEn: "Gyoza (6pc)", nameVi: "", descEn: "Pan-fried pork dumplings", descEs: "Dumplings de cerdo a la plancha", price: "$6.99" },
-                    { nameEn: "Crab Rangoons (3pc)", nameVi: "", descEn: "Cream cheese filled, fried crispy", descEs: "Rellenos de queso crema, fritos crujientes", price: "$5.99" },
-                    { nameEn: "PokeDoke Wings", nameVi: "", descEn: "Choice of sauce — ask about today's flavors", descEs: "Elección de salsa — pregunta por los sabores del día", price: "$12.00" }
+                    { nameEn: "Kalbi Short Ribs", nameVi: "", descEn: "Served with house mac salad & steamed rice", descEs: "Servido con ensalada de macarrones y arroz al vapor", price: "$23.95" },
+                    { nameEn: "BBQ Chicken Plate", nameVi: "", descEn: "Served with house mac salad & steamed rice", descEs: "Servido con ensalada de macarrones y arroz al vapor", price: "$15.95" }
                 ]
             },
             {
-                category: "Bubble Tea & Drinks", categoryEs: "Bubble Tea y Bebidas",
+                category: "Starters & Sides", categoryEs: "Entradas y Acompañamientos",
                 items: [
-                    { nameEn: "Classic Milk Tea", nameVi: "", descEn: "Black tea with non-dairy creamer, add boba", descEs: "Té negro con crema no láctea, agrega boba", price: "$5.99" },
-                    { nameEn: "Taro Milk Tea", nameVi: "", descEn: "Taro flavored with non-dairy creamer", descEs: "Sabor taro con crema no láctea", price: "$5.99" },
-                    { nameEn: "Fruit Tea", nameVi: "", descEn: "Seasonal flavors — no creamer, lighter option", descEs: "Sabores de temporada — sin crema, opción más ligera", price: "$5.99" },
-                    { nameEn: "Fresh Lemonade", nameVi: "", descEn: "House-made with real lemons", descEs: "Hecha en casa con limones reales", price: "$3.99" }
+                    { nameEn: "Chicken Wings (6)", nameVi: "", descEn: "PokeDoke sauce or sweet thai chili", descEs: "Salsa PokeDoke o chile thai dulce", price: "$12.95" },
+                    { nameEn: "Gyoza (6)", nameVi: "", descEn: "Pan-fried, served with dipping sauce", descEs: "A la plancha, servidos con salsa", price: "$7.95" },
+                    { nameEn: "Crab Rangoons (3)", nameVi: "", descEn: "Crispy wonton, creamy crab filling", descEs: "Wonton crujiente, relleno cremoso de cangrejo", price: "$5.95" },
+                    { nameEn: "Tempura Shrimp (2)", nameVi: "", descEn: "Lightly battered, served with ponzu", descEs: "Ligeramente empanizado, servido con ponzu", price: "$5.95" },
+                    { nameEn: "Soft-Shell Crab", nameVi: "", descEn: "Crispy whole crab, seasoned", descEs: "Cangrejo entero crujiente, sazonado", price: "$7.95" },
+                    { nameEn: "Seaweed Salad", nameVi: "", descEn: "Sesame-dressed fresh seaweed (GF)", descEs: "Algas frescas con sésamo (GF)", price: "$5.95" },
+                    { nameEn: "Island Fries", nameVi: "", descEn: "Salt · togarashi · furikake · red hot ripplets", descEs: "Sal · togarashi · furikake · red hot ripplets", price: "$4.95" },
+                    { nameEn: "Macaroni Salad", nameVi: "", descEn: "House-made Hawaiian style", descEs: "Estilo hawaiano hecho en casa", price: "$4.95" },
+                    { nameEn: "Wonton Chips", nameVi: "", descEn: "Crispy, lightly salted", descEs: "Crujientes, ligeramente salados", price: "$4.95" }
+                ]
+            },
+            {
+                category: "Entrées", categoryEs: "Combos",
+                items: [
+                    { nameEn: "Entrée 1 — Bowl + Side", nameVi: "", descEn: "Any bowl with a side (excludes wings)", descEs: "Cualquier bowl con un acompañamiento (excluye alitas)", price: "from $23.95" },
+                    { nameEn: "Entrée 2 — Bowl + Boba", nameVi: "", descEn: "Any bowl with a boba tea", descEs: "Cualquier bowl con un boba tea", price: "from $24.95" },
+                    { nameEn: "Entrée 3 — Bowl + Side + Boba ⭐", nameVi: "", descEn: "Most Popular! Any bowl with a side and boba tea", descEs: "¡Más Popular! Cualquier bowl con acompañamiento y boba tea", price: "from $29.95" }
+                ]
+            },
+            {
+                category: "Boba Tea", categoryEs: "Boba Tea",
+                items: [
+                    { nameEn: "Milk Tea (Regular)", nameVi: "", descEn: "Assam black, Green, Thai, Jasmine, Taro, Watermelon, Honeydew, Mango, Blueberry, Strawberry, Chocolate, Sakura rose, Brown sugar, Cappuccino", descEs: "Assam negro, Verde, Thai, Jazmín, Taro, Sandía, Melón, Mango, Mora azul, Fresa, Chocolate, Sakura rosa, Azúcar morena, Cappuccino", price: "$6.75" },
+                    { nameEn: "Milk Tea (Large)", nameVi: "", descEn: "Same flavors as regular, larger size", descEs: "Mismos sabores que regular, tamaño grande", price: "$7.75" },
+                    { nameEn: "Fruit Tea (Regular)", nameVi: "", descEn: "Peach, Strawberry, Passionfruit, Lychee, Green grape — no creamer", descEs: "Durazno, Fresa, Maracuyá, Lychee, Uva verde — sin crema", price: "$6.75" },
+                    { nameEn: "Fruit Tea (Large)", nameVi: "", descEn: "Same flavors as regular, larger size", descEs: "Mismos sabores que regular, tamaño grande", price: "$7.75" },
+                    { nameEn: "Add-ons", nameVi: "", descEn: "Extra boba, Popping boba (mango, strawberry, lychee), Lychee jelly", descEs: "Boba extra, Boba explosiva (mango, fresa, lychee), Gelatina de lychee", price: "+$0.50" }
                 ]
             }
         ];
