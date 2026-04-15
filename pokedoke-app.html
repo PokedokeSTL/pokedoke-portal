@@ -81,17 +81,27 @@
         const storage = firebase.storage();
 
         // Staff List
-        const ADMIN_NAMES = ["Owner Name", "Manager Name"];
+        const ADMIN_NAMES = ["Steve Shih", "Ashley Word", "Alex Horsford", "Paul Ferrer", "Isabella Garza"];
         const isAdmin = (name) => ADMIN_NAMES.includes(name);
 
         const DEFAULT_STAFF = [
-            { id: 1, name: "Owner Name", role: "Owner", pin: "0000" },
-            { id: 2, name: "Manager Name", role: "Manager", pin: "1111" },
-            { id: 3, name: "Sample Staff 1", role: "FOH", pin: "1234" },
-            { id: 4, name: "Sample Staff 2", role: "FOH", pin: "2345" },
-            { id: 5, name: "Sample Staff 3", role: "BOH", pin: "3456" },
-            { id: 6, name: "Sample Staff 4", role: "Prep", pin: "4567" },
-            { id: 7, name: "Sample Staff 5", role: "Shift Lead", pin: "5678" },
+            // Owner
+            { id: 1, name: "Steve Shih", role: "Owner", pin: "8319" },
+            // CWE
+            { id: 2, name: "Ashley Word", role: "Manager", pin: "4736" },
+            { id: 3, name: "Alex Horsford", role: "Manager", pin: "7918" },
+            { id: 4, name: "Reeves Word", role: "Dishwasher", pin: "3205" },
+            { id: 5, name: "Imani Webb", role: "Line Server", pin: "8366" },
+            { id: 6, name: "Sheniel Dixon", role: "Line Server", pin: "4880" },
+            // Kirkwood
+            { id: 7, name: "Paul Ferrer", role: "Manager", pin: "8611" },
+            { id: 8, name: "Isabella Garza", role: "Manager", pin: "5098" },
+            { id: 9, name: "Sujit Sengupta", role: "Line Server", pin: "3391" },
+            { id: 10, name: "Ajit Sengupta", role: "Line Server", pin: "3392" },
+            { id: 11, name: "Saury Dudenhoeffer", role: "Line Server", pin: "0363" },
+            { id: 12, name: "Lillian Roepke", role: "Line Server", pin: "0520" },
+            { id: 13, name: "Mary Wyatt Drayton", role: "Line Server", pin: "5178" },
+            { id: 14, name: "Emma Zarky", role: "Line Server", pin: "0809" },
         ];
 
         // Training Modules
