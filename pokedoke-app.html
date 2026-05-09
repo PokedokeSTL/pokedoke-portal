@@ -1170,6 +1170,7 @@
                     await db.collection("ops").doc("inventory").set({ counts: newInv, customInventory, date: new Date().toISOString() });
 
                     setAuditCounts({});
+                    await db.collection("ops").doc("latestAlert").set({type:"audit",by:staffName,date:new Date().toISOString(),totalItems:results.length,itemsWithVariance:results.filter(r=>r.variance!==0).length,belowPar:results.filter(r=>r.physicalCount<(parLevels[r.id]||0)).length});
                     alert(language === "es" ? "✅ Auditoría guardada. Inventario actualizado con conteos físicos." : "✅ Audit saved. Inventory updated to physical counts.");
                 } catch(e) { console.error(e); }
                 setAuditSaving(false);
@@ -2351,6 +2352,10 @@
 
                             {invViewMode === "count" && (
                                 <div className="space-y-4">
+                                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                        <p className="font-bold text-gray-800 text-sm">📊 {language==="es"?"Conteo Completo":"Full Count"}</p>
+                                        <p className="text-xs text-gray-400 mt-1">{language==="es"?"Usa esto una vez por semana. Cuenta físicamente cada artículo y ajusta el número con los botones + / −. Esto actualiza el inventario del sistema y alimenta la lista de pedidos automáticamente.":"Use this once a week. Physically count each item and adjust the number with the + / − buttons. This updates the system inventory and automatically feeds the Order list."}</p>
+                                    </div>
                                     <div className="flex justify-between items-center">
                                         {lastUpdated.inventory && <p className="text-xs text-gray-400">{t("lastUpdated",language)}: {lastUpdated.inventory}</p>}
                                         {isOwner(staffName) && (
@@ -2435,28 +2440,14 @@
                                             </div>
                                         </div>
                                     ))}
-                                    {!invEditMode&&(
-                                        <div className="sticky bottom-20 pt-3">
-                                            {showSaveConfirm?(
-                                                <div className="bg-white border-2 border-poke-600 rounded-2xl p-4 shadow-xl">
-                                                    <p className="text-center text-base font-bold text-gray-800 mb-4">{language==="es"?"¿Guardar conteo y reiniciar?":"Save count and reset?"}</p>
-                                                    <div className="flex gap-3">
-                                                        <button onClick={saveAndResetInventory} disabled={inventorySaving} className="flex-1 py-3 rounded-xl font-bold bg-poke-600 text-white">{inventorySaving?"...":"✅ "+(language==="es"?"Sí":"Yes")}</button>
-                                                        <button onClick={()=>setShowSaveConfirm(false)} className="flex-1 py-3 rounded-xl font-bold bg-gray-200 text-gray-700">{language==="es"?"Cancelar":"Cancel"}</button>
-                                                    </div>
-                                                </div>
-                                            ):(
-                                                <button onClick={()=>setShowSaveConfirm(true)} className="w-full py-4 bg-poke-600 text-white font-bold rounded-2xl shadow-lg active:scale-95 transition">📸 {language==="es"?"Guardar Conteo":"Save Count Snapshot"}</button>
-                                            )}
-                                        </div>
-                                    )}
                                 </div>
                             )}
 
                             {invViewMode === "quick" && (
                                 <div className="space-y-4">
-                                    <div className="bg-poke-50 rounded-2xl p-3 border border-poke-100">
-                                        <p className="text-sm text-poke-700 font-semibold">⚡ {language==="es"?"Toca el estado de cada artículo":"Tap the status for each item"}</p>
+                                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                        <p className="font-bold text-gray-800 text-sm">⚡ {language==="es"?"Revisión Rápida — Diario":"Quick Check — Daily"}</p>
+                                        <p className="text-xs text-gray-400 mt-1">{language==="es"?"Usa esto todos los días. Solo toca ✅ Bien, ⚠️ Bajo, o ❌ Agotado para cada artículo. Toma 2 minutos. Steve recibe una notificación cuando lo guardes para saber qué pedir.":"Use this every day. Just tap ✅ Good, ⚠️ Low, or ❌ Out for each item. Takes 2 minutes. Steve gets notified when you save so he knows what to order."}</p>
                                     </div>
                                     {customInventory.map(category=>(
                                         <div key={category.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -2479,7 +2470,12 @@
                                             </div>
                                         </div>
                                     ))}
-                                    <button onClick={async()=>{try{await db.collection("quickCounts").doc(new Date().toISOString().split("T")[0]).set({counts:quickCounts,countedBy:staffName,date:new Date().toISOString()});alert(language==="es"?"¡Guardado!":"Saved!");}catch(e){console.error(e);}}}
+                                    <button onClick={async()=>{try{
+                                        await db.collection("quickCounts").doc(new Date().toISOString().split("T")[0]).set({counts:quickCounts,countedBy:staffName,date:new Date().toISOString()});
+                                        const lowItems=Object.entries(quickCounts).filter(([k,v])=>v==="low"||v==="out");
+                                        await db.collection("ops").doc("latestAlert").set({type:"quickcheck",by:staffName,date:new Date().toISOString(),lowCount:lowItems.length,outCount:Object.values(quickCounts).filter(v=>v==="out").length});
+                                        alert(language==="es"?"¡Guardado!":"Saved!");
+                                    }catch(e){console.error(e);}}}
                                         className="w-full py-4 bg-poke-600 text-white font-bold rounded-2xl shadow-lg active:scale-95 transition">💾 {language==="es"?"Guardar Revisión":"Save Quick Check"}</button>
                                 </div>
                             )}
@@ -2489,6 +2485,10 @@
                                 const pending=pendingOrders.filter(o=>o.status==="pending");
                                 return (
                                     <div className="space-y-4">
+                                        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                            <p className="font-bold text-gray-800 text-sm">📦 {language==="es"?"Lista de Pedidos — Automática":"Order List — Auto-Generated"}</p>
+                                            <p className="text-xs text-gray-400 mt-1">{language==="es"?"Esta lista se genera automáticamente comparando tu inventario actual con los niveles PAR. Los artículos se agrupan por proveedor. Cuando hagas el pedido, toca \"Marcar como Pedido\" para que aparezca en la pestaña Recibir cuando llegue la entrega.":"This list auto-generates by comparing your current inventory against PAR levels. Items are grouped by supplier. When you place the order, tap \"Mark as Ordered\" so it appears in the Receive tab when the delivery arrives."}</p>
+                                        </div>
                                         <div className={"rounded-2xl p-4 border "+(total===0?"bg-green-50 border-green-200":"bg-gold-50 border-gold-200")}>
                                             <p className="font-bold text-lg">{total===0?"✅ "+(language==="es"?"Todo en stock":"All stocked up!"):"📦 "+total+" "+(language==="es"?"por pedir":"to order")}</p>
                                             <p className="text-xs text-gray-500 mt-1">{language==="es"?"Basado en conteo vs PAR":"Based on count vs PAR levels"}</p>
@@ -2539,7 +2539,8 @@
                             {invViewMode === "waste" && (
                                 <div className="space-y-4">
                                     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
-                                        <p className="font-bold text-gray-800">🗑️ {language==="es"?"Registrar Merma":"Log Waste"}</p>
+                                        <p className="font-bold text-gray-800 text-sm">🗑️ {language==="es"?"Registro de Merma":"Waste Log"}</p>
+                                        <p className="text-xs text-gray-400">{language==="es"?"Registra cualquier artículo que se tire o desperdicie. Selecciona el artículo, cantidad, y razón. Esto nos ayuda a identificar dónde estamos perdiendo dinero y mejorar con el tiempo.":"Log any item that gets thrown away or wasted. Select the item, quantity, and reason. This helps us identify where we're losing money and improve over time."}</p>
                                         <select value={wasteItem} onChange={e=>setWasteItem(e.target.value)} className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white">
                                             <option value="">{language==="es"?"Seleccionar...":"Select item..."}</option>
                                             {customInventory.map(cat=>(<optgroup key={cat.id} label={language==="es"?cat.nameEs:cat.name}>{cat.items.map(item=>(<option key={item.id} value={item.name}>{language==="es"&&item.nameEs?item.nameEs:item.name}</option>))}</optgroup>))}
@@ -2572,6 +2573,10 @@
 
                             {invViewMode === "receive" && (
                                 <div className="space-y-4">
+                                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                        <p className="font-bold text-gray-800 text-sm">📥 {language==="es"?"Recibir Entregas":"Receive Deliveries"}</p>
+                                        <p className="text-xs text-gray-400 mt-1">{language==="es"?"Cuando llegue una entrega, selecciona el pedido pendiente abajo. Los artículos se cargan automáticamente — verifica las cantidades, ajusta si algo falta, adjunta la foto del recibo, y confirma. El inventario se actualiza automáticamente.":"When a delivery arrives, select the pending order below. Items load automatically — verify quantities, adjust if anything is short, attach the receipt photo, and confirm. Inventory updates automatically."}</p>
+                                    </div>
                                     {/* Pending Orders to Receive */}
                                     {(()=>{
                                         const pending = pendingOrders.filter(o=>o.status==="pending");
@@ -2716,8 +2721,9 @@
 
                                     {!auditViewHistory ? (
                                         <div className="space-y-4">
-                                            <div className="bg-poke-50 rounded-2xl p-3 border border-poke-100">
-                                                <p className="text-sm text-poke-700 font-semibold">{language==="es"?"Cuenta físicamente cada artículo e ingresa la cantidad real. El sistema comparará con lo que cree que tienes.":"Physically count each item and enter the actual quantity. The system will compare against what it thinks you have."}</p>
+                                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                                <p className="font-bold text-gray-800 text-sm">🔍 {language==="es"?"Auditoría — Semanal":"Audit — Weekly"}</p>
+                                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Usa esto una vez por semana. Cuenta físicamente cada artículo e ingresa la cantidad real. El sistema compara con lo que cree que tienes y muestra las diferencias. Al guardar, el inventario se actualiza con tus conteos físicos y Steve recibe una notificación.":"Use this once a week. Physically count each item and enter the actual quantity. The system compares against what it thinks you have and shows variances. When saved, inventory updates to your physical counts and Steve gets notified."}</p>
                                             </div>
 
                                             {customInventory.map(category=>(
@@ -4936,6 +4942,15 @@
                 return () => unsubscribe();
             }, []);
 
+            // Inventory alert notification
+            const [inventoryAlert, setInventoryAlert] = useState(null);
+            useEffect(() => {
+                const unsub = db.collection("ops").doc("latestAlert").onSnapshot(doc => {
+                    if (doc.exists) setInventoryAlert(doc.data());
+                });
+                return () => unsub();
+            }, []);
+
             const staffIsAdmin = isAdmin(staffName);
             const staffIsOwner = isOwner(staffName);
             const canViewRecipes = canAccessRecipes(staffName, isAtPokedoke);
@@ -4979,6 +4994,44 @@
                     <div className="max-w-lg mx-auto">
                         {activeTab === "home" && (
                             <div className="p-4 pb-24 animate-in">
+                                {/* Inventory Alert Banner — Owner only */}
+                                {staffIsOwner && inventoryAlert && (()=>{
+                                    const timeSince = Math.round((Date.now() - new Date(inventoryAlert.date).getTime()) / 3600000);
+                                    const timeLabel = timeSince < 1 ? (language==="es"?"hace un momento":"just now") : timeSince < 24 ? timeSince+"h "+(language==="es"?"atrás":"ago") : Math.round(timeSince/24)+"d "+(language==="es"?"atrás":"ago");
+                                    return (
+                                        <button onClick={()=>setActiveTab("operations")} className="w-full mb-4 text-left">
+                                            <div className={"rounded-2xl p-4 border shadow-sm " + (
+                                                (inventoryAlert.outCount > 0 || inventoryAlert.belowPar > 0) ? "bg-red-50 border-red-200" :
+                                                inventoryAlert.lowCount > 0 ? "bg-yellow-50 border-yellow-200" :
+                                                "bg-green-50 border-green-200"
+                                            )}>
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <p className="font-bold text-gray-800 text-sm">
+                                                            {inventoryAlert.type === "quickcheck" ? "⚡ " + (language==="es"?"Revisión Rápida":"Quick Check") : "🔍 " + (language==="es"?"Auditoría":"Audit")}
+                                                        </p>
+                                                        <p className="text-xs text-gray-500 mt-0.5">{language==="es"?"Por":"By"} {inventoryAlert.by} · {timeLabel}</p>
+                                                    </div>
+                                                    <span className="text-xs text-poke-600 font-bold">{language==="es"?"Ver Pedidos →":"View Orders →"}</span>
+                                                </div>
+                                                {inventoryAlert.type === "quickcheck" ? (
+                                                    <div className="flex gap-3 mt-2">
+                                                        {inventoryAlert.outCount > 0 && <span className="text-xs font-bold text-red-600">❌ {inventoryAlert.outCount} {language==="es"?"agotados":"out of stock"}</span>}
+                                                        {inventoryAlert.lowCount > 0 && <span className="text-xs font-bold text-yellow-600">⚠️ {inventoryAlert.lowCount} {language==="es"?"bajos":"running low"}</span>}
+                                                        {inventoryAlert.outCount === 0 && inventoryAlert.lowCount === 0 && <span className="text-xs font-bold text-green-600">✅ {language==="es"?"Todo en stock":"All stocked"}</span>}
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex gap-3 mt-2">
+                                                        {inventoryAlert.itemsWithVariance > 0 && <span className="text-xs font-bold text-orange-600">📊 {inventoryAlert.itemsWithVariance} {language==="es"?"diferencias":"variances"}</span>}
+                                                        {inventoryAlert.belowPar > 0 && <span className="text-xs font-bold text-red-600">📦 {inventoryAlert.belowPar} {language==="es"?"bajo PAR":"below PAR"}</span>}
+                                                        {inventoryAlert.itemsWithVariance === 0 && <span className="text-xs font-bold text-green-600">✅ {language==="es"?"Sin diferencias":"No variances"}</span>}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </button>
+                                    );
+                                })()}
+
                                 <h2 className="text-2xl font-bold text-gray-800 mb-1">{t("welcome", language)}, {staffName.split(" ")[0]}!</h2>
                                 <p className="text-sm text-gray-400 mb-5">{language === "es" ? "¿Qué necesitas hoy?" : "What do you need today?"}</p>
                                 <div className="grid grid-cols-2 gap-3">
