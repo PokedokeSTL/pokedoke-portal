@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0891b2">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Pokedoke Staff Portal</title>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -46,6 +50,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fredoka:wght@600;700&display=swap" rel="stylesheet">
@@ -121,6 +126,80 @@
         const db = firebase.firestore();
         const storage = firebase.storage();
 
+        // --- Push Notification System ---
+        let messaging = null;
+        try { messaging = firebase.messaging(); } catch(e) { console.log("FCM not available:", e); }
+
+        // Register service worker for push notifications
+        async function registerServiceWorker() {
+            if ('serviceWorker' in navigator) {
+                try {
+                    const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+                    console.log('Service Worker registered:', registration);
+                    return registration;
+                } catch(e) { console.log('SW registration failed:', e); }
+            }
+            return null;
+        }
+
+        // Request notification permission and save FCM token
+        async function requestNotificationPermission(staffName) {
+            if (!messaging || !('Notification' in window)) return null;
+            try {
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') return null;
+                const swReg = await registerServiceWorker();
+                if (!swReg) return null;
+
+                // Get VAPID key from Firebase config doc (set up in console)
+                let vapidKey = null;
+                try {
+                    const configDoc = await db.collection("ops").doc("pushConfig").get();
+                    if (configDoc.exists) vapidKey = configDoc.data().vapidKey;
+                } catch(e) {}
+
+                if (!vapidKey) {
+                    console.log("No VAPID key configured. Set it in Firebase: ops/pushConfig/vapidKey");
+                    return null;
+                }
+
+                const token = await messaging.getToken({ vapidKey, serviceWorkerRegistration: swReg });
+                if (token) {
+                    // Save token to Firestore linked to this staff member
+                    await db.collection("fcmTokens").doc(staffName.replace(/\s/g, "_")).set({
+                        token, name: staffName, updatedAt: new Date().toISOString(), platform: navigator.userAgent
+                    }, { merge: true });
+                    console.log("FCM token saved for", staffName);
+                }
+                return token;
+            } catch(e) { console.log("Notification setup error:", e); return null; }
+        }
+
+        // Send notification by writing to Firestore (Cloud Function picks it up and sends)
+        async function sendNotification(recipientNames, title, body, data = {}) {
+            try {
+                await db.collection("notificationQueue").add({
+                    recipients: recipientNames, // array of staff names, or ["all"] for everyone
+                    title, body, data,
+                    sentAt: new Date().toISOString(),
+                    status: "pending"
+                });
+            } catch(e) { console.error("Error queuing notification:", e); }
+        }
+
+        // Show in-app notification (foreground)
+        if (messaging) {
+            messaging.onMessage((payload) => {
+                console.log("Foreground message:", payload);
+                if (Notification.permission === "granted") {
+                    new Notification(payload.notification?.title || "PokeDoke", {
+                        body: payload.notification?.body || "",
+                        icon: "🐟"
+                    });
+                }
+            });
+        }
+
         // Staff List
         const ADMIN_NAMES = ["Steve Shih", "Ashley Word", "Alex Horsford", "Paul Ferrer", "Isabella Garza"];
         const isAdmin = (name) => ADMIN_NAMES.includes(name);
@@ -133,22 +212,22 @@
 
         const DEFAULT_STAFF = [
             // Owner
-            { id: 1, name: "Steve Shih", role: "Owner", pin: "8319" },
+            { id: 1, name: "Steve Shih", role: "Owner", pin: "8319", location: "all" },
             // CWE
-            { id: 2, name: "Ashley Word", role: "Manager", pin: "4736" },
-            { id: 3, name: "Alex Horsford", role: "Manager", pin: "7918" },
-            { id: 4, name: "Reeves Word", role: "Dishwasher", pin: "3205" },
-            { id: 5, name: "Imani Webb", role: "Line Server", pin: "8366" },
-            { id: 6, name: "Sheniel Dixon", role: "Line Server", pin: "4880" },
+            { id: 2, name: "Ashley Word", role: "Manager", pin: "4736", location: "cwe" },
+            { id: 3, name: "Alex Horsford", role: "Manager", pin: "7918", location: "cwe" },
+            { id: 4, name: "Reeves Word", role: "Dishwasher", pin: "3205", location: "cwe" },
+            { id: 5, name: "Imani Webb", role: "Line Server", pin: "8366", location: "cwe" },
+            { id: 6, name: "Sheniel Dixon", role: "Line Server", pin: "4880", location: "cwe" },
             // Kirkwood
-            { id: 7, name: "Paul Ferrer", role: "Manager", pin: "8611" },
-            { id: 8, name: "Isabella Garza", role: "Manager", pin: "5098" },
-            { id: 9, name: "Sujit Sengupta", role: "Line Server", pin: "3391" },
-            { id: 10, name: "Ajit Sengupta", role: "Line Server", pin: "3392" },
-            { id: 11, name: "Saury Dudenhoeffer", role: "Line Server", pin: "0363" },
-            { id: 12, name: "Lillian Roepke", role: "Line Server", pin: "0520" },
-            { id: 13, name: "Mary Wyatt Drayton", role: "Line Server", pin: "5178" },
-            { id: 14, name: "Emma Zarky", role: "Line Server", pin: "0809" },
+            { id: 7, name: "Paul Ferrer", role: "Manager", pin: "8611", location: "all" },
+            { id: 8, name: "Isabella Garza", role: "Manager", pin: "5098", location: "kirkwood" },
+            { id: 9, name: "Sujit Sengupta", role: "Line Server", pin: "3391", location: "kirkwood" },
+            { id: 10, name: "Ajit Sengupta", role: "Line Server", pin: "3392", location: "kirkwood" },
+            { id: 11, name: "Saury Dudenhoeffer", role: "Line Server", pin: "0363", location: "kirkwood" },
+            { id: 12, name: "Lillian Roepke", role: "Line Server", pin: "0520", location: "kirkwood" },
+            { id: 13, name: "Mary Wyatt Drayton", role: "Line Server", pin: "5178", location: "kirkwood" },
+            { id: 14, name: "Emma Zarky", role: "Line Server", pin: "0809", location: "kirkwood" },
         ];
 
         // Training Modules
@@ -3380,6 +3459,19 @@
             const DAY_KEYS = ["mon","tue","wed","thu","fri","sat","sun"];
             const LOCATIONS = [{id:"cwe",name:"Central West End"},{id:"kirkwood",name:"Kirkwood"}];
 
+            // Determine user's location from staff list
+            const staffRecord = staffList.find(s => s.name === staffName);
+            const myLocation = staffRecord?.location || "cwe";
+            const canSeeAllLocations = ownerAccess || myLocation === "all";
+            const canToggleLocation = canSeeAllLocations || mgrAccess;
+
+            // Lock non-managers to their own location
+            useEffect(() => {
+                if (!canToggleLocation && myLocation !== "all") {
+                    setSchedLocation(myLocation);
+                }
+            }, [myLocation, canToggleLocation]);
+
             // Week date helpers
             const getWeekStart = (offset) => {
                 const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1 + (offset * 7));
@@ -3451,6 +3543,10 @@
             const publishSchedule = async () => {
                 await db.collection("schedules").doc(weekKey).set({status:"published", publishedBy:staffName, publishedAt:new Date().toISOString()},{merge:true});
                 setSchedStatus("published");
+                // Notify staff at this location
+                const locationStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>s.name);
+                const locName = LOCATIONS.find(l=>l.id===schedLocation)?.name || schedLocation;
+                sendNotification(locationStaff, "📅 New Schedule Published", locName + " schedule for week of " + new Date(weekStart+"T12:00:00").toLocaleDateString() + " is live!", {type:"schedule", weekKey});
             };
 
             const unpublishSchedule = async () => {
@@ -3479,6 +3575,11 @@
 
             const reviewTimeOff = async (id, status) => {
                 await db.collection("timeOffRequests").doc(id).update({status, reviewedBy:staffName, reviewedAt:new Date().toISOString()});
+                const req = timeOffRequests.find(r=>r.id===id);
+                if (req) {
+                    const emoji = status==="approved"?"✅":"❌";
+                    sendNotification([req.employee], emoji + " Time Off " + (status==="approved"?"Approved":"Denied"), "Your request for " + req.startDate + " to " + req.endDate + " was " + status + " by " + staffName, {type:"timeoff"});
+                }
             };
 
             // Shift swaps
@@ -3488,14 +3589,19 @@
 
             const claimSwap = async (swapId) => {
                 await db.collection("shiftSwaps").doc(swapId).update({claimedBy:staffName, status:"pending_approval", claimedAt:new Date().toISOString()});
+                const swap = swapOffers.find(s=>s.id===swapId);
+                if (swap) {
+                    const mgrs = staffList.filter(s=>isAdmin(s.name)).map(s=>s.name);
+                    sendNotification([swap.offeredBy, ...mgrs], "🔄 Shift Swap Claimed", staffName + " wants to take " + swap.offeredBy + "'s shift. Manager approval needed.", {type:"swap"});
+                }
             };
 
             const approveSwap = async (swap) => {
                 await db.collection("shiftSwaps").doc(swap.id).update({status:"approved", approvedBy:staffName, approvedAt:new Date().toISOString()});
-                // Update the shift employee
                 const updated = shifts.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
                 setShifts(updated);
                 await db.collection("schedules").doc(swap.weekKey).set({shifts:updated},{merge:true});
+                sendNotification([swap.offeredBy, swap.claimedBy], "✅ Shift Swap Approved", swap.claimedBy + " now has " + swap.offeredBy + "'s shift. Approved by " + staffName, {type:"swap"});
             };
 
             const calcHours = (start, end) => {
@@ -3520,13 +3626,19 @@
                     {/* ===== SCHEDULE VIEW ===== */}
                     {schedTab === "view" && (
                         <div className="space-y-3">
-                            {/* Location toggle */}
-                            <div className="flex gap-2">
-                                {LOCATIONS.map(loc=>(
-                                    <button key={loc.id} onClick={()=>setSchedLocation(loc.id)}
-                                        className={"flex-1 py-2 rounded-xl text-xs font-bold transition "+(schedLocation===loc.id?"bg-poke-700 text-white":"bg-gray-200 text-gray-600")}>{loc.name}</button>
-                                ))}
-                            </div>
+                            {/* Location toggle - managers/owner only */}
+                            {canToggleLocation ? (
+                                <div className="flex gap-2">
+                                    {LOCATIONS.map(loc=>(
+                                        <button key={loc.id} onClick={()=>setSchedLocation(loc.id)}
+                                            className={"flex-1 py-2 rounded-xl text-xs font-bold transition "+(schedLocation===loc.id?"bg-poke-700 text-white":"bg-gray-200 text-gray-600")}>{loc.name}</button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="bg-poke-50 rounded-xl p-2 text-center">
+                                    <p className="text-sm font-bold text-poke-700">📍 {LOCATIONS.find(l=>l.id===myLocation)?.name || myLocation}</p>
+                                </div>
+                            )}
 
                             {/* Week navigator */}
                             <div className="flex items-center justify-between bg-white rounded-2xl border border-gray-100 p-3 shadow-sm">
@@ -3590,7 +3702,7 @@
                                                 <div className="p-3 bg-green-50 space-y-2">
                                                     <select value={newShiftEmp} onChange={e=>setNewShiftEmp(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white">
                                                         <option value="">{language==="es"?"Seleccionar empleado...":"Select employee..."}</option>
-                                                        {staffList.map(s=>(<option key={s.id} value={s.name}>{s.name} ({s.role})</option>))}
+                                                        {staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>(<option key={s.id} value={s.name}>{s.name} ({s.role})</option>))}
                                                     </select>
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <div><label className="text-xs text-gray-500">{language==="es"?"Inicio":"Start"}</label><input type="time" value={newShiftStart} onChange={e=>setNewShiftStart(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
@@ -3747,12 +3859,14 @@
                                 return (
                                     <div className="space-y-3">
                                         {/* Location + week context */}
+                                        {canToggleLocation && (
                                         <div className="flex gap-2">
                                             {LOCATIONS.map(loc=>(
                                                 <button key={loc.id} onClick={()=>setSchedLocation(loc.id)}
                                                     className={"flex-1 py-2 rounded-xl text-xs font-bold transition "+(schedLocation===loc.id?"bg-poke-700 text-white":"bg-gray-200 text-gray-600")}>{loc.name}</button>
                                             ))}
                                         </div>
+                                        )}
 
                                         {/* Summary card */}
                                         <div className="bg-gradient-to-r from-poke-700 to-poke-600 rounded-2xl p-4 text-white">
@@ -5370,6 +5484,13 @@
             const staffIsAdmin = isAdmin(staffName);
             const staffIsOwner = isOwner(staffName);
             const canViewRecipes = canAccessRecipes(staffName, isAtPokedoke);
+
+            // Request push notification permission when staff logs in
+            useEffect(() => {
+                if (staffName) {
+                    requestNotificationPermission(staffName);
+                }
+            }, [staffName]);
 
             if (!staffName) {
                 return <HomePage onSelectStaff={setStaffName} language={language} setLanguage={setLanguage} staffList={staffList} />;
