@@ -3655,6 +3655,7 @@
             const [shifts, setShifts] = useState([]);
             const [schedStatus, setSchedStatus] = useState("draft");
             const [showAddShift, setShowAddShift] = useState(null);
+            const [newShiftIsBD, setNewShiftIsBD] = useState(false);
             const [editingShift, setEditingShift] = useState(null); // shift being edited via modal
             const [editEmp, setEditEmp] = useState("");
             const [editStart, setEditStart] = useState("");
@@ -3662,6 +3663,10 @@
             const [editRole, setEditRole] = useState("");
             const [editNotes, setEditNotes] = useState("");
             const [editDay, setEditDay] = useState("");
+            const [editIsBD, setEditIsBD] = useState(false);
+            const [closeTime, setCloseTime] = useState("20:00");
+            const [showSettings, setShowSettings] = useState(false);
+            const [tempCloseTime, setTempCloseTime] = useState("20:00");
             const [newShiftEmp, setNewShiftEmp] = useState("");
             const [newShiftStart, setNewShiftStart] = useState("10:00");
             const [newShiftEnd, setNewShiftEnd] = useState("18:00");
@@ -3772,6 +3777,40 @@
                 return () => unsub();
             }, []);
 
+            // Load close time setting
+            useEffect(() => {
+                const unsub = db.collection("ops").doc("scheduleSettings").onSnapshot(doc => {
+                    if (doc.exists && doc.data().closeTime) {
+                        setCloseTime(doc.data().closeTime);
+                        setTempCloseTime(doc.data().closeTime);
+                    }
+                });
+                return () => unsub();
+            }, []);
+
+            const saveCloseTime = async () => {
+                await db.collection("ops").doc("scheduleSettings").set({closeTime: tempCloseTime, updatedBy: staffName, updatedAt: new Date().toISOString()}, {merge: true});
+                setCloseTime(tempCloseTime);
+                setShowSettings(false);
+            };
+
+            // Format a time string (24h) to display format like "3:00pm"
+            const fmtTime = (t) => {
+                if (!t) return "";
+                const [h, m] = t.split(":").map(Number);
+                const period = h >= 12 ? "pm" : "am";
+                const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+                return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2,"0")}${period}`;
+            };
+
+            // Format the shift time range — uses CL if end matches closeTime, BD if flagged
+            const fmtShiftRange = (shift) => {
+                const startStr = fmtTime(shift.startTime);
+                if (shift.isBD) return `${startStr} - BD`;
+                if (shift.endTime === closeTime) return `${startStr} - CL`;
+                return `${startStr} - ${fmtTime(shift.endTime)}`;
+            };
+
             const calcHours = (start, end) => {
                 if(!start||!end)return 0;
                 const [sh,sm]=start.split(":").map(Number); const [eh,em]=end.split(":").map(Number);
@@ -3799,12 +3838,12 @@
                 return shifts.filter(s=>s.employee===empName).reduce((sum,s)=>sum+calcHours(s.startTime,s.endTime),0);
             };
 
-            const saveShift = async (dayKey, emp, start, end, role, notes="") => {
-                const newShift = {id:Date.now().toString(), day:dayKey, employee:emp, startTime:start, endTime:end, role, notes, location:schedLocation};
+            const saveShift = async (dayKey, emp, start, end, role, notes="", isBD=false) => {
+                const newShift = {id:Date.now().toString(), day:dayKey, employee:emp, startTime:start, endTime:end, role, notes, isBD, location:schedLocation};
                 const updated = [...shifts, newShift];
                 setShifts(updated);
                 await db.collection("schedules").doc(weekKey).set({shifts:updated, status:schedStatus, location:schedLocation, weekStart, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
-                setShowAddShift(null); setNewShiftEmp(""); setNewShiftStart("10:00"); setNewShiftEnd("18:00"); setNewShiftRole(""); setNewShiftNotes("");
+                setShowAddShift(null); setNewShiftEmp(""); setNewShiftStart("10:00"); setNewShiftEnd("18:00"); setNewShiftRole(""); setNewShiftNotes(""); setNewShiftIsBD(false);
             };
 
             const saveOpenShift = async (dayKey, start, end, role, notes="") => {
@@ -3825,6 +3864,7 @@
                 setEditRole(shift.role || "");
                 setEditNotes(shift.notes || "");
                 setEditDay(shift.day);
+                setEditIsBD(!!shift.isBD);
             };
 
             const saveEditShift = async () => {
@@ -3836,7 +3876,8 @@
                     endTime: editEnd,
                     role: editRole,
                     notes: editNotes,
-                    day: editDay
+                    day: editDay,
+                    isBD: editIsBD
                 } : s);
                 setShifts(updated);
                 await db.collection("schedules").doc(weekKey).set({shifts:updated, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
@@ -3995,8 +4036,8 @@
                     dayShifts.forEach(s=>{
                         const isOpen=s.employee==="__OPEN__";
                         body+=`<div class="shift${isOpen?' open':''}">
-                            <div class="emp">${isOpen?'🆕 OPEN SHIFT':s.employee}</div>
-                            <div class="time">${s.startTime} – ${s.endTime}${s.role?' · '+s.role:''}</div>
+                            <div class="emp">${isOpen?'🆕 OPEN SHIFT':s.employee}${s.isBD?' <span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px">📉 BD</span>':''}</div>
+                            <div class="time">${fmtShiftRange(s)}${s.role?' · '+s.role:''}</div>
                             ${s.notes?`<div style="font-size:12px;color:#666;font-style:italic">${s.notes}</div>`:''}
                         </div>`;
                     });
@@ -4054,6 +4095,7 @@
                                     <button onClick={copyWeek} className="py-2 bg-poke-600 text-white rounded-xl text-xs font-bold active:scale-95">📋 {language==="es"?"Copiar →":"Copy →"}</button>
                                     <button onClick={autoSchedule} className="py-2 bg-purple-600 text-white rounded-xl text-xs font-bold active:scale-95">✨ {language==="es"?"Auto-generar":"Auto-Generate"}</button>
                                     <button onClick={printSchedule} className="py-2 bg-gray-700 text-white rounded-xl text-xs font-bold active:scale-95">🖨️ {language==="es"?"Imprimir":"Print"}</button>
+                                    <button onClick={()=>{setTempCloseTime(closeTime);setShowSettings(true);}} className="col-span-2 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold active:scale-95">⚙️ {language==="es"?"Ajustes — Hora de Cierre":"Settings — Close Time"}: {fmtTime(closeTime)}</button>
                                 </div>
                             )}
 
@@ -4091,8 +4133,9 @@
                                                         <div className="flex-1 min-w-0">
                                                             <p className={"font-semibold text-sm "+(isMine?"text-poke-700":isOpen?"text-blue-700":"text-gray-800")}>
                                                                 {isOpen?"🆕 "+(language==="es"?"TURNO ABIERTO":"OPEN SHIFT"):(isMine?"✓ ":"")+shift.employee}
+                                                                {shift.isBD && <span className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] font-bold" style={{background:"#fef3c7", color:"#92400e"}}>📉 BD</span>}
                                                             </p>
-                                                            <p className="text-xs text-gray-500">{shift.startTime} - {shift.endTime} {shift.role&&"· "+shift.role} {empHours>0&&mgrAccess&&"· "+empHours.toFixed(1)+"h"+(isOT?" ⚠️":"")}</p>
+                                                            <p className="text-xs text-gray-500">{fmtShiftRange(shift)} {shift.role&&"· "+shift.role} {empHours>0&&mgrAccess&&"· "+empHours.toFixed(1)+"h"+(isOT?" ⚠️":"")}</p>
                                                             {shift.notes&&<p className="text-xs text-gray-500 italic mt-0.5">📝 {shift.notes}</p>}
                                                             {hasConflict&&<p className="text-xs text-red-600 font-bold">⚠️ {language==="es"?"Conflicto con descanso aprobado":"Conflict with approved time off"}</p>}
                                                             {availStatus===false&&<p className="text-xs text-yellow-700 font-bold">⚠️ {language==="es"?"Fuera de disponibilidad":"Outside availability"}</p>}
@@ -4130,17 +4173,18 @@
                                                         <div>
                                                             <label className="text-xs text-gray-500">{language==="es"?"Fin":"End"}</label>
                                                             <input type="time" value={newShiftEnd} onChange={e=>setNewShiftEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
-                                                            <div className="flex gap-1 mt-1">
-                                                                <button onClick={()=>setNewShiftEnd("22:00")} className={"flex-1 text-xs font-bold py-1 rounded-lg "+(newShiftEnd==="22:00"?"bg-poke-600 text-white":"bg-white text-gray-600 border border-gray-200")}>CL</button>
-                                                                <button onClick={()=>setNewShiftEnd("21:00")} className={"flex-1 text-xs font-bold py-1 rounded-lg "+(newShiftEnd==="21:00"?"bg-poke-600 text-white":"bg-white text-gray-600 border border-gray-200")}>BD</button>
-                                                            </div>
+                                                            <button onClick={()=>setNewShiftEnd(closeTime)} className={"w-full text-xs font-bold py-1 rounded-lg mt-1 "+(newShiftEnd===closeTime?"bg-poke-600 text-white":"bg-white text-gray-600 border border-gray-200")}>{language==="es"?"Cierre":"Close"} ({fmtTime(closeTime)})</button>
                                                         </div>
                                                     </div>
+                                                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl" style={{background: newShiftIsBD?"#fef3c7":"transparent", border: newShiftIsBD?"1px solid #f59e0b":"1px solid transparent"}}>
+                                                        <input type="checkbox" checked={newShiftIsBD} onChange={e=>setNewShiftIsBD(e.target.checked)} className="w-4 h-4"/>
+                                                        <span className={"text-xs font-bold "+(newShiftIsBD?"text-yellow-800":"text-gray-600")}>📉 BD — {language==="es"?"puede ser liberado temprano":"may be cut early if slow"}</span>
+                                                    </label>
                                                     <input type="text" value={newShiftRole} onChange={e=>setNewShiftRole(e.target.value)} placeholder={language==="es"?"Rol / Estación":"Role / Station"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                     <input type="text" value={newShiftNotes} onChange={e=>setNewShiftNotes(e.target.value)} placeholder={language==="es"?"Notas (ej: día de entrenamiento)":"Notes (e.g., training day)"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                     <div className="flex gap-2">
-                                                        <button onClick={()=>{if(newShiftEmp)saveShift(dayKey,newShiftEmp,newShiftStart,newShiftEnd,newShiftRole,newShiftNotes);}} disabled={!newShiftEmp} className={"flex-1 py-2 rounded-xl text-sm font-bold "+(newShiftEmp?"bg-green-600 text-white":"bg-gray-200 text-gray-400")}>{language==="es"?"Agregar":"Add"}</button>
-                                                        <button onClick={()=>{setShowAddShift(null);setNewShiftEmp("");setNewShiftRole("");setNewShiftNotes("");}} className="flex-1 py-2 rounded-xl text-sm font-bold bg-gray-200 text-gray-600">{language==="es"?"Cancelar":"Cancel"}</button>
+                                                        <button onClick={()=>{if(newShiftEmp)saveShift(dayKey,newShiftEmp,newShiftStart,newShiftEnd,newShiftRole,newShiftNotes,newShiftIsBD);}} disabled={!newShiftEmp} className={"flex-1 py-2 rounded-xl text-sm font-bold "+(newShiftEmp?"bg-green-600 text-white":"bg-gray-200 text-gray-400")}>{language==="es"?"Agregar":"Add"}</button>
+                                                        <button onClick={()=>{setShowAddShift(null);setNewShiftEmp("");setNewShiftRole("");setNewShiftNotes("");setNewShiftIsBD(false);}} className="flex-1 py-2 rounded-xl text-sm font-bold bg-gray-200 text-gray-600">{language==="es"?"Cancelar":"Cancel"}</button>
                                                     </div>
                                                 </div>
                                             ) : mgrAccess && (
@@ -4151,6 +4195,31 @@
                                 );
                             })}
                             {mgrAccess && <p className="text-xs text-gray-400 text-center pt-2">💡 {language==="es"?"Tip: Toca un turno para editar · Arrastra entre días para mover":"Tip: Tap a shift to edit · Drag between days to move"}</p>}
+                        </div>
+                    )}
+
+                    {/* ===== SCHEDULE SETTINGS MODAL ===== */}
+                    {showSettings && (
+                        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center animate-in" style={{background: "rgba(0,0,0,0.5)"}} onClick={()=>setShowSettings(false)}>
+                            <div className="card p-5 max-w-md w-full animate-scale" style={{maxHeight: "90vh", overflowY: "auto", borderTopLeftRadius: 24, borderTopRightRadius: 24}} onClick={e=>e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="font-display text-xl font-bold" style={{color: "var(--text-primary)"}}>⚙️ {language==="es"?"Ajustes de Horario":"Schedule Settings"}</h2>
+                                    <button onClick={()=>setShowSettings(false)} className="text-2xl" style={{color: "var(--text-muted)"}}>×</button>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Hora de Cierre (CL)":"Close Time (CL)"}</label>
+                                        <input type="time" value={tempCloseTime} onChange={e=>setTempCloseTime(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                        <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{language==="es"?"Los turnos que terminen a esta hora mostrarán 'CL' en lugar de la hora.":"Shifts ending at this time will display 'CL' instead of the time."}</p>
+                                    </div>
+
+                                    <div className="flex gap-2 pt-3">
+                                        <button onClick={()=>setShowSettings(false)} className="flex-1 py-3 rounded-xl font-bold text-sm" style={{background: "var(--bg-subtle)", color: "var(--text-secondary)"}}>{language==="es"?"Cancelar":"Cancel"}</button>
+                                        <button onClick={saveCloseTime} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold text-sm active:scale-95">💾 {language==="es"?"Guardar":"Save"}</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     )}
 
@@ -4189,11 +4258,18 @@
                                         <div>
                                             <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Fin":"End"}</label>
                                             <input type="time" value={editEnd} onChange={e=>setEditEnd(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
-                                            <div className="flex gap-1 mt-1">
-                                                <button onClick={()=>setEditEnd("22:00")} className="flex-1 text-xs font-bold py-1 rounded-lg" style={{background: editEnd==="22:00"?"#0891b2":"var(--bg-subtle)", color: editEnd==="22:00"?"white":"var(--text-secondary)"}}>CL</button>
-                                                <button onClick={()=>setEditEnd("21:00")} className="flex-1 text-xs font-bold py-1 rounded-lg" style={{background: editEnd==="21:00"?"#0891b2":"var(--bg-subtle)", color: editEnd==="21:00"?"white":"var(--text-secondary)"}}>BD</button>
-                                            </div>
+                                            <button onClick={()=>setEditEnd(closeTime)} className="w-full text-xs font-bold py-1 rounded-lg mt-1" style={{background: editEnd===closeTime?"#0891b2":"var(--bg-subtle)", color: editEnd===closeTime?"white":"var(--text-secondary)"}}>{language==="es"?"Cierre":"Close"} ({fmtTime(closeTime)})</button>
                                         </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="flex items-center gap-2 cursor-pointer p-3 rounded-xl" style={{background: editIsBD?"#fef3c7":"var(--bg-subtle)", border: editIsBD?"1px solid #f59e0b":"1px solid var(--border-subtle)"}}>
+                                            <input type="checkbox" checked={editIsBD} onChange={e=>setEditIsBD(e.target.checked)} className="w-5 h-5"/>
+                                            <div className="flex-1">
+                                                <span className="font-bold text-sm" style={{color: editIsBD?"#92400e":"var(--text-primary)"}}>📉 {language==="es"?"Business Decline (BD)":"Business Decline (BD)"}</span>
+                                                <p className="text-xs" style={{color: editIsBD?"#92400e":"var(--text-muted)"}}>{language==="es"?"Empleado puede cerrar, pero puede ser liberado temprano si el negocio baja":"Employee may close, but may be let go early if business slows"}</p>
+                                            </div>
+                                        </label>
                                     </div>
 
                                     <div>
