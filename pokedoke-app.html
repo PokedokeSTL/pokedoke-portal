@@ -3688,9 +3688,20 @@
                 if (!canToggleLocation && myLocation !== "all") setSchedLocation(myLocation);
             }, [myLocation, canToggleLocation]);
 
+            // Format a Date object as YYYY-MM-DD in local time (avoids UTC shift)
+            const fmtLocalDate = (d) => {
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, "0");
+                const day = String(d.getDate()).padStart(2, "0");
+                return `${y}-${m}-${day}`;
+            };
+
             const getWeekStart = (offset) => {
-                const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1 + (offset * 7));
-                return d.toISOString().split("T")[0];
+                const d = new Date();
+                // Monday = 1, Sunday = 0. Convert Sunday to 7 so Monday is start of week.
+                const dow = d.getDay() === 0 ? 7 : d.getDay();
+                d.setDate(d.getDate() - dow + 1 + (offset * 7));
+                return fmtLocalDate(d);
             };
             const weekStart = getWeekStart(weekOffset);
             const weekKey = schedLocation + "_" + weekStart;
@@ -3700,7 +3711,7 @@
             };
             const getDateForDayKey = (dayIdx) => {
                 const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + dayIdx);
-                return d.toISOString().split("T")[0];
+                return fmtLocalDate(d);
             };
 
             useEffect(() => {
