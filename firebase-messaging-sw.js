@@ -19,7 +19,7 @@ messaging.onBackgroundMessage((payload) => {
   console.log('[SW] Background message received:', payload);
 
   const type = payload.data?.type || 'general';
-  const sender = payload.data?.from || '';
+  const sender = payload.data?.sender || '';
   const isMessage = type === 'dm' || type === 'channel';
 
   const notificationTitle = payload.notification?.title || 'PokeDoke';

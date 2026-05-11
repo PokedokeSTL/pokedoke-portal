@@ -399,7 +399,7 @@
             messaging.onMessage((payload) => {
                 console.log("Foreground message:", payload);
                 const type = payload.data?.type || 'general';
-                const sender = payload.data?.from || '';
+                const sender = payload.data?.sender || '';
                 const isMessage = type === 'dm' || type === 'channel';
                 // For foreground, show toast instead of system notification (less intrusive when app is open)
                 if (window.showToast) {
@@ -6830,7 +6830,7 @@
                 const preview = msgText.length > 120 ? msgText.slice(0,120) + "..." : msgText;
                 if (showDM) {
                     // DM: notify just that person
-                    sendNotification([showDM], staffName, preview, {type:"dm", from:staffName});
+                    sendNotification([showDM], staffName, preview, {type:"dm", sender:staffName});
                 } else {
                     // Channel: notify everyone in that channel except sender
                     let recipients = [];
@@ -6845,7 +6845,7 @@
                     }
                     if (recipients.length > 0) {
                         const channelLabel = activeChannel === "general" ? "#general" : activeChannel === "managers" ? "#managers" : "#" + activeChannel;
-                        sendNotification(recipients, staffName + " in " + channelLabel, preview, {type:"channel", channel:activeChannel, from:staffName});
+                        sendNotification(recipients, staffName + " in " + channelLabel, preview, {type:"channel", channel:activeChannel, sender:staffName});
                     }
                 }
             };
