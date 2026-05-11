@@ -4693,6 +4693,7 @@
                     })()}
 
                     {/* ===== SCHEDULE SETTINGS MODAL ===== */}
+                    {showSettings && (
                         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center animate-in" style={{background: "rgba(0,0,0,0.5)"}} onClick={()=>setShowSettings(false)}>
                             <div className="card p-5 max-w-md w-full animate-scale" style={{maxHeight: "90vh", overflowY: "auto", borderTopLeftRadius: 24, borderTopRightRadius: 24}} onClick={e=>e.stopPropagation()}>
                                 <div className="flex justify-between items-center mb-4">
@@ -8002,6 +8003,7 @@
                     </nav>
                     <ToastContainer />
                     <ConfirmModal />
+                    {showProfile && <Profile language={language} staffName={staffName} userPrefs={userPrefs} saveUserPref={saveUserPref} onClose={()=>setShowProfile(false)} />}
                 </div>
             );
         }
