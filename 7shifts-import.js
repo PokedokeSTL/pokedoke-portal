@@ -1,7 +1,7 @@
 
 // === PokeDoke One-Time Schedule Import from 7Shifts ===
 // Run this ONCE in your browser console while logged into staff.pokedoke.com
-// This imports two weeks of Kirkwood schedules from your 7Shifts export.
+// This imports two weeks of schedules (CWE + Kirkwood) from your 7Shifts export.
 
 (async function() {
     const db = firebase.firestore();
@@ -16,7 +16,7 @@
         updatedBy: "7Shifts Import",
         updatedAt: now
     });
-    console.log("✅ Imported week of 2026-05-04");
+    console.log("✅ Imported Kirkwood week of 2026-05-04");
 
     // Week of 2026-05-11 (Kirkwood)
     await db.collection("schedules").doc("kirkwood_2026-05-11").set({
@@ -27,7 +27,18 @@
         updatedBy: "7Shifts Import",
         updatedAt: now
     });
-    console.log("✅ Imported week of 2026-05-11");
+    console.log("✅ Imported Kirkwood week of 2026-05-11");
+
+    // Week of 2026-05-11 (CWE)
+    await db.collection("schedules").doc("cwe_2026-05-11").set({
+        shifts: [{"id": "Alexander_Horsford_mon_0_09:30", "day": "mon", "employee": "Alexander Horsford", "startTime": "09:30", "endTime": "15:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Alexander_Horsford_mon_1_16:00", "day": "mon", "employee": "Alexander Horsford", "startTime": "16:00", "endTime": "22:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Alexander_Horsford_thu_0_09:30", "day": "thu", "employee": "Alexander Horsford", "startTime": "09:30", "endTime": "15:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Alexander_Horsford_thu_1_16:00", "day": "thu", "employee": "Alexander Horsford", "startTime": "16:00", "endTime": "22:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Alexander_Horsford_fri_0_09:30", "day": "fri", "employee": "Alexander Horsford", "startTime": "09:30", "endTime": "15:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Alexander_Horsford_fri_1_16:00", "day": "fri", "employee": "Alexander Horsford", "startTime": "16:00", "endTime": "22:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_mon_0_09:30", "day": "mon", "employee": "Ashley Word", "startTime": "09:30", "endTime": "15:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_mon_1_16:00", "day": "mon", "employee": "Ashley Word", "startTime": "16:00", "endTime": "22:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_tue_0_09:30", "day": "tue", "employee": "Ashley Word", "startTime": "09:30", "endTime": "15:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_tue_1_16:00", "day": "tue", "employee": "Ashley Word", "startTime": "16:00", "endTime": "22:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_wed_0_09:30", "day": "wed", "employee": "Ashley Word", "startTime": "09:30", "endTime": "15:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_wed_1_16:00", "day": "wed", "employee": "Ashley Word", "startTime": "16:00", "endTime": "22:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_thu_0_09:30", "day": "thu", "employee": "Ashley Word", "startTime": "09:30", "endTime": "15:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_thu_1_16:00", "day": "thu", "employee": "Ashley Word", "startTime": "16:00", "endTime": "22:00", "role": "Assistant Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_sat_0_09:30", "day": "sat", "employee": "Ashley Word", "startTime": "09:30", "endTime": "15:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Ashley_Word_sat_1_16:00", "day": "sat", "employee": "Ashley Word", "startTime": "16:00", "endTime": "22:00", "role": "Shift Manager", "notes": "", "location": "cwe"}, {"id": "Reeves_Word_tue_0_10:00", "day": "tue", "employee": "Reeves Word", "startTime": "10:00", "endTime": "15:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Reeves_Word_tue_1_16:00", "day": "tue", "employee": "Reeves Word", "startTime": "16:00", "endTime": "22:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Reeves_Word_wed_0_16:00", "day": "wed", "employee": "Reeves Word", "startTime": "16:00", "endTime": "22:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Reeves_Word_fri_0_16:00", "day": "fri", "employee": "Reeves Word", "startTime": "16:00", "endTime": "22:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Reeves_Word_sat_0_11:00", "day": "sat", "employee": "Reeves Word", "startTime": "11:00", "endTime": "15:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Reeves_Word_sat_1_16:00", "day": "sat", "employee": "Reeves Word", "startTime": "16:00", "endTime": "22:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Reeves_Word_sun_0_10:00", "day": "sun", "employee": "Reeves Word", "startTime": "10:00", "endTime": "15:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Reeves_Word_sun_1_16:00", "day": "sun", "employee": "Reeves Word", "startTime": "16:00", "endTime": "22:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Imani_Webb_wed_0_10:00", "day": "wed", "employee": "Imani Webb", "startTime": "10:00", "endTime": "15:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Imani_Webb_wed_1_16:00", "day": "wed", "employee": "Imani Webb", "startTime": "16:00", "endTime": "22:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Imani_Webb_thu_0_10:00", "day": "thu", "employee": "Imani Webb", "startTime": "10:00", "endTime": "15:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Imani_Webb_thu_1_15:00", "day": "thu", "employee": "Imani Webb", "startTime": "15:00", "endTime": "22:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Imani_Webb_sat_0_09:30", "day": "sat", "employee": "Imani Webb", "startTime": "09:30", "endTime": "15:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Imani_Webb_sun_0_09:30", "day": "sun", "employee": "Imani Webb", "startTime": "09:30", "endTime": "15:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Imani_Webb_sun_1_15:00", "day": "sun", "employee": "Imani Webb", "startTime": "15:00", "endTime": "22:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Sheniel_Dixon_tue_0_10:00", "day": "tue", "employee": "Sheniel Dixon", "startTime": "10:00", "endTime": "15:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Sheniel_Dixon_tue_1_15:00", "day": "tue", "employee": "Sheniel Dixon", "startTime": "15:00", "endTime": "22:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Sheniel_Dixon_fri_0_09:30", "day": "fri", "employee": "Sheniel Dixon", "startTime": "09:30", "endTime": "15:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Sheniel_Dixon_fri_1_15:00", "day": "fri", "employee": "Sheniel Dixon", "startTime": "15:00", "endTime": "22:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Sheniel_Dixon_sat_0_09:30", "day": "sat", "employee": "Sheniel Dixon", "startTime": "09:30", "endTime": "15:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Sheniel_Dixon_sat_1_15:00", "day": "sat", "employee": "Sheniel Dixon", "startTime": "15:00", "endTime": "22:00", "role": "Line Server", "notes": "", "location": "cwe"}, {"id": "Damon_Dyson_mon_0_12:00", "day": "mon", "employee": "Damon Dyson", "startTime": "12:00", "endTime": "22:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Damon_Dyson_wed_0_10:00", "day": "wed", "employee": "Damon Dyson", "startTime": "10:00", "endTime": "15:00", "role": "Dishwasher", "notes": "", "location": "cwe"}, {"id": "Damon_Dyson_fri_0_10:00", "day": "fri", "employee": "Damon Dyson", "startTime": "10:00", "endTime": "15:00", "role": "Dishwasher", "notes": "", "location": "cwe"}],
+        status: "draft",
+        location: "cwe",
+        weekStart: "2026-05-11",
+        updatedBy: "7Shifts Import",
+        updatedAt: now
+    });
+    console.log("✅ Imported CWE week of 2026-05-11");
 
     // Populate employee details from 7Shifts data
     const empData = [
@@ -66,7 +77,6 @@
     }
     console.log("✅ Imported " + empData.length + " employee profiles");
 
-    // Save wages to ops/wages
     await db.collection("ops").doc("wages").set(wages, { merge: true });
     console.log("✅ Imported hourly wages");
 
