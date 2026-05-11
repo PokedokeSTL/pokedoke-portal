@@ -3443,12 +3443,12 @@
             const [weekOffset, setWeekOffset] = useState(0);
             const [shifts, setShifts] = useState([]);
             const [schedStatus, setSchedStatus] = useState("draft");
-            const [showAddShift, setShowAddShift] = useState(null); // day index
+            const [showAddShift, setShowAddShift] = useState(null);
             const [newShiftEmp, setNewShiftEmp] = useState("");
             const [newShiftStart, setNewShiftStart] = useState("10:00");
             const [newShiftEnd, setNewShiftEnd] = useState("18:00");
             const [newShiftRole, setNewShiftRole] = useState("");
-            const [editingShift, setEditingShift] = useState(null);
+            const [newShiftNotes, setNewShiftNotes] = useState("");
             const [availability, setAvailability] = useState({});
             const [timeOffRequests, setTimeOffRequests] = useState([]);
             const [toStartDate, setToStartDate] = useState("");
@@ -3456,26 +3456,27 @@
             const [toReason, setToReason] = useState("");
             const [swapOffers, setSwapOffers] = useState([]);
             const [wages, setWages] = useState({});
+            const [allAvailability, setAllAvailability] = useState([]);
+            const [templates, setTemplates] = useState([]);
+            const [templateName, setTemplateName] = useState("");
+            const [showTemplateSave, setShowTemplateSave] = useState(false);
+            const [draggedShift, setDraggedShift] = useState(null);
+            const [hoursView, setHoursView] = useState("week");
             const mgrAccess = isAdmin(staffName);
             const ownerAccess = isOwner(staffName);
             const DAYS = language==="es"?["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]:["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
             const DAY_KEYS = ["mon","tue","wed","thu","fri","sat","sun"];
             const LOCATIONS = [{id:"cwe",name:"Central West End"},{id:"kirkwood",name:"Kirkwood"}];
 
-            // Determine user's location from staff list
             const staffRecord = staffList.find(s => s.name === staffName);
             const myLocation = staffRecord?.location || "cwe";
             const canSeeAllLocations = ownerAccess || myLocation === "all";
             const canToggleLocation = canSeeAllLocations || mgrAccess;
 
-            // Lock non-managers to their own location
             useEffect(() => {
-                if (!canToggleLocation && myLocation !== "all") {
-                    setSchedLocation(myLocation);
-                }
+                if (!canToggleLocation && myLocation !== "all") setSchedLocation(myLocation);
             }, [myLocation, canToggleLocation]);
 
-            // Week date helpers
             const getWeekStart = (offset) => {
                 const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1 + (offset * 7));
                 return d.toISOString().split("T")[0];
@@ -3486,8 +3487,11 @@
                 const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + dayIdx);
                 return d.toLocaleDateString(language==="es"?"es-US":"en-US",{month:"short",day:"numeric"});
             };
+            const getDateForDayKey = (dayIdx) => {
+                const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + dayIdx);
+                return d.toISOString().split("T")[0];
+            };
 
-            // Load schedule from Firebase
             useEffect(() => {
                 const unsub = db.collection("schedules").doc(weekKey).onSnapshot(doc => {
                     if (doc.exists) { setShifts(doc.data().shifts || []); setSchedStatus(doc.data().status || "draft"); }
@@ -3496,7 +3500,6 @@
                 return () => unsub();
             }, [weekKey]);
 
-            // Load availability
             useEffect(() => {
                 const unsub = db.collection("availability").doc(staffName.replace(/\s/g,"_")).onSnapshot(doc => {
                     if (doc.exists) setAvailability(doc.data().days || {});
@@ -3504,7 +3507,14 @@
                 return () => unsub();
             }, [staffName]);
 
-            // Load time-off requests
+            useEffect(() => {
+                if (!mgrAccess) return;
+                const unsub = db.collection("availability").onSnapshot(snap => {
+                    setAllAvailability(snap.docs.map(d=>({name:d.data().name,days:d.data().days||{}})));
+                });
+                return () => unsub();
+            }, [mgrAccess]);
+
             useEffect(() => {
                 const unsub = db.collection("timeOffRequests").orderBy("requestedAt","desc").limit(50).onSnapshot(snap => {
                     setTimeOffRequests(snap.docs.map(d=>({id:d.id,...d.data()})));
@@ -3512,7 +3522,6 @@
                 return () => unsub();
             }, []);
 
-            // Load swap offers
             useEffect(() => {
                 const unsub = db.collection("shiftSwaps").orderBy("createdAt","desc").limit(30).onSnapshot(snap => {
                     setSwapOffers(snap.docs.map(d=>({id:d.id,...d.data()})));
@@ -3520,7 +3529,6 @@
                 return () => unsub();
             }, []);
 
-            // Load wages
             useEffect(() => {
                 const unsub = db.collection("ops").doc("wages").onSnapshot(doc => {
                     if (doc.exists) setWages(doc.data());
@@ -3528,13 +3536,50 @@
                 return () => unsub();
             }, []);
 
-            // Save shift
-            const saveShift = async (dayKey, emp, start, end, role) => {
-                const newShift = {id:Date.now().toString(), day:dayKey, employee:emp, startTime:start, endTime:end, role, location:schedLocation};
+            useEffect(() => {
+                const unsub = db.collection("scheduleTemplates").onSnapshot(snap => {
+                    setTemplates(snap.docs.map(d=>({id:d.id,...d.data()})));
+                });
+                return () => unsub();
+            }, []);
+
+            const calcHours = (start, end) => {
+                if(!start||!end)return 0;
+                const [sh,sm]=start.split(":").map(Number); const [eh,em]=end.split(":").map(Number);
+                return Math.max(0,((eh*60+em)-(sh*60+sm))/60);
+            };
+
+            // Check if employee has time-off conflict
+            const hasTimeOffConflict = (empName, dayIdx) => {
+                const shiftDate = getDateForDayKey(dayIdx);
+                return timeOffRequests.some(req => req.employee===empName && req.status==="approved" && shiftDate >= req.startDate && shiftDate <= req.endDate);
+            };
+
+            // Check if employee is available
+            const isAvailable = (empName, dayKey, startTime, endTime) => {
+                const emp = allAvailability.find(a => a.name === empName);
+                if (!emp || !emp.days || !emp.days[dayKey]) return null; // unknown
+                const dayAvail = emp.days[dayKey];
+                if (!dayAvail.available) return false;
+                if (!dayAvail.start || !dayAvail.end) return true;
+                return startTime >= dayAvail.start && endTime <= dayAvail.end;
+            };
+
+            // Calculate weekly hours per employee
+            const getEmpWeeklyHours = (empName) => {
+                return shifts.filter(s=>s.employee===empName).reduce((sum,s)=>sum+calcHours(s.startTime,s.endTime),0);
+            };
+
+            const saveShift = async (dayKey, emp, start, end, role, notes="") => {
+                const newShift = {id:Date.now().toString(), day:dayKey, employee:emp, startTime:start, endTime:end, role, notes, location:schedLocation};
                 const updated = [...shifts, newShift];
                 setShifts(updated);
                 await db.collection("schedules").doc(weekKey).set({shifts:updated, status:schedStatus, location:schedLocation, weekStart, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
-                setShowAddShift(null); setNewShiftEmp(""); setNewShiftStart("10:00"); setNewShiftEnd("18:00"); setNewShiftRole("");
+                setShowAddShift(null); setNewShiftEmp(""); setNewShiftStart("10:00"); setNewShiftEnd("18:00"); setNewShiftRole(""); setNewShiftNotes("");
+            };
+
+            const saveOpenShift = async (dayKey, start, end, role, notes="") => {
+                await saveShift(dayKey, "__OPEN__", start, end, role, notes);
             };
 
             const deleteShift = async (shiftId) => {
@@ -3543,10 +3588,22 @@
                 await db.collection("schedules").doc(weekKey).set({shifts:updated, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
             };
 
+            const claimOpenShift = async (shiftId) => {
+                const updated = shifts.map(s=>s.id===shiftId?{...s,employee:staffName}:s);
+                setShifts(updated);
+                await db.collection("schedules").doc(weekKey).set({shifts:updated, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
+                sendNotification(staffList.filter(s=>isAdmin(s.name)).map(s=>s.name),"🙋 Open Shift Claimed",staffName+" claimed an open shift",{type:"openshift"});
+            };
+
+            const moveShift = async (shiftId, newDayKey) => {
+                const updated = shifts.map(s=>s.id===shiftId?{...s,day:newDayKey}:s);
+                setShifts(updated);
+                await db.collection("schedules").doc(weekKey).set({shifts:updated, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
+            };
+
             const publishSchedule = async () => {
                 await db.collection("schedules").doc(weekKey).set({status:"published", publishedBy:staffName, publishedAt:new Date().toISOString()},{merge:true});
                 setSchedStatus("published");
-                // Notify staff at this location
                 const locationStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>s.name);
                 const locName = LOCATIONS.find(l=>l.id===schedLocation)?.name || schedLocation;
                 sendNotification(locationStaff, "📅 New Schedule Published", locName + " schedule for week of " + new Date(weekStart+"T12:00:00").toLocaleDateString() + " is live!", {type:"schedule", weekKey});
@@ -3563,13 +3620,58 @@
                 setWeekOffset(weekOffset+1);
             };
 
-            // Save availability
+            const saveAsTemplate = async () => {
+                if(!templateName)return;
+                await db.collection("scheduleTemplates").doc(Date.now().toString()).set({
+                    name: templateName,
+                    location: schedLocation,
+                    shifts: shifts.map(s=>({day:s.day,employee:s.employee,startTime:s.startTime,endTime:s.endTime,role:s.role,notes:s.notes||""})),
+                    createdBy: staffName,
+                    createdAt: new Date().toISOString()
+                });
+                setShowTemplateSave(false); setTemplateName("");
+                alert(language==="es"?"Plantilla guardada":"Template saved");
+            };
+
+            const applyTemplate = async (template) => {
+                if(!confirm(language==="es"?"¿Aplicar plantilla? Reemplazará los turnos actuales.":"Apply template? This will replace current shifts."))return;
+                const newShifts = template.shifts.map(s=>({...s,id:Date.now().toString()+Math.random(),location:schedLocation}));
+                setShifts(newShifts);
+                await db.collection("schedules").doc(weekKey).set({shifts:newShifts,status:"draft",location:schedLocation,weekStart,updatedBy:staffName,updatedAt:new Date().toISOString()},{merge:true});
+            };
+
+            const deleteTemplate = async (id) => {
+                if(!confirm(language==="es"?"¿Eliminar plantilla?":"Delete template?"))return;
+                await db.collection("scheduleTemplates").doc(id).delete();
+            };
+
+            // Auto-schedule suggestion based on availability
+            const autoSchedule = async () => {
+                if(!confirm(language==="es"?"¿Generar sugerencia de horario basada en disponibilidad? Reemplazará el horario actual.":"Generate schedule based on availability? Will replace current shifts."))return;
+                const newShifts = [];
+                const locationStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all");
+                DAY_KEYS.forEach((dayKey,dayIdx)=>{
+                    locationStaff.forEach(emp=>{
+                        const empAvail = allAvailability.find(a=>a.name===emp.name);
+                        if(!empAvail||!empAvail.days||!empAvail.days[dayKey]||!empAvail.days[dayKey].available)return;
+                        const shiftDate = getDateForDayKey(dayIdx);
+                        const hasTimeOff = timeOffRequests.some(req=>req.employee===emp.name&&req.status==="approved"&&shiftDate>=req.startDate&&shiftDate<=req.endDate);
+                        if(hasTimeOff)return;
+                        const start = empAvail.days[dayKey].start || "11:00";
+                        const end = empAvail.days[dayKey].end || "20:00";
+                        newShifts.push({id:Date.now().toString()+Math.random(),day:dayKey,employee:emp.name,startTime:start,endTime:end,role:emp.role||"",notes:"",location:schedLocation});
+                    });
+                });
+                setShifts(newShifts);
+                await db.collection("schedules").doc(weekKey).set({shifts:newShifts,status:"draft",location:schedLocation,weekStart,updatedBy:staffName,updatedAt:new Date().toISOString()},{merge:true});
+                alert((language==="es"?"Generados ":"Generated ")+newShifts.length+(language==="es"?" turnos basados en disponibilidad":" shifts based on availability"));
+            };
+
             const saveAvailability = async (days) => {
                 setAvailability(days);
                 await db.collection("availability").doc(staffName.replace(/\s/g,"_")).set({days, name:staffName, updatedAt:new Date().toISOString()});
             };
 
-            // Time off
             const submitTimeOff = async () => {
                 if(!toStartDate||!toEndDate)return;
                 await db.collection("timeOffRequests").add({employee:staffName, startDate:toStartDate, endDate:toEndDate, reason:toReason, status:"pending", requestedAt:new Date().toISOString()});
@@ -3585,7 +3687,6 @@
                 }
             };
 
-            // Shift swaps
             const offerShift = async (shift) => {
                 await db.collection("shiftSwaps").add({offeredBy:staffName, shift, status:"open", createdAt:new Date().toISOString(), weekKey});
             };
@@ -3607,29 +3708,58 @@
                 sendNotification([swap.offeredBy, swap.claimedBy], "✅ Shift Swap Approved", swap.claimedBy + " now has " + swap.offeredBy + "'s shift. Approved by " + staffName, {type:"swap"});
             };
 
-            const calcHours = (start, end) => {
-                const [sh,sm]=start.split(":").map(Number); const [eh,em]=end.split(":").map(Number);
-                return Math.max(0,((eh*60+em)-(sh*60+sm))/60);
+            const printSchedule = () => {
+                const locName = LOCATIONS.find(l=>l.id===schedLocation)?.name || schedLocation;
+                const html = `<html><head><title>${locName} Schedule</title><style>
+                    body{font-family:Arial,sans-serif;padding:20px;}
+                    h1{color:#0891b2;}h2{margin-top:0;color:#666;}
+                    table{width:100%;border-collapse:collapse;margin-top:15px;}
+                    th{background:#0891b2;color:white;padding:10px;text-align:left;}
+                    td{padding:10px;border:1px solid #ddd;vertical-align:top;}
+                    .day{background:#f0f9ff;font-weight:bold;width:120px;}
+                    .shift{margin-bottom:5px;padding:6px;background:#ecfeff;border-left:3px solid #0891b2;border-radius:4px;}
+                    .open{background:#fef3c7;border-left-color:#f59e0b;}
+                    .emp{font-weight:bold;}.time{color:#666;font-size:13px;}
+                    @media print{h1{font-size:18pt;}}
+                </style></head><body>
+                <h1>🐟 PokeDoke — ${locName}</h1>
+                <h2>Week of ${new Date(weekStart+"T12:00:00").toLocaleDateString()}</h2>
+                <table><thead><tr><th>Day</th><th>Shifts</th></tr></thead><tbody>`;
+                let body = "";
+                DAY_KEYS.forEach((dk,di)=>{
+                    const dayShifts = shifts.filter(s=>s.day===dk).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
+                    body += `<tr><td class="day">${DAYS[di]}<br><span style="font-weight:normal;font-size:11px;color:#999">${getDateForDay(di)}</span></td><td>`;
+                    if(dayShifts.length===0) body+=`<em style="color:#999">No shifts</em>`;
+                    dayShifts.forEach(s=>{
+                        const isOpen=s.employee==="__OPEN__";
+                        body+=`<div class="shift${isOpen?' open':''}">
+                            <div class="emp">${isOpen?'🆕 OPEN SHIFT':s.employee}</div>
+                            <div class="time">${s.startTime} – ${s.endTime}${s.role?' · '+s.role:''}</div>
+                            ${s.notes?`<div style="font-size:12px;color:#666;font-style:italic">${s.notes}</div>`:''}
+                        </div>`;
+                    });
+                    body += `</td></tr>`;
+                });
+                const win = window.open("","_blank");
+                win.document.write(html+body+"</tbody></table></body></html>");
+                win.document.close();
+                setTimeout(()=>win.print(),300);
             };
 
-            // Filter shifts for current staff if not admin
             const myShifts = shifts.filter(s => s.employee === staffName);
             const visibleShifts = mgrAccess ? shifts : myShifts;
 
             return (
                 <div className="p-4 pb-24 animate-in">
-                    {/* Sub-tabs */}
                     <div className="flex gap-1 bg-gray-100 rounded-2xl p-1 mb-4 overflow-x-auto">
-                        {[{id:"view",l:"📅 "+(language==="es"?"Horario":"Schedule")},{id:"avail",l:"🕐 "+(language==="es"?"Disponibilidad":"Availability")},{id:"timeoff",l:"🏖️ "+(language==="es"?"Descanso":"Time Off")},{id:"swaps",l:"🔄 "+(language==="es"?"Cambios":"Swaps")},{id:"labor",l:"💰 "+(language==="es"?"Costos":"Labor")}].map(tab=>(
+                        {[{id:"view",l:"📅 "+(language==="es"?"Horario":"Schedule")},{id:"avail",l:"🕐 "+(language==="es"?"Disponibilidad":"Availability")},{id:"timeoff",l:"🏖️ "+(language==="es"?"Descanso":"Time Off")},{id:"swaps",l:"🔄 "+(language==="es"?"Cambios":"Swaps")},...(mgrAccess?[{id:"hours",l:"⏱️ "+(language==="es"?"Horas":"Hours")},{id:"templates",l:"📋 "+(language==="es"?"Plantillas":"Templates")},{id:"labor",l:"💰 "+(language==="es"?"Costos":"Labor")}]:[])].map(tab=>(
                             <button key={tab.id} onClick={()=>setSchedTab(tab.id)}
                                 className={"flex-1 py-2 px-1 rounded-xl text-xs font-bold transition-all whitespace-nowrap "+(schedTab===tab.id?"bg-poke-600 text-white shadow-md":"text-gray-500")}>{tab.l}</button>
                         ))}
                     </div>
 
-                    {/* ===== SCHEDULE VIEW ===== */}
                     {schedTab === "view" && (
                         <div className="space-y-3">
-                            {/* Location toggle - managers/owner only */}
                             {canToggleLocation ? (
                                 <div className="flex gap-2">
                                     {LOCATIONS.map(loc=>(
@@ -3643,7 +3773,6 @@
                                 </div>
                             )}
 
-                            {/* Week navigator */}
                             <div className="flex items-center justify-between bg-white rounded-2xl border border-gray-100 p-3 shadow-sm">
                                 <button onClick={()=>setWeekOffset(weekOffset-1)} className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center font-bold text-gray-600">←</button>
                                 <div className="text-center">
@@ -3653,23 +3782,26 @@
                                 <button onClick={()=>setWeekOffset(weekOffset+1)} className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center font-bold text-gray-600">→</button>
                             </div>
 
-                            {/* Manager actions */}
                             {mgrAccess && (
-                                <div className="flex gap-2">
+                                <div className="grid grid-cols-2 gap-2">
                                     {schedStatus==="draft"?(
-                                        <button onClick={publishSchedule} className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Publicar":"Publish"}</button>
+                                        <button onClick={publishSchedule} className="py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Publicar":"Publish"}</button>
                                     ):(
-                                        <button onClick={unpublishSchedule} className="flex-1 py-2 bg-yellow-500 text-white rounded-xl text-xs font-bold active:scale-95">📝 {language==="es"?"Despublicar":"Unpublish"}</button>
+                                        <button onClick={unpublishSchedule} className="py-2 bg-yellow-500 text-white rounded-xl text-xs font-bold active:scale-95">📝 {language==="es"?"Despublicar":"Unpublish"}</button>
                                     )}
-                                    <button onClick={copyWeek} className="flex-1 py-2 bg-poke-600 text-white rounded-xl text-xs font-bold active:scale-95">📋 {language==="es"?"Copiar a Siguiente":"Copy to Next Week"}</button>
+                                    <button onClick={copyWeek} className="py-2 bg-poke-600 text-white rounded-xl text-xs font-bold active:scale-95">📋 {language==="es"?"Copiar →":"Copy →"}</button>
+                                    <button onClick={autoSchedule} className="py-2 bg-purple-600 text-white rounded-xl text-xs font-bold active:scale-95">✨ {language==="es"?"Auto-generar":"Auto-Generate"}</button>
+                                    <button onClick={printSchedule} className="py-2 bg-gray-700 text-white rounded-xl text-xs font-bold active:scale-95">🖨️ {language==="es"?"Imprimir":"Print"}</button>
                                 </div>
                             )}
 
-                            {/* Daily schedule */}
                             {DAY_KEYS.map((dayKey,dayIdx) => {
-                                const dayShifts = visibleShifts.filter(s=>s.day===dayKey);
+                                const dayShifts = visibleShifts.filter(s=>s.day===dayKey).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
                                 return (
-                                    <div key={dayKey} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                    <div key={dayKey} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
+                                         onDragOver={mgrAccess?(e)=>{e.preventDefault();e.currentTarget.classList.add("bg-poke-50");}:undefined}
+                                         onDragLeave={mgrAccess?(e)=>{e.currentTarget.classList.remove("bg-poke-50");}:undefined}
+                                         onDrop={mgrAccess?(e)=>{e.preventDefault();e.currentTarget.classList.remove("bg-poke-50");if(draggedShift)moveShift(draggedShift.id,dayKey);setDraggedShift(null);}:undefined}>
                                         <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center">
                                             <div>
                                                 <span className="font-bold text-poke-700 text-sm">{DAYS[dayIdx]}</span>
@@ -3683,13 +3815,29 @@
                                             )}
                                             {dayShifts.map(shift=>{
                                                 const isMine = shift.employee===staffName;
+                                                const isOpen = shift.employee==="__OPEN__";
+                                                const hasConflict = !isOpen && hasTimeOffConflict(shift.employee, dayIdx);
+                                                const availStatus = !isOpen && mgrAccess ? isAvailable(shift.employee, dayKey, shift.startTime, shift.endTime) : null;
+                                                const empHours = !isOpen ? getEmpWeeklyHours(shift.employee) : 0;
+                                                const isOT = empHours > 40;
                                                 return (
-                                                    <div key={shift.id} className={"p-3 flex items-center justify-between "+(isMine?"bg-poke-50":"")}>
-                                                        <div>
-                                                            <p className={"font-semibold text-sm "+(isMine?"text-poke-700":"text-gray-800")}>{isMine?"✓ ":""}{shift.employee}</p>
-                                                            <p className="text-xs text-gray-500">{shift.startTime} - {shift.endTime} · {shift.role}</p>
+                                                    <div key={shift.id}
+                                                         draggable={mgrAccess&&!isOpen}
+                                                         onDragStart={mgrAccess?(e)=>{e.stopPropagation();setDraggedShift(shift);}:undefined}
+                                                         className={"p-3 flex items-center justify-between "+(mgrAccess?"cursor-move ":"")+(hasConflict?"bg-red-50 border-l-4 border-red-400 ":isOT?"bg-orange-50 border-l-4 border-orange-400 ":availStatus===false?"bg-yellow-50 border-l-4 border-yellow-400 ":isOpen?"bg-blue-50 border-l-4 border-blue-400 ":isMine?"bg-poke-50":"")}>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className={"font-semibold text-sm "+(isMine?"text-poke-700":isOpen?"text-blue-700":"text-gray-800")}>
+                                                                {isOpen?"🆕 "+(language==="es"?"TURNO ABIERTO":"OPEN SHIFT"):(isMine?"✓ ":"")+shift.employee}
+                                                            </p>
+                                                            <p className="text-xs text-gray-500">{shift.startTime} - {shift.endTime} {shift.role&&"· "+shift.role} {empHours>0&&mgrAccess&&"· "+empHours.toFixed(1)+"h"+(isOT?" ⚠️":"")}</p>
+                                                            {shift.notes&&<p className="text-xs text-gray-500 italic mt-0.5">📝 {shift.notes}</p>}
+                                                            {hasConflict&&<p className="text-xs text-red-600 font-bold">⚠️ {language==="es"?"Conflicto con descanso aprobado":"Conflict with approved time off"}</p>}
+                                                            {availStatus===false&&<p className="text-xs text-yellow-700 font-bold">⚠️ {language==="es"?"Fuera de disponibilidad":"Outside availability"}</p>}
                                                         </div>
                                                         <div className="flex gap-1">
+                                                            {isOpen && !mgrAccess && (
+                                                                <button onClick={()=>claimOpenShift(shift.id)} className="text-xs bg-blue-600 text-white px-2 py-1 rounded-lg font-bold">{language==="es"?"🙋 Tomar":"🙋 Claim"}</button>
+                                                            )}
                                                             {!mgrAccess && isMine && schedStatus==="published" && (
                                                                 <button onClick={()=>offerShift(shift)} className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded-lg font-bold">🔄</button>
                                                             )}
@@ -3700,21 +3848,29 @@
                                                     </div>
                                                 );
                                             })}
-                                            {/* Add shift form */}
                                             {mgrAccess && showAddShift===dayIdx ? (
                                                 <div className="p-3 bg-green-50 space-y-2">
                                                     <select value={newShiftEmp} onChange={e=>setNewShiftEmp(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white">
                                                         <option value="">{language==="es"?"Seleccionar empleado...":"Select employee..."}</option>
-                                                        {staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>(<option key={s.id} value={s.name}>{s.name} ({s.role})</option>))}
+                                                        <option value="__OPEN__">🆕 {language==="es"?"Turno Abierto (sin asignar)":"Open Shift (unassigned)"}</option>
+                                                        {staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>{
+                                                            const avail = allAvailability.find(a=>a.name===s.name);
+                                                            const dayAvail = avail?.days?.[dayKey];
+                                                            const isAvail = dayAvail?.available;
+                                                            const hasConflict = hasTimeOffConflict(s.name, dayIdx);
+                                                            const label = s.name + " (" + s.role + ")" + (hasConflict?" ⛔":isAvail===false?" ❌":isAvail===true?" ✅":"");
+                                                            return <option key={s.id} value={s.name}>{label}</option>;
+                                                        })}
                                                     </select>
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <div><label className="text-xs text-gray-500">{language==="es"?"Inicio":"Start"}</label><input type="time" value={newShiftStart} onChange={e=>setNewShiftStart(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
                                                         <div><label className="text-xs text-gray-500">{language==="es"?"Fin":"End"}</label><input type="time" value={newShiftEnd} onChange={e=>setNewShiftEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
                                                     </div>
                                                     <input type="text" value={newShiftRole} onChange={e=>setNewShiftRole(e.target.value)} placeholder={language==="es"?"Rol / Estación":"Role / Station"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
+                                                    <input type="text" value={newShiftNotes} onChange={e=>setNewShiftNotes(e.target.value)} placeholder={language==="es"?"Notas (ej: día de entrenamiento)":"Notes (e.g., training day)"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                     <div className="flex gap-2">
-                                                        <button onClick={()=>{if(newShiftEmp)saveShift(dayKey,newShiftEmp,newShiftStart,newShiftEnd,newShiftRole);}} disabled={!newShiftEmp} className={"flex-1 py-2 rounded-xl text-sm font-bold "+(newShiftEmp?"bg-green-600 text-white":"bg-gray-200 text-gray-400")}>{language==="es"?"Agregar":"Add"}</button>
-                                                        <button onClick={()=>setShowAddShift(null)} className="flex-1 py-2 rounded-xl text-sm font-bold bg-gray-200 text-gray-600">{language==="es"?"Cancelar":"Cancel"}</button>
+                                                        <button onClick={()=>{if(newShiftEmp)saveShift(dayKey,newShiftEmp,newShiftStart,newShiftEnd,newShiftRole,newShiftNotes);}} disabled={!newShiftEmp} className={"flex-1 py-2 rounded-xl text-sm font-bold "+(newShiftEmp?"bg-green-600 text-white":"bg-gray-200 text-gray-400")}>{language==="es"?"Agregar":"Add"}</button>
+                                                        <button onClick={()=>{setShowAddShift(null);setNewShiftEmp("");setNewShiftRole("");setNewShiftNotes("");}} className="flex-1 py-2 rounded-xl text-sm font-bold bg-gray-200 text-gray-600">{language==="es"?"Cancelar":"Cancel"}</button>
                                                     </div>
                                                 </div>
                                             ) : mgrAccess && (
@@ -3724,15 +3880,15 @@
                                     </div>
                                 );
                             })}
+                            {mgrAccess && <p className="text-xs text-gray-400 text-center pt-2">💡 {language==="es"?"Tip: Arrastra los turnos entre días para moverlos":"Tip: Drag shifts between days to move them"}</p>}
                         </div>
                     )}
 
-                    {/* ===== AVAILABILITY ===== */}
                     {schedTab === "avail" && (
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
                                 <p className="font-bold text-gray-800 text-sm">🕐 {language==="es"?"Mi Disponibilidad":"My Availability"}</p>
-                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Marca los días y horarios que puedes trabajar. Los gerentes verán esto al crear el horario.":"Mark the days and times you can work. Managers will see this when creating the schedule."}</p>
+                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Marca los días y horarios que puedes trabajar.":"Mark the days and times you can work."}</p>
                             </div>
                             {DAY_KEYS.map((dayKey,dayIdx) => {
                                 const dayAvail = availability[dayKey] || {available:false,start:"",end:""};
@@ -3754,27 +3910,42 @@
                                     </div>
                                 );
                             })}
-                            {/* Manager view: all staff availability */}
+
                             {mgrAccess && (
-                                <div className="mt-4">
-                                    <p className="font-bold text-gray-800 text-sm mb-2">👥 {language==="es"?"Disponibilidad del Equipo":"Team Availability"}</p>
-                                    <p className="text-xs text-gray-400 mb-3">{language==="es"?"Toca un empleado para ver su disponibilidad detallada en Firebase.":"View submitted availability. Staff availability updates in real-time."}</p>
-                                    <button onClick={async()=>{
-                                        const snap = await db.collection("availability").get();
-                                        const allAvail = snap.docs.map(d=>({name:d.data().name,days:d.data().days||{}}));
-                                        alert(allAvail.map(a=>a.name+": "+DAY_KEYS.filter(dk=>a.days[dk]?.available).map((dk,i)=>DAYS[DAY_KEYS.indexOf(dk)].slice(0,3)).join(", ")).join("\n")||"No availability submitted yet");
-                                    }} className="w-full py-3 bg-poke-600 text-white rounded-2xl font-bold text-sm active:scale-95">{language==="es"?"Ver Disponibilidad del Equipo":"View Team Availability"}</button>
+                                <div className="mt-4 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                    <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b">
+                                        <p className="font-bold text-poke-700 text-sm">👥 {language==="es"?"Disponibilidad del Equipo":"Team Availability"}</p>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-xs">
+                                            <thead className="bg-gray-50">
+                                                <tr><th className="p-2 text-left font-bold">{language==="es"?"Nombre":"Name"}</th>{DAYS.map((d,i)=>(<th key={i} className="p-2 font-bold">{d.slice(0,3)}</th>))}</tr>
+                                            </thead>
+                                            <tbody>
+                                                {staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>{
+                                                    const avail = allAvailability.find(a=>a.name===s.name);
+                                                    return (
+                                                        <tr key={s.id} className="border-t border-gray-100">
+                                                            <td className="p-2 font-semibold">{s.name.split(" ")[0]}</td>
+                                                            {DAY_KEYS.map((dk,i)=>{
+                                                                const da = avail?.days?.[dk];
+                                                                return <td key={i} className="p-2 text-center">{da?.available?"✅":da===undefined?"—":"❌"}</td>;
+                                                            })}
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
                             )}
                         </div>
                     )}
 
-                    {/* ===== TIME OFF ===== */}
                     {schedTab === "timeoff" && (
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 space-y-3">
                                 <p className="font-bold text-gray-800 text-sm">🏖️ {language==="es"?"Solicitar Descanso":"Request Time Off"}</p>
-                                <p className="text-xs text-gray-400">{language==="es"?"Selecciona las fechas y envía tu solicitud. Tu gerente la revisará.":"Select the dates and submit your request. Your manager will review it."}</p>
                                 <div className="grid grid-cols-2 gap-2">
                                     <div><label className="text-xs text-gray-500">{language==="es"?"Desde":"From"}</label><input type="date" value={toStartDate} onChange={e=>setToStartDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
                                     <div><label className="text-xs text-gray-500">{language==="es"?"Hasta":"To"}</label><input type="date" value={toEndDate} onChange={e=>setToEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
@@ -3782,7 +3953,6 @@
                                 <input type="text" value={toReason} onChange={e=>setToReason(e.target.value)} placeholder={language==="es"?"Razón (opcional)":"Reason (optional)"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                 <button onClick={submitTimeOff} disabled={!toStartDate||!toEndDate} className={"w-full py-3 rounded-xl font-bold text-sm "+(toStartDate&&toEndDate?"bg-poke-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>{language==="es"?"Enviar Solicitud":"Submit Request"}</button>
                             </div>
-
                             <p className="font-bold text-gray-800 text-sm">{language==="es"?"Solicitudes":"Requests"}</p>
                             {timeOffRequests.filter(r=>mgrAccess||r.employee===staffName).map(req=>(
                                 <div key={req.id} className={"bg-white rounded-xl border p-3 "+(req.status==="approved"?"border-green-200":req.status==="denied"?"border-red-200":"border-yellow-200")}>
@@ -3809,12 +3979,11 @@
                         </div>
                     )}
 
-                    {/* ===== SHIFT SWAPS ===== */}
                     {schedTab === "swaps" && (
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
                                 <p className="font-bold text-gray-800 text-sm">🔄 {language==="es"?"Intercambio de Turnos":"Shift Swaps"}</p>
-                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Ofrece un turno que no puedes trabajar. Tus compañeros pueden reclamarlo y un gerente lo aprueba.":"Offer a shift you can\'t work. Coworkers can claim it and a manager approves."}</p>
+                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Ofrece un turno que no puedes trabajar.":"Offer a shift you can't work."}</p>
                             </div>
                             {swapOffers.filter(s=>s.status==="open"||s.status==="pending_approval"||(mgrAccess)).map(swap=>(
                                 <div key={swap.id} className={"bg-white rounded-xl border p-3 "+(swap.status==="approved"?"border-green-200":swap.status==="open"?"border-yellow-200":"border-blue-200")}>
@@ -3825,7 +3994,7 @@
                                             <button onClick={()=>claimSwap(swap.id)} className="flex-1 py-1.5 bg-poke-600 text-white rounded-xl text-xs font-bold">{language==="es"?"🙋 Reclamar":"🙋 Claim"}</button>
                                         )}
                                         {swap.status==="open" && <span className="text-xs text-yellow-600 font-bold">⏳ {language==="es"?"Disponible":"Available"}</span>}
-                                        {swap.status==="pending_approval" && <span className="text-xs text-blue-600 font-bold">🙋 {swap.claimedBy} — {language==="es"?"esperando aprobación":"awaiting approval"}</span>}
+                                        {swap.status==="pending_approval" && <span className="text-xs text-blue-600 font-bold">🙋 {swap.claimedBy} — {language==="es"?"esperando":"awaiting"}</span>}
                                         {swap.status==="pending_approval" && mgrAccess && (
                                             <button onClick={()=>approveSwap(swap)} className="py-1.5 px-3 bg-green-600 text-white rounded-xl text-xs font-bold">✅</button>
                                         )}
@@ -3839,48 +4008,106 @@
                         </div>
                     )}
 
-                    {/* ===== LABOR COSTS ===== */}
-                    {schedTab === "labor" && (
+                    {schedTab === "hours" && mgrAccess && (
+                        <div className="space-y-3">
+                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                <p className="font-bold text-gray-800 text-sm">⏱️ {language==="es"?"Horas del Equipo":"Team Hours"}</p>
+                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Horas totales esta semana por empleado. Marcado en naranja si exceden 40h.":"Total hours this week per employee. Highlighted orange if over 40h."}</p>
+                            </div>
+                            {(()=>{
+                                const empHours = {};
+                                staffList.filter(s=>s.location===schedLocation||s.location==="all").forEach(s=>{empHours[s.name]=0;});
+                                shifts.forEach(s=>{
+                                    if(s.employee==="__OPEN__")return;
+                                    empHours[s.employee] = (empHours[s.employee]||0) + calcHours(s.startTime, s.endTime);
+                                });
+                                return Object.entries(empHours).sort((a,b)=>b[1]-a[1]).map(([emp,hrs])=>{
+                                    const isOT = hrs > 40;
+                                    const isLow = hrs > 0 && hrs < 20;
+                                    return (
+                                        <div key={emp} className={"bg-white rounded-xl border p-3 flex justify-between items-center "+(isOT?"border-orange-300 bg-orange-50":hrs===0?"border-gray-100 opacity-60":"border-gray-100")}>
+                                            <div>
+                                                <p className="font-semibold text-sm text-gray-800">{emp}</p>
+                                                <p className="text-xs text-gray-400">{shifts.filter(s=>s.employee===emp).length} {language==="es"?"turnos":"shifts"}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className={"font-bold text-lg "+(isOT?"text-orange-600":isLow?"text-gray-400":"text-gray-800")}>{hrs.toFixed(1)}h</p>
+                                                {isOT&&<p className="text-xs text-orange-600 font-bold">⚠️ OT</p>}
+                                            </div>
+                                        </div>
+                                    );
+                                });
+                            })()}
+                        </div>
+                    )}
+
+                    {schedTab === "templates" && mgrAccess && (
+                        <div className="space-y-3">
+                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                <p className="font-bold text-gray-800 text-sm">📋 {language==="es"?"Plantillas":"Schedule Templates"}</p>
+                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Guarda la semana actual como plantilla, o aplica una guardada.":"Save the current week as a template, or apply a saved one."}</p>
+                            </div>
+
+                            {showTemplateSave ? (
+                                <div className="bg-green-50 rounded-xl border border-green-200 p-3 space-y-2">
+                                    <input type="text" value={templateName} onChange={e=>setTemplateName(e.target.value)} placeholder={language==="es"?"Nombre de plantilla (ej: Semana Típica)":"Template name (e.g., Typical Week)"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
+                                    <div className="flex gap-2">
+                                        <button onClick={saveAsTemplate} disabled={!templateName} className={"flex-1 py-2 rounded-xl text-sm font-bold "+(templateName?"bg-green-600 text-white":"bg-gray-200 text-gray-400")}>{language==="es"?"Guardar":"Save"}</button>
+                                        <button onClick={()=>{setShowTemplateSave(false);setTemplateName("");}} className="flex-1 py-2 rounded-xl text-sm font-bold bg-gray-200 text-gray-600">{language==="es"?"Cancelar":"Cancel"}</button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <button onClick={()=>setShowTemplateSave(true)} disabled={shifts.length===0} className={"w-full py-3 rounded-xl text-sm font-bold "+(shifts.length>0?"bg-poke-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>
+                                    💾 {language==="es"?"Guardar Semana Actual como Plantilla":"Save Current Week as Template"} ({shifts.length} {language==="es"?"turnos":"shifts"})
+                                </button>
+                            )}
+
+                            <p className="font-bold text-gray-800 text-sm mt-4">{language==="es"?"Plantillas Guardadas":"Saved Templates"}</p>
+                            {templates.length===0?(
+                                <p className="text-center text-gray-400 text-sm py-6">{language==="es"?"Sin plantillas":"No templates yet"}</p>
+                            ):templates.map(t=>(
+                                <div key={t.id} className="bg-white rounded-xl border border-gray-100 p-3">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <p className="font-bold text-sm text-gray-800">{t.name}</p>
+                                            <p className="text-xs text-gray-400">{LOCATIONS.find(l=>l.id===t.location)?.name} · {t.shifts?.length||0} {language==="es"?"turnos":"shifts"} · {t.createdBy}</p>
+                                        </div>
+                                        <button onClick={()=>deleteTemplate(t.id)} className="text-red-400 text-xs">🗑️</button>
+                                    </div>
+                                    <button onClick={()=>applyTemplate(t)} disabled={t.location!==schedLocation} className={"w-full py-2 rounded-xl text-xs font-bold "+(t.location===schedLocation?"bg-poke-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>
+                                        {t.location===schedLocation?(language==="es"?"📋 Aplicar a Esta Semana":"📋 Apply to This Week"):(language==="es"?"⚠️ Ubicación diferente":"⚠️ Different location")}
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {schedTab === "labor" && mgrAccess && (
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
                                 <p className="font-bold text-gray-800 text-sm">💰 {language==="es"?"Costos Laborales":"Labor Costs"}</p>
-                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Resumen de horas y costos estimados para la semana actual. Solo visible para gerentes.":"Summary of hours and estimated costs for the current week. Managers only."}</p>
+                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Resumen de horas y costos estimados.":"Summary of hours and estimated costs."}</p>
                             </div>
-                            {!mgrAccess ? (
-                                <div className="text-center py-8 text-gray-400">
-                                    <div className="text-4xl mb-3">🔒</div>
-                                    <p className="text-sm">{language==="es"?"Solo gerentes":"Managers only"}</p>
-                                </div>
-                            ) : (()=>{
+                            {(()=>{
                                 const empHours = {};
                                 shifts.forEach(s=>{
+                                    if(s.employee==="__OPEN__")return;
                                     const hrs = calcHours(s.startTime, s.endTime);
                                     empHours[s.employee] = (empHours[s.employee]||0) + hrs;
                                 });
                                 const totalHours = Object.values(empHours).reduce((a,b)=>a+b,0);
+                                let totalCost = 0;
+                                Object.entries(empHours).forEach(([emp,hrs])=>{ totalCost += hrs * (wages[emp.replace(/\s/g,"_")] || 0); });
                                 const entries = Object.entries(empHours).sort((a,b)=>b[1]-a[1]);
                                 return (
                                     <div className="space-y-3">
-                                        {/* Location + week context */}
-                                        {canToggleLocation && (
-                                        <div className="flex gap-2">
-                                            {LOCATIONS.map(loc=>(
-                                                <button key={loc.id} onClick={()=>setSchedLocation(loc.id)}
-                                                    className={"flex-1 py-2 rounded-xl text-xs font-bold transition "+(schedLocation===loc.id?"bg-poke-700 text-white":"bg-gray-200 text-gray-600")}>{loc.name}</button>
-                                            ))}
-                                        </div>
-                                        )}
-
-                                        {/* Summary card */}
                                         <div className="bg-gradient-to-r from-poke-700 to-poke-600 rounded-2xl p-4 text-white">
                                             <div className="grid grid-cols-3 gap-2 text-center">
                                                 <div><p className="text-2xl font-bold">{entries.length}</p><p className="text-xs text-poke-200">{language==="es"?"Empleados":"Staff"}</p></div>
                                                 <div><p className="text-2xl font-bold">{totalHours.toFixed(1)}</p><p className="text-xs text-poke-200">{language==="es"?"Horas":"Hours"}</p></div>
-                                                <div><p className="text-2xl font-bold">{shifts.length}</p><p className="text-xs text-poke-200">{language==="es"?"Turnos":"Shifts"}</p></div>
+                                                <div><p className="text-2xl font-bold">${totalCost.toFixed(0)}</p><p className="text-xs text-poke-200">{language==="es"?"Costo":"Cost"}</p></div>
                                             </div>
                                         </div>
-
-                                        {/* Per-employee breakdown */}
                                         {entries.map(([emp,hrs])=>{
                                             const rate = wages[emp.replace(/\s/g,"_")] || 0;
                                             const isOT = hrs > 40;
@@ -3894,8 +4121,6 @@
                                                 </div>
                                             );
                                         })}
-
-                                        {/* Set wages - owner only */}
                                         {ownerAccess && (
                                             <div className="bg-white rounded-2xl border border-gray-100 p-3 space-y-2">
                                                 <p className="font-bold text-gray-800 text-sm">💵 {language==="es"?"Configurar Tarifas":"Set Hourly Rates"}</p>
@@ -5458,6 +5683,514 @@
         }
 
         // Main App Component
+
+        // ============ EMPLOYEE MANAGEMENT (Owner only) ============
+        function Employees({ language, staffName, staffList }) {
+            const [employees, setEmployees] = useState([]);
+            const [selectedEmp, setSelectedEmp] = useState(null);
+            const [editMode, setEditMode] = useState(false);
+            const [editData, setEditData] = useState({});
+            const [showAddNote, setShowAddNote] = useState(false);
+            const [noteText, setNoteText] = useState("");
+            const [searchQuery, setSearchQuery] = useState("");
+            const [showInactive, setShowInactive] = useState(false);
+
+            useEffect(() => {
+                const unsub = db.collection("employees").onSnapshot(snap => {
+                    setEmployees(snap.docs.map(d=>({id:d.id,...d.data()})));
+                });
+                return () => unsub();
+            }, []);
+
+            // Sync staffList → employees collection (creates records for staff that don't have one)
+            useEffect(() => {
+                staffList.forEach(async s => {
+                    const docId = s.name.replace(/\s/g,"_");
+                    const existing = employees.find(e => e.id === docId);
+                    if (!existing && staffName === "Steve Shih") {
+                        await db.collection("employees").doc(docId).set({
+                            name: s.name, role: s.role, location: s.location || "cwe",
+                            pin: s.pin, status: "active", createdAt: new Date().toISOString()
+                        }, { merge: true });
+                    }
+                });
+            }, [staffList.length, employees.length]);
+
+            const saveEmployee = async () => {
+                const docId = selectedEmp.name.replace(/\s/g,"_");
+                await db.collection("employees").doc(docId).set({
+                    ...editData, updatedAt: new Date().toISOString(), updatedBy: staffName
+                }, { merge: true });
+                setEditMode(false);
+                setSelectedEmp({...selectedEmp,...editData});
+            };
+
+            const addNote = async () => {
+                if(!noteText)return;
+                const docId = selectedEmp.name.replace(/\s/g,"_");
+                const newNotes = [...(selectedEmp.notes||[]),{id:Date.now().toString(),text:noteText,date:new Date().toISOString(),addedBy:staffName}];
+                await db.collection("employees").doc(docId).update({notes:newNotes});
+                setSelectedEmp({...selectedEmp,notes:newNotes});
+                setNoteText(""); setShowAddNote(false);
+            };
+
+            const toggleStatus = async () => {
+                if(!confirm(language==="es"?"¿Cambiar estado de "+selectedEmp.name+"?":"Change status for "+selectedEmp.name+"?"))return;
+                const docId = selectedEmp.name.replace(/\s/g,"_");
+                const newStatus = selectedEmp.status === "active" ? "inactive" : "active";
+                const event = {
+                    id: Date.now().toString(),
+                    type: newStatus === "active" ? "reactivated" : "deactivated",
+                    date: new Date().toISOString(),
+                    by: staffName
+                };
+                const history = [...(selectedEmp.history||[]), event];
+                await db.collection("employees").doc(docId).update({status:newStatus, history, updatedAt:new Date().toISOString()});
+                setSelectedEmp({...selectedEmp,status:newStatus,history});
+            };
+
+            const visibleEmps = employees.filter(e=>{
+                if(!showInactive && e.status==="inactive") return false;
+                if(searchQuery && !e.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+                return true;
+            }).sort((a,b)=>a.name.localeCompare(b.name));
+
+            if (selectedEmp) {
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <button onClick={()=>{setSelectedEmp(null);setEditMode(false);}} className="text-sm text-poke-600 font-bold mb-3">← {language==="es"?"Volver":"Back"}</button>
+
+                        <div className="bg-gradient-to-r from-poke-700 to-poke-600 rounded-2xl p-5 text-white mb-4">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <h2 className="text-2xl font-bold">{selectedEmp.name}</h2>
+                                    <p className="text-poke-200 text-sm">{selectedEmp.role} · {selectedEmp.location==="all"?"All Locations":selectedEmp.location==="cwe"?"Central West End":"Kirkwood"}</p>
+                                </div>
+                                <span className={"text-xs font-bold px-2 py-1 rounded-full "+(selectedEmp.status==="active"?"bg-green-400 text-green-900":"bg-red-400 text-red-900")}>{selectedEmp.status==="active"?"✅ ACTIVE":"❌ INACTIVE"}</span>
+                            </div>
+                        </div>
+
+                        {!editMode?(
+                            <div className="space-y-3">
+                                {/* Contact Info */}
+                                <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                                    <p className="font-bold text-gray-800 text-sm mb-2">📞 {language==="es"?"Información de Contacto":"Contact Info"}</p>
+                                    <div className="space-y-1 text-sm">
+                                        <p><span className="text-gray-400">{language==="es"?"Teléfono":"Phone"}:</span> {selectedEmp.phone || "—"}</p>
+                                        <p><span className="text-gray-400">Email:</span> {selectedEmp.email || "—"}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Dirección":"Address"}:</span> {selectedEmp.address || "—"}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Contacto de Emergencia":"Emergency Contact"}:</span> {selectedEmp.emergencyContact || "—"} {selectedEmp.emergencyPhone && "("+selectedEmp.emergencyPhone+")"}</p>
+                                    </div>
+                                </div>
+
+                                {/* Employment Info */}
+                                <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                                    <p className="font-bold text-gray-800 text-sm mb-2">💼 {language==="es"?"Empleo":"Employment"}</p>
+                                    <div className="space-y-1 text-sm">
+                                        <p><span className="text-gray-400">{language==="es"?"Fecha de Contratación":"Hire Date"}:</span> {selectedEmp.hireDate || "—"}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Rol":"Role"}:</span> {selectedEmp.role}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Ubicación":"Location"}:</span> {selectedEmp.location}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Tarifa":"Wage"}:</span> ${selectedEmp.wage || "—"}/hr</p>
+                                        <p><span className="text-gray-400">{language==="es"?"PIN":"PIN"}:</span> {selectedEmp.pin}</p>
+                                    </div>
+                                </div>
+
+                                {/* Notes */}
+                                <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <p className="font-bold text-gray-800 text-sm">📝 {language==="es"?"Notas":"Notes"}</p>
+                                        <button onClick={()=>setShowAddNote(!showAddNote)} className="text-xs bg-poke-100 text-poke-700 px-2 py-1 rounded-lg font-bold">+ {language==="es"?"Nota":"Note"}</button>
+                                    </div>
+                                    {showAddNote && (
+                                        <div className="mb-2">
+                                            <textarea value={noteText} onChange={e=>setNoteText(e.target.value)} placeholder={language==="es"?"Ej: Excelente atención al cliente":"e.g., Excellent customer service"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" rows="2"/>
+                                            <button onClick={addNote} disabled={!noteText} className={"mt-2 w-full py-2 rounded-xl text-sm font-bold "+(noteText?"bg-poke-600 text-white":"bg-gray-200 text-gray-400")}>{language==="es"?"Agregar":"Add Note"}</button>
+                                        </div>
+                                    )}
+                                    {(selectedEmp.notes||[]).slice().reverse().map(n=>(
+                                        <div key={n.id} className="bg-gray-50 rounded-lg p-2 mb-1.5 text-sm">
+                                            <p className="text-gray-800">{n.text}</p>
+                                            <p className="text-xs text-gray-400 mt-1">{new Date(n.date).toLocaleDateString()} · {n.addedBy}</p>
+                                        </div>
+                                    ))}
+                                    {!(selectedEmp.notes||[]).length&&<p className="text-xs text-gray-400 italic">{language==="es"?"Sin notas":"No notes yet"}</p>}
+                                </div>
+
+                                {/* History */}
+                                <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                                    <p className="font-bold text-gray-800 text-sm mb-2">📜 {language==="es"?"Historial":"History"}</p>
+                                    {(selectedEmp.history||[]).slice().reverse().map(h=>(
+                                        <div key={h.id} className="text-sm py-1 border-b border-gray-50 last:border-0">
+                                            <span className="font-semibold">{h.type==="reactivated"?"✅ Reactivated":h.type==="deactivated"?"❌ Deactivated":h.type}</span>
+                                            <span className="text-gray-400 text-xs ml-2">{new Date(h.date).toLocaleDateString()} · {h.by}</span>
+                                        </div>
+                                    ))}
+                                    {!(selectedEmp.history||[]).length&&<p className="text-xs text-gray-400 italic">{language==="es"?"Sin historial":"No history yet"}</p>}
+                                </div>
+
+                                {/* Actions */}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button onClick={()=>{setEditMode(true);setEditData({...selectedEmp});}} className="py-3 bg-poke-600 text-white rounded-xl font-bold text-sm">✏️ {language==="es"?"Editar":"Edit"}</button>
+                                    <button onClick={toggleStatus} className={"py-3 rounded-xl font-bold text-sm "+(selectedEmp.status==="active"?"bg-red-500 text-white":"bg-green-600 text-white")}>{selectedEmp.status==="active"?"❌ "+(language==="es"?"Desactivar":"Deactivate"):"✅ "+(language==="es"?"Reactivar":"Reactivate")}</button>
+                                </div>
+                            </div>
+                        ):(
+                            <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
+                                <p className="font-bold text-gray-800 text-sm">✏️ {language==="es"?"Editar":"Edit"} {selectedEmp.name}</p>
+                                <div><label className="text-xs text-gray-500">{language==="es"?"Teléfono":"Phone"}</label><input type="tel" value={editData.phone||""} onChange={e=>setEditData({...editData,phone:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div><label className="text-xs text-gray-500">Email</label><input type="email" value={editData.email||""} onChange={e=>setEditData({...editData,email:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div><label className="text-xs text-gray-500">{language==="es"?"Dirección":"Address"}</label><input type="text" value={editData.address||""} onChange={e=>setEditData({...editData,address:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div><label className="text-xs text-gray-500">{language==="es"?"Contacto de Emergencia":"Emergency Contact"}</label><input type="text" value={editData.emergencyContact||""} onChange={e=>setEditData({...editData,emergencyContact:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div><label className="text-xs text-gray-500">{language==="es"?"Tel. de Emergencia":"Emergency Phone"}</label><input type="tel" value={editData.emergencyPhone||""} onChange={e=>setEditData({...editData,emergencyPhone:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div><label className="text-xs text-gray-500">{language==="es"?"Fecha de Contratación":"Hire Date"}</label><input type="date" value={editData.hireDate||""} onChange={e=>setEditData({...editData,hireDate:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div><label className="text-xs text-gray-500">{language==="es"?"Tarifa por Hora":"Hourly Wage"} ($)</label><input type="number" step="0.25" value={editData.wage||""} onChange={e=>setEditData({...editData,wage:parseFloat(e.target.value)||0})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div className="flex gap-2 mt-3">
+                                    <button onClick={saveEmployee} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold text-sm">💾 {language==="es"?"Guardar":"Save"}</button>
+                                    <button onClick={()=>setEditMode(false)} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold text-sm">{language==="es"?"Cancelar":"Cancel"}</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-1">👥 {language==="es"?"Empleados":"Employees"}</h2>
+                    <p className="text-sm text-gray-400 mb-4">{language==="es"?"Información detallada de cada miembro del personal":"Detailed info on each staff member"}</p>
+
+                    <input type="search" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder={language==="es"?"Buscar...":"Search..."} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm mb-3"/>
+
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs text-gray-500">{visibleEmps.length} {language==="es"?"empleados":"employees"}</p>
+                        <button onClick={()=>setShowInactive(!showInactive)} className="text-xs text-poke-600 font-bold">{showInactive?(language==="es"?"Ocultar inactivos":"Hide inactive"):(language==="es"?"Mostrar inactivos":"Show inactive")}</button>
+                    </div>
+
+                    <div className="space-y-2">
+                        {visibleEmps.map(emp=>(
+                            <button key={emp.id} onClick={()=>setSelectedEmp(emp)} className="w-full bg-white rounded-2xl border border-gray-100 shadow-sm p-3 text-left active:bg-gray-50">
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <p className={"font-bold text-sm "+(emp.status==="inactive"?"text-gray-400 line-through":"text-gray-800")}>{emp.name}</p>
+                                        <p className="text-xs text-gray-400">{emp.role} · {emp.location==="all"?"All":emp.location==="cwe"?"CWE":"Kirkwood"}{emp.hireDate&&" · Hired "+emp.hireDate}</p>
+                                    </div>
+                                    <span className={"text-xs font-bold "+(emp.status==="active"?"text-green-600":"text-red-500")}>{emp.status==="active"?"✅":"❌"}</span>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // ============ TEAM MESSAGING ============
+        function Messages({ language, staffName, staffList }) {
+            const [channels, setChannels] = useState(["general"]);
+            const [activeChannel, setActiveChannel] = useState("general");
+            const [messages, setMessages] = useState([]);
+            const [newMessage, setNewMessage] = useState("");
+            const [showDM, setShowDM] = useState(null);
+            const messagesEndRef = useRef(null);
+            const mgrAccess = isAdmin(staffName);
+            const myLoc = staffList.find(s=>s.name===staffName)?.location || "cwe";
+
+            // Determine channel ID (location-based or direct message)
+            const getChannelId = () => {
+                if (showDM) {
+                    const ids = [staffName, showDM].sort();
+                    return "dm_" + ids.join("_").replace(/\s/g,"_");
+                }
+                if (activeChannel === "general") return "channel_general";
+                if (activeChannel === "managers") return "channel_managers";
+                return "channel_" + activeChannel;
+            };
+
+            const channelId = getChannelId();
+
+            useEffect(() => {
+                const unsub = db.collection("messages").doc(channelId).collection("msgs")
+                    .orderBy("timestamp", "asc").limit(100).onSnapshot(snap => {
+                        setMessages(snap.docs.map(d=>({id:d.id,...d.data()})));
+                        setTimeout(()=>messagesEndRef.current?.scrollIntoView({behavior:"smooth"}),100);
+                    });
+                return () => unsub();
+            }, [channelId]);
+
+            const sendMessage = async () => {
+                if(!newMessage.trim())return;
+                await db.collection("messages").doc(channelId).collection("msgs").add({
+                    text: newMessage, from: staffName, timestamp: new Date().toISOString()
+                });
+                // Notify recipients
+                if (showDM) {
+                    sendNotification([showDM], "💬 " + staffName, newMessage.length>80?newMessage.slice(0,80)+"...":newMessage, {type:"dm"});
+                }
+                setNewMessage("");
+            };
+
+            const CHANNELS = [
+                {id:"general", name:"💬 General", access:"all"},
+                {id:"cwe", name:"📍 CWE", access:"cwe"},
+                {id:"kirkwood", name:"📍 Kirkwood", access:"kirkwood"},
+                {id:"managers", name:"👔 Managers", access:"managers"}
+            ];
+
+            const visibleChannels = CHANNELS.filter(c=>{
+                if(c.access==="all") return true;
+                if(c.access==="managers") return mgrAccess;
+                return myLoc===c.access || myLoc==="all" || mgrAccess;
+            });
+
+            if (showDM) {
+                return (
+                    <div className="flex flex-col h-screen pb-20">
+                        <div className="p-4 bg-gradient-to-r from-poke-700 to-poke-600 text-white sticky top-0 z-30">
+                            <button onClick={()=>setShowDM(null)} className="text-sm font-bold mb-1">← {language==="es"?"Volver":"Back"}</button>
+                            <h2 className="text-lg font-bold">💬 {showDM}</h2>
+                            <p className="text-xs text-poke-200">{language==="es"?"Mensaje directo":"Direct message"}</p>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-50">
+                            {messages.length===0&&<p className="text-center text-gray-400 text-sm py-8">{language==="es"?"Empieza la conversación":"Start the conversation"}</p>}
+                            {messages.map(m=>{
+                                const isMe = m.from===staffName;
+                                return (
+                                    <div key={m.id} className={"flex "+(isMe?"justify-end":"justify-start")}>
+                                        <div className={"max-w-xs px-3 py-2 rounded-2xl "+(isMe?"bg-poke-600 text-white":"bg-white border border-gray-100")}>
+                                            <p className="text-sm whitespace-pre-wrap">{m.text}</p>
+                                            <p className={"text-[10px] mt-1 "+(isMe?"text-poke-200":"text-gray-400")}>{new Date(m.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            <div ref={messagesEndRef}/>
+                        </div>
+                        <div className="p-3 border-t border-gray-100 bg-white flex gap-2 sticky bottom-0">
+                            <input value={newMessage} onChange={e=>setNewMessage(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),sendMessage())} placeholder={language==="es"?"Mensaje...":"Message..."} className="flex-1 px-4 py-2 border border-gray-200 rounded-full text-sm"/>
+                            <button onClick={sendMessage} disabled={!newMessage.trim()} className={"px-4 py-2 rounded-full font-bold text-sm "+(newMessage.trim()?"bg-poke-600 text-white":"bg-gray-200 text-gray-400")}>↑</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-1">💬 {language==="es"?"Mensajes":"Messages"}</h2>
+                    <p className="text-sm text-gray-400 mb-4">{language==="es"?"Comunícate con tu equipo":"Chat with your team"}</p>
+
+                    {/* Channels */}
+                    <div className="flex gap-2 overflow-x-auto mb-4 pb-1">
+                        {visibleChannels.map(c=>(
+                            <button key={c.id} onClick={()=>setActiveChannel(c.id)} className={"px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap "+(activeChannel===c.id?"bg-poke-600 text-white":"bg-gray-200 text-gray-600")}>{c.name}</button>
+                        ))}
+                    </div>
+
+                    {/* Channel Messages */}
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm mb-4 overflow-hidden">
+                        <div className="max-h-96 overflow-y-auto p-3 space-y-2 bg-gray-50">
+                            {messages.length===0&&<p className="text-center text-gray-400 text-sm py-8">{language==="es"?"Sin mensajes":"No messages yet"}</p>}
+                            {messages.map(m=>{
+                                const isMe = m.from===staffName;
+                                return (
+                                    <div key={m.id} className={"flex "+(isMe?"justify-end":"justify-start")}>
+                                        <div className={"max-w-xs px-3 py-2 rounded-2xl "+(isMe?"bg-poke-600 text-white":"bg-white border border-gray-100")}>
+                                            {!isMe&&<p className="text-xs font-bold text-poke-600 mb-0.5">{m.from}</p>}
+                                            <p className="text-sm whitespace-pre-wrap">{m.text}</p>
+                                            <p className={"text-[10px] mt-1 "+(isMe?"text-poke-200":"text-gray-400")}>{new Date(m.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            <div ref={messagesEndRef}/>
+                        </div>
+                        <div className="p-2 border-t border-gray-100 bg-white flex gap-2">
+                            <input value={newMessage} onChange={e=>setNewMessage(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),sendMessage())} placeholder={language==="es"?"Mensaje...":"Message..."} className="flex-1 px-3 py-2 border border-gray-200 rounded-full text-sm"/>
+                            <button onClick={sendMessage} disabled={!newMessage.trim()} className={"px-3 py-2 rounded-full font-bold text-sm "+(newMessage.trim()?"bg-poke-600 text-white":"bg-gray-200 text-gray-400")}>↑</button>
+                        </div>
+                    </div>
+
+                    {/* Direct Message Staff */}
+                    <p className="font-bold text-gray-800 text-sm mb-2">📩 {language==="es"?"Mensajes Directos":"Direct Messages"}</p>
+                    <div className="space-y-1">
+                        {staffList.filter(s=>s.name!==staffName).map(s=>(
+                            <button key={s.id} onClick={()=>setShowDM(s.name)} className="w-full flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-100 active:bg-gray-50">
+                                <div className="w-10 h-10 rounded-full bg-poke-100 text-poke-700 font-bold flex items-center justify-center">{s.name.split(" ").map(n=>n[0]).join("")}</div>
+                                <div className="flex-1 text-left">
+                                    <p className="font-semibold text-gray-800 text-sm">{s.name}</p>
+                                    <p className="text-xs text-gray-400">{s.role}</p>
+                                </div>
+                                <span className="text-gray-300">→</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // ============ DASHBOARD (owner only) ============
+        function Dashboard({ language, staffName, staffList }) {
+            const [stats, setStats] = useState({});
+            const [recentActivity, setRecentActivity] = useState([]);
+
+            useEffect(() => {
+                let mounted = true;
+                async function loadStats() {
+                    try {
+                        // Inventory stats
+                        const invDoc = await db.collection("ops").doc("inventory").get();
+                        const counts = invDoc.exists ? invDoc.data().counts || {} : {};
+                        const customInv = invDoc.exists ? invDoc.data().customInventory || [] : [];
+                        let belowPar = 0, outOfStock = 0;
+                        customInv.forEach(cat=>cat.items.forEach(item=>{
+                            const c = counts[item.id]||0;
+                            if(item.par && c < item.par) belowPar++;
+                            if(c === 0 && item.par) outOfStock++;
+                        }));
+
+                        // Pending orders
+                        const ordersSnap = await db.collection("pendingOrders").where("status","==","pending").get();
+
+                        // Schedule for current week
+                        const today = new Date();
+                        const monday = new Date(today); monday.setDate(today.getDate()-today.getDay()+1);
+                        const weekStart = monday.toISOString().split("T")[0];
+                        const schedCWE = await db.collection("schedules").doc("cwe_"+weekStart).get();
+                        const schedKW = await db.collection("schedules").doc("kirkwood_"+weekStart).get();
+                        const shiftsCWE = schedCWE.exists ? schedCWE.data().shifts||[] : [];
+                        const shiftsKW = schedKW.exists ? schedKW.data().shifts||[] : [];
+
+                        // Time off pending
+                        const toSnap = await db.collection("timeOffRequests").where("status","==","pending").get();
+
+                        // Swaps pending
+                        const swapSnap = await db.collection("shiftSwaps").where("status","==","pending_approval").get();
+
+                        // Maintenance open
+                        const maintSnap = await db.collection("maintenanceRequests").where("status","==","open").get();
+
+                        // Calculate labor cost estimates
+                        const wagesDoc = await db.collection("ops").doc("wages").get();
+                        const wages = wagesDoc.exists ? wagesDoc.data() : {};
+                        const calcHours = (s,e)=>{if(!s||!e)return 0;const[sh,sm]=s.split(":").map(Number);const[eh,em]=e.split(":").map(Number);return Math.max(0,((eh*60+em)-(sh*60+sm))/60);};
+                        let totalLaborCWE = 0, totalLaborKW = 0;
+                        shiftsCWE.forEach(s=>{if(s.employee!=="__OPEN__"){totalLaborCWE += calcHours(s.startTime,s.endTime)*(wages[s.employee.replace(/\s/g,"_")]||0);}});
+                        shiftsKW.forEach(s=>{if(s.employee!=="__OPEN__"){totalLaborKW += calcHours(s.startTime,s.endTime)*(wages[s.employee.replace(/\s/g,"_")]||0);}});
+
+                        // Waste log this week
+                        const weekAgo = new Date(Date.now()-7*86400000).toISOString();
+                        const wasteSnap = await db.collection("wasteLog").where("date",">=",weekAgo).get();
+
+                        if(!mounted)return;
+                        setStats({
+                            belowPar, outOfStock,
+                            pendingOrders: ordersSnap.size,
+                            shiftsThisWeek: shiftsCWE.length + shiftsKW.length,
+                            openShifts: shiftsCWE.filter(s=>s.employee==="__OPEN__").length + shiftsKW.filter(s=>s.employee==="__OPEN__").length,
+                            pendingTimeOff: toSnap.size,
+                            pendingSwaps: swapSnap.size,
+                            openMaint: maintSnap.size,
+                            laborCWE: totalLaborCWE,
+                            laborKW: totalLaborKW,
+                            laborTotal: totalLaborCWE + totalLaborKW,
+                            wasteThisWeek: wasteSnap.size,
+                            activeStaff: staffList.length
+                        });
+
+                        // Recent activity feed
+                        const activity = [];
+                        const auditsSnap = await db.collection("audits").orderBy("date","desc").limit(3).get();
+                        auditsSnap.forEach(d=>{const a=d.data();activity.push({type:"audit",text:"🔍 "+a.auditedBy+" audited inventory ("+a.itemsWithVariance+" variances)",date:a.date});});
+                        const recentOrders = await db.collection("pendingOrders").orderBy("date","desc").limit(3).get();
+                        recentOrders.forEach(d=>{const o=d.data();activity.push({type:"order",text:"📦 "+o.orderedBy+" ordered from "+o.supplier,date:o.date});});
+                        const recentDeliveries = await db.collection("deliveryLog").orderBy("date","desc").limit(3).get();
+                        recentDeliveries.forEach(d=>{const r=d.data();activity.push({type:"delivery",text:"📥 "+r.receivedBy+" received delivery",date:r.date});});
+                        activity.sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+                        if(!mounted)return;
+                        setRecentActivity(activity.slice(0,8));
+                    } catch(e){ console.error(e); }
+                }
+                loadStats();
+                return () => { mounted = false; };
+            }, [staffList.length]);
+
+            const card = (icon, label, value, color, sub) => (
+                <div className={"bg-white rounded-2xl border border-gray-100 shadow-sm p-4"}>
+                    <div className="flex items-center justify-between mb-1">
+                        <span className="text-2xl">{icon}</span>
+                        <span className={"text-2xl font-bold "+color}>{value}</span>
+                    </div>
+                    <p className="text-xs text-gray-500 font-semibold">{label}</p>
+                    {sub&&<p className="text-[10px] text-gray-400 mt-0.5">{sub}</p>}
+                </div>
+            );
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-1">📊 {language==="es"?"Panel Principal":"Dashboard"}</h2>
+                    <p className="text-sm text-gray-400 mb-4">{language==="es"?"Vista general del negocio":"Business overview"}</p>
+
+                    {/* Action items */}
+                    {(stats.pendingTimeOff>0||stats.pendingSwaps>0||stats.openMaint>0||stats.outOfStock>0)&&(
+                        <div className="bg-gradient-to-r from-red-500 to-orange-500 rounded-2xl p-4 mb-4 text-white">
+                            <p className="font-bold text-sm mb-2">⚠️ {language==="es"?"Necesita Atención":"Needs Attention"}</p>
+                            <div className="space-y-1 text-sm">
+                                {stats.outOfStock>0&&<button onClick={()=>setActiveTab("operations")} className="block w-full text-left active:opacity-70">❌ {stats.outOfStock} {language==="es"?"artículos agotados":"items out of stock"}</button>}
+                                {stats.pendingTimeOff>0&&<button onClick={()=>setActiveTab("schedule")} className="block w-full text-left active:opacity-70">🏖️ {stats.pendingTimeOff} {language==="es"?"solicitudes de descanso":"time-off requests"}</button>}
+                                {stats.pendingSwaps>0&&<button onClick={()=>setActiveTab("schedule")} className="block w-full text-left active:opacity-70">🔄 {stats.pendingSwaps} {language==="es"?"intercambios por aprobar":"swap approvals"}</button>}
+                                {stats.openMaint>0&&<button onClick={()=>setActiveTab("maintenance")} className="block w-full text-left active:opacity-70">🔧 {stats.openMaint} {language==="es"?"reparaciones abiertas":"open maintenance"}</button>}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Stats Grid */}
+                    <p className="font-bold text-gray-700 text-sm mb-2">📦 {language==="es"?"Inventario":"Inventory"}</p>
+                    <div className="grid grid-cols-3 gap-2 mb-4">
+                        {card("📊",language==="es"?"Bajo PAR":"Below PAR",stats.belowPar||0,stats.belowPar>0?"text-orange-600":"text-gray-800")}
+                        {card("❌",language==="es"?"Agotados":"Out",stats.outOfStock||0,stats.outOfStock>0?"text-red-600":"text-gray-800")}
+                        {card("🛒",language==="es"?"Pedidos":"Orders",stats.pendingOrders||0,"text-blue-600",language==="es"?"pendientes":"pending")}
+                    </div>
+
+                    <p className="font-bold text-gray-700 text-sm mb-2">👥 {language==="es"?"Personal":"Staff"}</p>
+                    <div className="grid grid-cols-3 gap-2 mb-4">
+                        {card("👤",language==="es"?"Equipo":"Team",stats.activeStaff||0,"text-gray-800")}
+                        {card("📅",language==="es"?"Turnos":"Shifts",stats.shiftsThisWeek||0,"text-gray-800",language==="es"?"esta semana":"this week")}
+                        {card("🆕",language==="es"?"Abiertos":"Open",stats.openShifts||0,stats.openShifts>0?"text-blue-600":"text-gray-800",language==="es"?"sin asignar":"unassigned")}
+                    </div>
+
+                    <p className="font-bold text-gray-700 text-sm mb-2">💰 {language==="es"?"Costos":"Costs"}</p>
+                    <div className="grid grid-cols-2 gap-2 mb-4">
+                        <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                            <p className="text-xs text-gray-400">CWE</p>
+                            <p className="text-2xl font-bold text-poke-600">${(stats.laborCWE||0).toFixed(0)}</p>
+                            <p className="text-[10px] text-gray-400">{language==="es"?"costo laboral":"labor cost"}</p>
+                        </div>
+                        <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                            <p className="text-xs text-gray-400">Kirkwood</p>
+                            <p className="text-2xl font-bold text-poke-600">${(stats.laborKW||0).toFixed(0)}</p>
+                            <p className="text-[10px] text-gray-400">{language==="es"?"costo laboral":"labor cost"}</p>
+                        </div>
+                    </div>
+                    <div className="bg-gradient-to-r from-poke-700 to-poke-600 rounded-2xl p-4 mb-4 text-white">
+                        <p className="text-xs text-poke-200">{language==="es"?"Total Semanal":"Weekly Total"}</p>
+                        <p className="text-3xl font-bold">${(stats.laborTotal||0).toFixed(0)}</p>
+                        <p className="text-xs text-poke-200">{language==="es"?"costo laboral combinado":"combined labor"}</p>
+                    </div>
+
+                    {/* Recent Activity */}
+                    <p className="font-bold text-gray-700 text-sm mb-2">📜 {language==="es"?"Actividad Reciente":"Recent Activity"}</p>
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-50">
+                        {recentActivity.length===0?(
+                            <p className="p-4 text-center text-gray-400 text-sm">{language==="es"?"Sin actividad":"No recent activity"}</p>
+                        ):recentActivity.map((a,i)=>(
+                            <div key={i} className="p-3 flex justify-between items-center">
+                                <p className="text-sm text-gray-700">{a.text}</p>
+                                <p className="text-xs text-gray-400">{a.date?new Date(a.date).toLocaleDateString():""}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
         function App() {
             const [staffName, setStaffName] = useState(null);
             const [language, setLanguage] = useState("en");
@@ -5638,6 +6371,38 @@
                                         <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Mantenimiento" : "Maintenance"}</div>
                                         <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Reportar" : "Report issue"}</div>
                                     </button>
+                                    {staffIsOwner && (
+                                        <button
+                                            onClick={() => setActiveTab("dashboard")}
+                                            className="card-hover col-span-2 p-4 bg-gradient-to-r from-poke-700 to-poke-600 rounded-2xl shadow-sm text-left"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center text-2xl">📊</div>
+                                                <div>
+                                                    <div className="font-bold text-white text-sm">Dashboard</div>
+                                                    <div className="text-xs text-poke-200 mt-0.5">{language === "es" ? "Vista general del negocio" : "Business overview"}</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => setActiveTab("messages")}
+                                        className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                    >
+                                        <div className="w-12 h-12 bg-cyan-50 rounded-xl flex items-center justify-center text-2xl mb-3">💬</div>
+                                        <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Mensajes" : "Messages"}</div>
+                                        <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Chatea con el equipo" : "Chat with team"}</div>
+                                    </button>
+                                    {staffIsOwner && (
+                                        <button
+                                            onClick={() => setActiveTab("employees")}
+                                            className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                        >
+                                            <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-2xl mb-3">👥</div>
+                                            <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Empleados" : "Employees"}</div>
+                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Info detallada" : "Detailed info"}</div>
+                                        </button>
+                                    )}
                                     {staffIsAdmin && (
                                         <button
                                             onClick={() => setActiveTab("admin")}
@@ -5660,6 +6425,9 @@
                         {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} staffList={staffList} />}
+                        {activeTab === "dashboard" && staffIsOwner && <Dashboard language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "employees" && staffIsOwner && <Employees language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "messages" && <Messages language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "recipes" && canViewRecipes && <Recipes language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} />}
