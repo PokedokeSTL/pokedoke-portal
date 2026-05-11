@@ -3653,6 +3653,8 @@
             const [schedLocation, setSchedLocation] = useState("cwe");
             const [weekOffset, setWeekOffset] = useState(0);
             const [shifts, setShifts] = useState([]);
+            const [publishedShifts, setPublishedShifts] = useState([]);
+            const [hasUnpublishedChanges, setHasUnpublishedChanges] = useState(false);
             const [schedStatus, setSchedStatus] = useState("draft");
             const [showAddShift, setShowAddShift] = useState(null);
             const [newShiftIsBD, setNewShiftIsBD] = useState(false);
@@ -3728,11 +3730,26 @@
 
             useEffect(() => {
                 const unsub = db.collection("schedules").doc(weekKey).onSnapshot(doc => {
-                    if (doc.exists) { setShifts(doc.data().shifts || []); setSchedStatus(doc.data().status || "draft"); }
-                    else { setShifts([]); setSchedStatus("draft"); }
+                    if (doc.exists) {
+                        const data = doc.data();
+                        // New format: has publishedShifts and draftShifts
+                        // Legacy format: just has shifts array
+                        const pubShifts = data.publishedShifts || (data.status === "published" ? (data.shifts || []) : []);
+                        const draftShifts = data.draftShifts || data.shifts || [];
+                        setPublishedShifts(pubShifts);
+                        // Managers see draft (editable), staff see published only
+                        setShifts(mgrAccess ? draftShifts : pubShifts);
+                        setSchedStatus(data.status || "draft");
+                        setHasUnpublishedChanges(!!data.hasUnpublishedChanges);
+                    } else {
+                        setPublishedShifts([]);
+                        setShifts([]);
+                        setSchedStatus("draft");
+                        setHasUnpublishedChanges(false);
+                    }
                 });
                 return () => unsub();
-            }, [weekKey]);
+            }, [weekKey, mgrAccess]);
 
             useEffect(() => {
                 const unsub = db.collection("availability").doc(staffName.replace(/\s/g,"_")).onSnapshot(doc => {
@@ -3838,11 +3855,31 @@
                 return shifts.filter(s=>s.employee===empName).reduce((sum,s)=>sum+calcHours(s.startTime,s.endTime),0);
             };
 
+            // Helper: write to draft. If schedule was published and the draft differs from published, flag it.
+            const writeDraft = async (newDraftShifts, extraFields = {}) => {
+                // Determine if we're now "out of sync" with published
+                const publishedJSON = JSON.stringify([...publishedShifts].sort((a,b)=>(a.id||"").localeCompare(b.id||"")));
+                const draftJSON = JSON.stringify([...newDraftShifts].sort((a,b)=>(a.id||"").localeCompare(b.id||"")));
+                const wasPublished = schedStatus === "published";
+                const isOutOfSync = wasPublished && (publishedJSON !== draftJSON);
+                await db.collection("schedules").doc(weekKey).set({
+                    draftShifts: newDraftShifts,
+                    publishedShifts: publishedShifts, // preserve published copy
+                    hasUnpublishedChanges: isOutOfSync,
+                    status: schedStatus,
+                    location: schedLocation,
+                    weekStart,
+                    updatedBy: staffName,
+                    updatedAt: new Date().toISOString(),
+                    ...extraFields
+                }, { merge: true });
+            };
+
             const saveShift = async (dayKey, emp, start, end, role, notes="", isBD=false) => {
                 const newShift = {id:Date.now().toString(), day:dayKey, employee:emp, startTime:start, endTime:end, role, notes, isBD, location:schedLocation};
                 const updated = [...shifts, newShift];
                 setShifts(updated);
-                await db.collection("schedules").doc(weekKey).set({shifts:updated, status:schedStatus, location:schedLocation, weekStart, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
+                await writeDraft(updated);
                 setShowAddShift(null); setNewShiftEmp(""); setNewShiftStart("10:00"); setNewShiftEnd("18:00"); setNewShiftRole(""); setNewShiftNotes(""); setNewShiftIsBD(false);
             };
 
@@ -3853,7 +3890,7 @@
             const deleteShift = async (shiftId) => {
                 const updated = shifts.filter(s=>s.id!==shiftId);
                 setShifts(updated);
-                await db.collection("schedules").doc(weekKey).set({shifts:updated, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
+                await writeDraft(updated);
             };
 
             const openEditShift = (shift) => {
@@ -3880,7 +3917,7 @@
                     isBD: editIsBD
                 } : s);
                 setShifts(updated);
-                await db.collection("schedules").doc(weekKey).set({shifts:updated, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
+                await writeDraft(updated);
                 setEditingShift(null);
             };
 
@@ -3892,34 +3929,83 @@
             };
 
             const claimOpenShift = async (shiftId) => {
-                const updated = shifts.map(s=>s.id===shiftId?{...s,employee:staffName}:s);
-                setShifts(updated);
-                await db.collection("schedules").doc(weekKey).set({shifts:updated, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
+                // Claiming an open shift updates BOTH the published schedule (so staff see it immediately)
+                // AND the draft (so manager edits don't accidentally revert it)
+                const updatedPublished = publishedShifts.map(s=>s.id===shiftId?{...s,employee:staffName}:s);
+                const updatedDraft = (mgrAccess?shifts:shifts).map(s=>s.id===shiftId?{...s,employee:staffName}:s);
+                // For staff, shifts === publishedShifts. For mgrs, shifts === draftShifts.
+                setShifts(updatedDraft);
+                setPublishedShifts(updatedPublished);
+                await db.collection("schedules").doc(weekKey).set({
+                    publishedShifts: updatedPublished,
+                    draftShifts: updatedDraft,
+                    updatedBy: staffName,
+                    updatedAt: new Date().toISOString()
+                }, {merge: true});
                 sendNotification(staffList.filter(s=>isAdmin(s.name)).map(s=>s.name),"🙋 Open Shift Claimed",staffName+" claimed an open shift",{type:"openshift"});
             };
 
             const moveShift = async (shiftId, newDayKey) => {
                 const updated = shifts.map(s=>s.id===shiftId?{...s,day:newDayKey}:s);
                 setShifts(updated);
-                await db.collection("schedules").doc(weekKey).set({shifts:updated, updatedBy:staffName, updatedAt:new Date().toISOString()},{merge:true});
+                await writeDraft(updated);
             };
 
             const publishSchedule = async () => {
-                await db.collection("schedules").doc(weekKey).set({status:"published", publishedBy:staffName, publishedAt:new Date().toISOString()},{merge:true});
+                // Copy draft → published, clear the unpublished-changes flag
+                await db.collection("schedules").doc(weekKey).set({
+                    publishedShifts: shifts,
+                    draftShifts: shifts,
+                    status: "published",
+                    hasUnpublishedChanges: false,
+                    publishedBy: staffName,
+                    publishedAt: new Date().toISOString()
+                }, {merge: true});
+                setPublishedShifts(shifts);
                 setSchedStatus("published");
+                setHasUnpublishedChanges(false);
                 const locationStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>s.name);
                 const locName = LOCATIONS.find(l=>l.id===schedLocation)?.name || schedLocation;
                 sendNotification(locationStaff, "📅 New Schedule Published", locName + " schedule for week of " + new Date(weekStart+"T12:00:00").toLocaleDateString() + " is live!", {type:"schedule", weekKey});
             };
 
             const unpublishSchedule = async () => {
-                await db.collection("schedules").doc(weekKey).set({status:"draft"},{merge:true});
+                await db.collection("schedules").doc(weekKey).set({
+                    status: "draft",
+                    publishedShifts: [],
+                    hasUnpublishedChanges: false
+                }, {merge: true});
                 setSchedStatus("draft");
+                setPublishedShifts([]);
+                setHasUnpublishedChanges(false);
+            };
+
+            // Revert draft changes back to published
+            const revertChanges = async () => {
+                if (!confirm(language==="es"?"¿Descartar cambios y volver a la versión publicada?":"Discard changes and revert to published version?")) return;
+                setShifts(publishedShifts);
+                await db.collection("schedules").doc(weekKey).set({
+                    draftShifts: publishedShifts,
+                    hasUnpublishedChanges: false,
+                    updatedBy: staffName,
+                    updatedAt: new Date().toISOString()
+                }, {merge: true});
+                setHasUnpublishedChanges(false);
             };
 
             const copyWeek = async () => {
                 const nextWeekKey = schedLocation + "_" + getWeekStart(weekOffset + 1);
-                await db.collection("schedules").doc(nextWeekKey).set({shifts:shifts.map(s=>({...s,id:Date.now().toString()+Math.random()})), status:"draft", location:schedLocation, weekStart:getWeekStart(weekOffset+1), updatedBy:staffName, updatedAt:new Date().toISOString()});
+                const copiedShifts = shifts.map(s=>({...s,id:Date.now().toString()+Math.random()}));
+                await db.collection("schedules").doc(nextWeekKey).set({
+                    draftShifts: copiedShifts,
+                    publishedShifts: [],
+                    hasUnpublishedChanges: false,
+                    status: "draft",
+                    location: schedLocation,
+                    weekStart: getWeekStart(weekOffset+1),
+                    updatedBy: staffName,
+                    updatedAt: new Date().toISOString()
+                });
                 setWeekOffset(weekOffset+1);
             };
 
@@ -3937,10 +4023,10 @@
             };
 
             const applyTemplate = async (template) => {
-                if(!confirm(language==="es"?"¿Aplicar plantilla? Reemplazará los turnos actuales.":"Apply template? This will replace current shifts."))return;
+                if(!confirm(language==="es"?"¿Aplicar plantilla? Reemplazará los turnos del borrador.":"Apply template? This will replace draft shifts."))return;
                 const newShifts = template.shifts.map(s=>({...s,id:Date.now().toString()+Math.random(),location:schedLocation}));
                 setShifts(newShifts);
-                await db.collection("schedules").doc(weekKey).set({shifts:newShifts,status:"draft",location:schedLocation,weekStart,updatedBy:staffName,updatedAt:new Date().toISOString()},{merge:true});
+                await writeDraft(newShifts);
             };
 
             const deleteTemplate = async (id) => {
@@ -3948,9 +4034,8 @@
                 await db.collection("scheduleTemplates").doc(id).delete();
             };
 
-            // Auto-schedule suggestion based on availability
             const autoSchedule = async () => {
-                if(!confirm(language==="es"?"¿Generar sugerencia de horario basada en disponibilidad? Reemplazará el horario actual.":"Generate schedule based on availability? Will replace current shifts."))return;
+                if(!confirm(language==="es"?"¿Generar sugerencia de horario basada en disponibilidad? Reemplazará el borrador actual.":"Generate schedule based on availability? Will replace draft."))return;
                 const newShifts = [];
                 const locationStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all");
                 DAY_KEYS.forEach((dayKey,dayIdx)=>{
@@ -3961,12 +4046,12 @@
                         const hasTimeOff = timeOffRequests.some(req=>req.employee===emp.name&&req.status==="approved"&&shiftDate>=req.startDate&&shiftDate<=req.endDate);
                         if(hasTimeOff)return;
                         const start = empAvail.days[dayKey].start || "11:00";
-                        const end = empAvail.days[dayKey].end || "20:00";
+                        const end = empAvail.days[dayKey].end || closeTime;
                         newShifts.push({id:Date.now().toString()+Math.random(),day:dayKey,employee:emp.name,startTime:start,endTime:end,role:emp.role||"",notes:"",location:schedLocation});
                     });
                 });
                 setShifts(newShifts);
-                await db.collection("schedules").doc(weekKey).set({shifts:newShifts,status:"draft",location:schedLocation,weekStart,updatedBy:staffName,updatedAt:new Date().toISOString()},{merge:true});
+                await writeDraft(newShifts);
                 alert((language==="es"?"Generados ":"Generated ")+newShifts.length+(language==="es"?" turnos basados en disponibilidad":" shifts based on availability"));
             };
 
@@ -4005,9 +4090,17 @@
 
             const approveSwap = async (swap) => {
                 await db.collection("shiftSwaps").doc(swap.id).update({status:"approved", approvedBy:staffName, approvedAt:new Date().toISOString()});
-                const updated = shifts.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
-                setShifts(updated);
-                await db.collection("schedules").doc(swap.weekKey).set({shifts:updated},{merge:true});
+                // Swap approval is staff-facing; update both published and draft so it's visible immediately
+                const updatedPub = publishedShifts.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
+                const updatedDraft = shifts.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
+                setPublishedShifts(updatedPub);
+                setShifts(updatedDraft);
+                await db.collection("schedules").doc(swap.weekKey).set({
+                    publishedShifts: updatedPub,
+                    draftShifts: updatedDraft,
+                    updatedBy: staffName,
+                    updatedAt: new Date().toISOString()
+                }, {merge: true});
                 sendNotification([swap.offeredBy, swap.claimedBy], "✅ Shift Swap Approved", swap.claimedBy + " now has " + swap.offeredBy + "'s shift. Approved by " + staffName, {type:"swap"});
             };
 
@@ -4080,15 +4173,33 @@
                                 <button onClick={()=>setWeekOffset(weekOffset-1)} className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center font-bold text-gray-600">←</button>
                                 <div className="text-center">
                                     <p className="font-bold text-gray-800 text-sm">{language==="es"?"Semana del":"Week of"} {new Date(weekStart+"T12:00:00").toLocaleDateString(language==="es"?"es-US":"en-US",{month:"short",day:"numeric",year:"numeric"})}</p>
-                                    <p className={"text-xs font-bold "+(schedStatus==="published"?"text-green-600":"text-yellow-600")}>{schedStatus==="published"?(language==="es"?"✅ Publicado":"✅ Published"):(language==="es"?"📝 Borrador":"📝 Draft")}</p>
+                                    {schedStatus==="published"&&hasUnpublishedChanges&&mgrAccess?(
+                                        <p className="text-xs font-bold text-orange-600">⚠️ {language==="es"?"Publicado con cambios sin publicar":"Published — Unpublished Changes"}</p>
+                                    ):(
+                                        <p className={"text-xs font-bold "+(schedStatus==="published"?"text-green-600":"text-yellow-600")}>{schedStatus==="published"?(language==="es"?"✅ Publicado":"✅ Published"):(language==="es"?"📝 Borrador":"📝 Draft")}</p>
+                                    )}
                                 </div>
                                 <button onClick={()=>setWeekOffset(weekOffset+1)} className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center font-bold text-gray-600">→</button>
                             </div>
+
+                            {/* Unpublished changes banner for managers */}
+                            {schedStatus==="published"&&hasUnpublishedChanges&&mgrAccess&&(
+                                <div className="bg-orange-50 border border-orange-200 rounded-2xl p-3">
+                                    <p className="font-bold text-orange-800 text-sm">⚠️ {language==="es"?"Cambios Sin Publicar":"Unpublished Changes"}</p>
+                                    <p className="text-xs text-orange-700 mt-1">{language==="es"?"El equipo aún ve la versión publicada. Publica de nuevo para que vean tus cambios, o descarta para volver a la versión publicada.":"Staff still see the published version. Publish again to push your changes, or revert to discard them."}</p>
+                                    <div className="flex gap-2 mt-2">
+                                        <button onClick={publishSchedule} className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Republicar":"Republish"}</button>
+                                        <button onClick={revertChanges} className="flex-1 py-2 bg-white border border-orange-300 text-orange-700 rounded-xl text-xs font-bold active:scale-95">↩️ {language==="es"?"Descartar":"Revert"}</button>
+                                    </div>
+                                </div>
+                            )}
 
                             {mgrAccess && (
                                 <div className="grid grid-cols-2 gap-2">
                                     {schedStatus==="draft"?(
                                         <button onClick={publishSchedule} className="py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Publicar":"Publish"}</button>
+                                    ):hasUnpublishedChanges?(
+                                        <button onClick={publishSchedule} className="py-2 bg-orange-600 text-white rounded-xl text-xs font-bold active:scale-95">⚠️ {language==="es"?"Republicar":"Republish"}</button>
                                     ):(
                                         <button onClick={unpublishSchedule} className="py-2 bg-yellow-500 text-white rounded-xl text-xs font-bold active:scale-95">📝 {language==="es"?"Despublicar":"Unpublish"}</button>
                                     )}
