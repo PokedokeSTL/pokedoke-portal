@@ -15,19 +15,27 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Handle background messages (when app is not in focus)
 messaging.onBackgroundMessage((payload) => {
   console.log('[SW] Background message received:', payload);
+
+  const type = payload.data?.type || 'general';
+  const sender = payload.data?.from || '';
+  const isMessage = type === 'dm' || type === 'channel';
 
   const notificationTitle = payload.notification?.title || 'PokeDoke';
   const notificationOptions = {
     body: payload.notification?.body || '',
-    icon: '/manifest.json',
-    badge: '/manifest.json',
-    tag: payload.data?.tag || 'pokedoke-notification',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: isMessage ? ('msg-' + sender) : (payload.data?.tag || 'pokedoke-' + type),
+    renotify: true,
+    vibrate: isMessage ? [300, 100, 300, 100, 300] : [200, 100, 200],
+    requireInteraction: false,
+    silent: false,
     data: payload.data || {},
-    vibrate: [200, 100, 200],
-    actions: [
+    actions: isMessage ? [
+      { action: 'reply', title: 'Open' }
+    ] : [
       { action: 'open', title: 'Open App' }
     ]
   };
@@ -35,19 +43,26 @@ messaging.onBackgroundMessage((payload) => {
   return self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
-// Handle notification click
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const data = event.notification.data || {};
+
+  let targetPath = '/';
+  if (data.type === 'dm' || data.type === 'channel') {
+    targetPath = '/?tab=messages';
+  } else if (data.type === 'schedule' || data.type === 'swap' || data.type === 'openshift' || data.type === 'timeoff') {
+    targetPath = '/?tab=schedule';
+  }
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // If app is already open, focus it
       for (const client of clientList) {
         if (client.url.includes('staff.pokedoke.com') && 'focus' in client) {
+          client.postMessage({ type: 'notification-click', data: data });
           return client.focus();
         }
       }
-      // Otherwise open a new window
-      return clients.openWindow('/');
+      return clients.openWindow(targetPath);
     })
   );
 });

@@ -398,11 +398,17 @@
         if (messaging) {
             messaging.onMessage((payload) => {
                 console.log("Foreground message:", payload);
-                if (Notification.permission === "granted") {
-                    new Notification(payload.notification?.title || "PokeDoke", {
-                        body: payload.notification?.body || "",
-                        icon: "🐟"
-                    });
+                const type = payload.data?.type || 'general';
+                const sender = payload.data?.from || '';
+                const isMessage = type === 'dm' || type === 'channel';
+                // For foreground, show toast instead of system notification (less intrusive when app is open)
+                if (window.showToast) {
+                    const msg = (payload.notification?.title || "") + (payload.notification?.body ? ": " + payload.notification.body : "");
+                    window.showToast(msg, isMessage ? "info" : "success", 4000);
+                }
+                // Also vibrate if available
+                if (navigator.vibrate) {
+                    navigator.vibrate(isMessage ? [300, 100, 300] : [200]);
                 }
             });
         }
@@ -6813,14 +6819,34 @@
 
             const sendMessage = async () => {
                 if(!newMessage.trim())return;
+                const msgText = newMessage;
                 await db.collection("messages").doc(channelId).collection("msgs").add({
-                    text: newMessage, from: staffName, timestamp: new Date().toISOString()
+                    text: msgText, from: staffName, timestamp: new Date().toISOString()
                 });
-                // Notify recipients
-                if (showDM) {
-                    sendNotification([showDM], "💬 " + staffName, newMessage.length>80?newMessage.slice(0,80)+"...":newMessage, {type:"dm"});
-                }
                 setNewMessage("");
+
+                // Notify recipients
+                const preview = msgText.length > 120 ? msgText.slice(0,120) + "..." : msgText;
+                if (showDM) {
+                    // DM: notify just that person
+                    sendNotification([showDM], staffName, preview, {type:"dm", from:staffName});
+                } else {
+                    // Channel: notify everyone in that channel except sender
+                    let recipients = [];
+                    if (activeChannel === "general") {
+                        recipients = staffList.filter(s => s.name !== staffName).map(s => s.name);
+                    } else if (activeChannel === "managers") {
+                        recipients = staffList.filter(s => s.name !== staffName && isAdmin(s.name)).map(s => s.name);
+                    } else if (activeChannel === "cwe") {
+                        recipients = staffList.filter(s => s.name !== staffName && (s.location === "cwe" || s.location === "all")).map(s => s.name);
+                    } else if (activeChannel === "kirkwood") {
+                        recipients = staffList.filter(s => s.name !== staffName && (s.location === "kirkwood" || s.location === "all")).map(s => s.name);
+                    }
+                    if (recipients.length > 0) {
+                        const channelLabel = activeChannel === "general" ? "#general" : activeChannel === "managers" ? "#managers" : "#" + activeChannel;
+                        sendNotification(recipients, staffName + " in " + channelLabel, preview, {type:"channel", channel:activeChannel, from:staffName});
+                    }
+                }
             };
 
             const CHANNELS = [
@@ -7597,7 +7623,27 @@
                     await db.collection("userPrefs").doc(staffName.replace(/\s/g, "_")).set(updated, { merge: true });
                 } catch(e) { console.error(e); }
             };
-            const [activeTab, setActiveTab] = useState("home");
+            const [activeTab, setActiveTab] = useState(() => {
+                try {
+                    const params = new URLSearchParams(window.location.search);
+                    const t = params.get("tab");
+                    return t || "home";
+                } catch(e) { return "home"; }
+            });
+
+            // Listen for service worker messages (notification clicks while app is open)
+            useEffect(() => {
+                if (!('serviceWorker' in navigator)) return;
+                const handler = (event) => {
+                    if (event.data?.type === 'notification-click' && event.data?.data) {
+                        const d = event.data.data;
+                        if (d.type === 'dm' || d.type === 'channel') setActiveTab("messages");
+                        else if (d.type === 'schedule' || d.type === 'swap' || d.type === 'openshift' || d.type === 'timeoff') setActiveTab("schedule");
+                    }
+                };
+                navigator.serviceWorker.addEventListener('message', handler);
+                return () => navigator.serviceWorker.removeEventListener('message', handler);
+            }, []);
             const [staffList, setStaffList] = useState(DEFAULT_STAFF);
             const { isAtPokedoke, checking: geoChecking, error: geoError } = useGeofence();
 
