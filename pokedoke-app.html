@@ -419,6 +419,16 @@
         const isAdmin = (name) => ADMIN_NAMES.includes(name);
         const isOwner = (name) => OWNER_NAMES.includes(name);
 
+        // Global helper: format Date as YYYY-MM-DD in local time (avoids UTC shift bug)
+        // Use this anywhere we save dates to Firestore as date keys
+        window.fmtLocalDate = (d) => {
+            const dt = d || new Date();
+            const y = dt.getFullYear();
+            const m = String(dt.getMonth() + 1).padStart(2, "0");
+            const day = String(dt.getDate()).padStart(2, "0");
+            return `${y}-${m}-${day}`;
+        };
+
         // Avatar color palette
         const AVATAR_COLORS = [
             { id: "teal", bg: "#0891b2", text: "#ecfeff" },
@@ -2152,7 +2162,7 @@
 
             const saveInventorySnapshot = async (counts, items) => {
                 const now = new Date();
-                const key = now.toISOString().split("T")[0] + "_" + now.toTimeString().split(" ")[0].replace(/:/g, "");
+                const key = window.fmtLocalDate(now) + "_" + now.toTimeString().split(" ")[0].replace(/:/g, "");
                 // Filter out any undefined values from counts
                 const cleanCounts = {};
                 Object.entries(counts).forEach(([k, v]) => { cleanCounts[k] = v ?? 0; });
@@ -2899,7 +2909,7 @@
                                         </div>
                                     ))}
                                     <button onClick={async()=>{try{
-                                        await db.collection("quickCounts").doc(new Date().toISOString().split("T")[0]).set({counts:quickCounts,countedBy:staffName,date:new Date().toISOString()});
+                                        await db.collection("quickCounts").doc(window.fmtLocalDate()).set({counts:quickCounts,countedBy:staffName,date:new Date().toISOString()});
                                         const lowItems=Object.entries(quickCounts).filter(([k,v])=>v==="low"||v==="out");
                                         await db.collection("ops").doc("latestAlert").set({type:"quickcheck",by:staffName,date:new Date().toISOString(),lowCount:lowItems.length,outCount:Object.values(quickCounts).filter(v=>v==="out").length});
                                         alert(language==="es"?"¡Guardado!":"Saved!");
@@ -6871,8 +6881,8 @@
                             <h2 className="text-lg font-bold">💬 {showDM}</h2>
                             <p className="text-xs text-poke-200">{language==="es"?"Mensaje directo":"Direct message"}</p>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-2 style={{background:"var(--bg-subtle)"}}>
-                            {messages.length===0&&<p className="text-center text-gray-400 text-sm py-8">{language==="es"?"Empieza la conversación":"Start the conversation"}</p>}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-2" style={{background:"var(--bg-subtle)"}}>
+                            {messages.length===0&&<p className="text-center text-sm py-8" style={{color:"var(--text-muted)"}}>{language==="es"?"Empieza la conversación":"Start the conversation"}</p>}
                             {messages.map(m=>{
                                 const isMe = m.from===staffName;
                                 return (
@@ -6886,9 +6896,9 @@
                             })}
                             <div ref={messagesEndRef}/>
                         </div>
-                        <div className="p-3 border-t border-gray-100 bg-white flex gap-2 sticky bottom-0">
+                        <div className="p-3 flex gap-2 sticky bottom-0" style={{background:"var(--bg-card)",borderTop:"1px solid var(--border-subtle)"}}>
                             <input value={newMessage} onChange={e=>setNewMessage(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),sendMessage())} placeholder={language==="es"?"Mensaje...":"Message..."} className="flex-1 px-4 py-2 rounded-full text-sm" style={{background:"var(--bg-card)",border:"1px solid var(--border-subtle)",color:"var(--text-primary)"}}/>
-                            <button onClick={sendMessage} disabled={!newMessage.trim()} className={"px-4 py-2 rounded-full font-bold text-sm "+(newMessage.trim()?"bg-poke-600 text-white":"bg-gray-200 text-gray-400")}>↑</button>
+                            <button onClick={sendMessage} disabled={!newMessage.trim()} className="px-4 py-2 rounded-full font-bold text-sm" style={newMessage.trim()?{background:"#0891b2",color:"white"}:{background:"var(--bg-subtle)",color:"var(--text-muted)"}}>↑</button>
                         </div>
                     </div>
                 );
@@ -6896,20 +6906,20 @@
 
             return (
                 <div className="p-4 pb-24 animate-in">
-                    <h2 className="text-2xl font-bold text-gray-800 mb-1">💬 {language==="es"?"Mensajes":"Messages"}</h2>
-                    <p className="text-sm text-gray-400 mb-4">{language==="es"?"Comunícate con tu equipo":"Chat with your team"}</p>
+                    <h2 className="text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>💬 {language==="es"?"Mensajes":"Messages"}</h2>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{language==="es"?"Comunícate con tu equipo":"Chat with your team"}</p>
 
                     {/* Channels */}
                     <div className="flex gap-2 overflow-x-auto mb-4 pb-1">
                         {visibleChannels.map(c=>(
-                            <button key={c.id} onClick={()=>setActiveChannel(c.id)} className={"px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap "+(activeChannel===c.id?"bg-poke-600 text-white":"bg-gray-200 text-gray-600")}>{c.name}</button>
+                            <button key={c.id} onClick={()=>setActiveChannel(c.id)} className={"px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition "+(activeChannel===c.id?"bg-poke-600 text-white":"")} style={activeChannel===c.id?{}:{background:"var(--bg-subtle)",color:"var(--text-secondary)"}}>{c.name}</button>
                         ))}
                     </div>
 
                     {/* Channel Messages */}
-                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm mb-4 overflow-hidden">
-                        <div className="max-h-96 overflow-y-auto p-3 space-y-2 style={{background:"var(--bg-subtle)"}}>
-                            {messages.length===0&&<p className="text-center text-gray-400 text-sm py-8">{language==="es"?"Sin mensajes":"No messages yet"}</p>}
+                    <div className="rounded-2xl shadow-sm mb-4 overflow-hidden" style={{background:"var(--bg-card)",border:"1px solid var(--border-subtle)"}}>
+                        <div className="max-h-96 overflow-y-auto p-3 space-y-2" style={{background:"var(--bg-subtle)"}}>
+                            {messages.length===0&&<p className="text-center text-sm py-8" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin mensajes":"No messages yet"}</p>}
                             {messages.map(m=>{
                                 const isMe = m.from===staffName;
                                 return (
@@ -6924,21 +6934,21 @@
                             })}
                             <div ref={messagesEndRef}/>
                         </div>
-                        <div className="p-2 border-t border-gray-100 bg-white flex gap-2">
+                        <div className="p-2 flex gap-2" style={{background:"var(--bg-card)",borderTop:"1px solid var(--border-subtle)"}}>
                             <input value={newMessage} onChange={e=>setNewMessage(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),sendMessage())} placeholder={language==="es"?"Mensaje...":"Message..."} className="flex-1 px-3 py-2 rounded-full text-sm" style={{background:"var(--bg-card)",border:"1px solid var(--border-subtle)",color:"var(--text-primary)"}}/>
-                            <button onClick={sendMessage} disabled={!newMessage.trim()} className={"px-3 py-2 rounded-full font-bold text-sm "+(newMessage.trim()?"bg-poke-600 text-white":"bg-gray-200 text-gray-400")}>↑</button>
+                            <button onClick={sendMessage} disabled={!newMessage.trim()} className="px-3 py-2 rounded-full font-bold text-sm" style={newMessage.trim()?{background:"#0891b2",color:"white"}:{background:"var(--bg-subtle)",color:"var(--text-muted)"}}>↑</button>
                         </div>
                     </div>
 
                     {/* Direct Message Staff */}
-                    <p className="font-bold text-gray-800 text-sm mb-2">📩 {language==="es"?"Mensajes Directos":"Direct Messages"}</p>
+                    <p className="font-bold text-sm mb-2" style={{color:"var(--text-primary)"}}>📩 {language==="es"?"Mensajes Directos":"Direct Messages"}</p>
                     <div className="space-y-1">
                         {staffList.filter(s=>s.name!==staffName).map(s=>(
-                            <button key={s.id} onClick={()=>setShowDM(s.name)} className="w-full flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-100 active:bg-gray-50">
-                                <div className="w-10 h-10 rounded-full bg-poke-100 text-poke-700 font-bold flex items-center justify-center">{s.name.split(" ").map(n=>n[0]).join("")}</div>
+                            <button key={s.id} onClick={()=>setShowDM(s.name)} className="w-full flex items-center gap-3 p-3 rounded-xl active:opacity-70 transition" style={{background:"var(--bg-card)",border:"1px solid var(--border-subtle)"}}>
+                                <div className="w-10 h-10 rounded-full font-bold flex items-center justify-center" style={{background:"#cffafe",color:"#155e75"}}>{s.name.split(" ").map(n=>n[0]).join("")}</div>
                                 <div className="flex-1 text-left">
-                                    <p className="font-semibold text-gray-800 text-sm">{s.name}</p>
-                                    <p className="text-xs text-gray-400">{s.role}</p>
+                                    <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>{s.name}</p>
+                                    <p className="text-xs" style={{color:"var(--text-muted)"}}>{s.role}</p>
                                 </div>
                                 <span className="text-gray-300">→</span>
                             </button>
@@ -7227,7 +7237,7 @@
                     clockIn: now,
                     clockOut: null,
                     location: myLoc,
-                    date: now.split("T")[0]
+                    date: window.fmtLocalDate()
                 });
                 window.showToast(language==="es"?"⏰ Reloj iniciado":"⏰ Clocked in", "success");
             };
@@ -7314,7 +7324,7 @@
             const [loading, setLoading] = useState(true);
             const mgrAccess = isAdmin(staffName);
             const myLoc = staffList.find(s=>s.name===staffName)?.location || "cwe";
-            const today = new Date().toISOString().split("T")[0];
+            const today = window.fmtLocalDate();
             const docId = today + "_" + (myLoc==="all"?"cwe":myLoc) + "_" + activeList;
 
             const DEFAULT_LISTS = {
@@ -7440,7 +7450,7 @@
         // ============ SALES INPUT (managers/owners) ============
         function SalesInput({ language, staffName, staffList }) {
             const [sales, setSales] = useState([]);
-            const [today, setToday] = useState(new Date().toISOString().split("T")[0]);
+            const [today, setToday] = useState(window.fmtLocalDate());
             const [salesAmount, setSalesAmount] = useState("");
             const [salesLocation, setSalesLocation] = useState("cwe");
             const [loading, setLoading] = useState(true);
@@ -7598,14 +7608,18 @@
                         // Pending orders
                         const ordersSnap = await db.collection("pendingOrders").where("status","==","pending").get();
 
-                        // Schedule for current week
+                        // Schedule for current week — fix Sunday and timezone
                         const today = new Date();
-                        const monday = new Date(today); monday.setDate(today.getDate()-today.getDay()+1);
-                        const weekStart = monday.toISOString().split("T")[0];
+                        const dow = today.getDay() === 0 ? 7 : today.getDay();
+                        const monday = new Date(today); monday.setDate(today.getDate() - dow + 1);
+                        const y = monday.getFullYear();
+                        const m = String(monday.getMonth() + 1).padStart(2, "0");
+                        const d = String(monday.getDate()).padStart(2, "0");
+                        const weekStart = `${y}-${m}-${d}`;
                         const schedCWE = await db.collection("schedules").doc("cwe_"+weekStart).get();
                         const schedKW = await db.collection("schedules").doc("kirkwood_"+weekStart).get();
-                        const shiftsCWE = schedCWE.exists ? schedCWE.data().shifts||[] : [];
-                        const shiftsKW = schedKW.exists ? schedKW.data().shifts||[] : [];
+                        const shiftsCWE = schedCWE.exists ? (schedCWE.data().publishedShifts || schedCWE.data().shifts || []) : [];
+                        const shiftsKW = schedKW.exists ? (schedKW.data().publishedShifts || schedKW.data().shifts || []) : [];
 
                         // Time off pending
                         const toSnap = await db.collection("timeOffRequests").where("status","==","pending").get();
