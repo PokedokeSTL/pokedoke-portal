@@ -844,6 +844,7 @@
             // Admin
             admin: { en: "Admin", es: "Admin" },
             settings: { en: "Settings", es: "Ajustes" },
+            messages: { en: "Messages", es: "Mensajes" },
             adminPanel: { en: "Admin Panel", es: "Panel de Administración" },
             manageStaff: { en: "Manage Staff", es: "Administrar Personal" },
             changePIN: { en: "Change PIN", es: "Cambiar PIN" },
@@ -6769,10 +6770,9 @@
                                                 <path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1V9.5z"/>
                                             </svg>
                                         )},
-                                        { id: "training", labelKey: "training", icon: (
+                                        { id: "messages", labelKey: "messages", icon: (
                                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-                                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                                                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
                                             </svg>
                                         )},
                                         { id: "menu", labelKey: "menu", isLogo: true },
@@ -6809,11 +6809,12 @@
                                                 {item.isLogo ? (
                                                     <div style={{
                                                         width: 28, height: 28, borderRadius: 8,
-                                                        background: isActive ? 'linear-gradient(135deg, #0891b2, #06b6d4)' : 'var(--bg-subtle)',
+                                                        background: isActive ? 'linear-gradient(135deg, #0891b2, #06b6d4)' : 'transparent',
                                                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                        transition: 'all 0.2s'
+                                                        transition: 'all 0.2s',
+                                                        padding: 2
                                                     }}>
-                                                        <span style={{fontFamily: 'Fraunces, serif', fontWeight: 800, fontSize: 14, color: isActive ? 'white' : 'var(--text-muted)', letterSpacing: '-0.05em'}}>PD</span>
+                                                        <img src={isActive ? "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAXCAYAAAB50g0VAAADsklEQVR4nNWWXYhVVRTHf+vcGU2bkb4sSIIyoi8q+45Ki0qLCiolK9QewrIIiYiohzJ6C6p5iHqQegiKJqiJGJI+hCIypiQaKoUsqHDAzKIGKbXy3l8PZ92Z4+WOjsOM0ILDPufsvdb6r7X2+u8dTIGoAdQAI6I+FT4mJGqotZZ/c9Rz1ekTsVlMDjRQi4gwIupql7pc/RB4DpgFNDKzh17Ujhxr6mr1B0vpUTsP0tbkBVEtqXqh+pmjsrqyZlyVGu+6iQC9X92dwPaon+f/zvFmpBLo7GZFxqMULd+1fDpynKW+anu5OHUOmJXKFrlXvUctmoDbIk2jRoQJMiKi0UoZ6vnAVuB2YBdwQo5HAFerPwJ/pDMjYm8bX7WI2Ks+ANwHnA2Yz5jgRpQr76Herb6nPq3OUHvV9Tm/Sv1OvVK9Tb1TvaLFdlSqUDS3gDo/s760mtF24Jr74HJ1g7pN3axepS5MI81G6EmwQ+p0dZe6Vn2rUuZP1EfUF9WVbZ2W/jardfXE1iR1VBYVyWELgPeBw4A3gGGgF9gA7IyIS9Q3gYXADmAIWArMAB7NtW8DdwFdwLdAH/CMuge4BtgEfA/8AiwCzkgYpwE/ASN7PyqIBeYAg8DRQANYHBH96rb8ruWa3jS2HTgpAx2IiGXqRmBLRKxQp6XDs4CXgDOBd3PsBr4GZqf+w8CfETGkRkQIoydJ88ezwDHA7gRznfpEZucrYGZENDKwAvgLOCVBvpYNNQzcqA4C1+ea44HpmYQtmb1zgH+BjzKANbRpjCLR1nP/XQbUgWk5fwNwE7AS2AzMbDVQkWUZZCfwM7COsoSdmf1G5b07s38cZXm/AB4CfstsjQAtkkpqSSFPZeYA/gEWRcR5EdGXRvdWOrsBHE5JM2uBJZYXggLYGBGPRcRABvtrZvAb4A7Ksn4MfElJK/OAHkq62oc9OhJxPZvkefVY4PFM93BFoUFen1QzkIKyUZ4EVgFLgN+Buer89NEFvAOcDixIne1pbyfwAfApMBfoT532p0+FZharW9WX1Rn5b3lSR5/aSOpYr+7I+U2Wl4TXc96kqlvVB9VL2zotdV9JmrnANle2sUB2Wx4781KpQ12jDqbBI9UX1P6cvyV57yL1ZPVU9agW25EEHY6SdmF5Z/xbXZHr9n8W7zeCgxQrZ/cY80WON6sDmZgiGWGMWrPPtb3e7Kp0Yuo1mmuz0ZqU1ZyHPM/HE0Tu7WuBjohYlz3ROJDuIROn6i44mfK/ANkq/wHyPEY3+fzd5wAAAABJRU5ErkJggg==" : "data:image/png;base64,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"} alt="PokeDoke" style={{width: "100%", height: "auto", objectFit: "contain"}} />
                                                     </div>
                                                 ) : item.icon}
                                                 <span className="text-[10px] font-semibold mt-1 whitespace-nowrap">{t(item.labelKey, language)}</span>
