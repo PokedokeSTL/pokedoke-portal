@@ -640,7 +640,7 @@
                     {
                         titleEn: "Dietary & Allergen Info",
                         titleEs: "Información Dietética y Alergenos",
-                        contentEn: "Common allergens: shellfish (shrimp, octopus, crab), soy (soy sauce in poke sauce and dressings), fish (tuna, salmon), sesame (sesame oil, seeds), wheat (wonton chips, gyoza wrappers, soy sauce), eggs (mayo-based drizzles), dairy (cream cheese in rangoons). Gluten-free: rice base bowls without soy sauce, check drizzles. Vegan: tofu protein + rice or salad base + veggie toppings + ponzu. ALWAYS ask about allergies before recommending. When in doubt, check with kitchen.",
+                        contentEn: "For specific ingredient allergens, use the Allergens tool on the home screen — it has every menu item, sauce, and topping with up-to-date allergen info. Top 9 allergens to know: milk, eggs, fish, shellfish, tree nuts, peanuts, wheat, soy, sesame. PokeDoke common triggers: SOY SAUCE (soy + wheat — in poke sauce, ponzu, eel sauce), FISH (tuna, salmon — raw), SHELLFISH (shrimp, octopus, crab, crab rangoon, soft shell crab, kimchi), SESAME (oil, seeds, gochujang, kimchi, seaweed salad, poke sauce). Vegan-safe ingredients are tagged ✅ Vegan in the tool. ALWAYS ask about allergies before recommending. When in doubt, check the tool or ask a manager.",
                         contentEs: "Alergenos comunes: mariscos (camarón, pulpo, cangrejo), soya (salsa de soya en salsa poke y aderezos), pescado (atún, salmón), sésamo (aceite y semillas de sésamo), trigo (chips de wonton, masa de gyoza, salsa de soya), huevos (salsas a base de mayonesa), lácteos (queso crema en rangoons). Sin gluten: bowls con base de arroz sin salsa de soya, revisa las salsas. Vegano: proteína de tofu + arroz o ensalada + toppings de vegetales + ponzu. SIEMPRE pregunta sobre alergias antes de recomendar. En caso de duda, consulta con la cocina."
                     }
                 ]
@@ -676,7 +676,7 @@
                     {
                         titleEn: "Top 9 Allergens at Pokedoke",
                         titleEs: "Los 9 Alergenos Principales en Pokedoke",
-                        contentEn: "The Big 9: milk, eggs, fish, shellfish, tree nuts, peanuts, wheat, soy, sesame. At Pokedoke, most common triggers: SOY SAUCE (soy, wheat — in poke sauce and most dressings), FISH (salmon, tuna — raw proteins), SHELLFISH (shrimp, octopus, crab in rangoons), SESAME (oil and seeds in bowls), WHEAT (wonton chips, gyoza wrappers, soy sauce), EGGS (mayo-based drizzles), DAIRY (cream cheese in crab rangoons). Know which dishes contain which allergens.",
+                        contentEn: "The Big 9: milk, eggs, fish, shellfish, tree nuts, peanuts, wheat, soy, sesame. The Allergens tool on the home screen has the complete ingredient-by-ingredient list — use it for any specific question. At PokeDoke, frequent allergen sources: SOY SAUCE family (soy + wheat — in poke sauce, ponzu, gochujang, eel sauce, BBQ, kalbi marinade, teriyaki mayo). FISH (raw tuna, salmon, spicy tuna). SHELLFISH (shrimp, octopus, crab rangoon, soft shell crab, tempura shrimp — and surprise: kimchi contains shellfish). SESAME (sesame seeds, gochujang, kimchi, seaweed salad, poke sauce, togarashi). EGG (mayo-based drizzles, wonton chips, mochi donuts). DAIRY (mac salad, mochi donuts, crab rangoon, tempura, miso soup, wings). MSG appears in poke sauce, ponzu, soy sauce, and seaweed salad. Know which dishes contain which allergens — open the tool when you're unsure.",
                         contentEs: "Los 9 Grandes: leche, huevos, pescado, mariscos, frutos secos, maní, trigo, soya, sésamo. En Pokedoke, los más comunes: SALSA DE SOYA (soya, trigo — en salsa poke y la mayoría de aderezos), PESCADO (salmón, atún — proteínas crudas), MARISCOS (camarón, pulpo, cangrejo en rangoons), SÉSAMO (aceite y semillas en bowls), TRIGO (chips de wonton, masa de gyoza, salsa de soya), HUEVOS (salsas a base de mayonesa), LÁCTEOS (queso crema en crab rangoons). Conoce qué platillos contienen qué alergenos."
                     },
                     {
@@ -6948,6 +6948,258 @@
             );
         }
 
+
+        // ============ ALLERGENS REFERENCE ============
+        const ALLERGEN_DATA = [
+    { name: "Ahi Tuna", allergens: ["Fish", "Raw"], attrs: [] },
+    { name: "Avocado", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "BBQ Chicken", allergens: ["Soy", "Wheat/ Gluten", "Sugar"], attrs: [] },
+    { name: "BBQ Sauce", allergens: ["Soy", "Wheat/ Gluten", "Sugar"], attrs: [] },
+    { name: "Black Tea", allergens: ["Sugar"], attrs: ["Non Dairy"] },
+    { name: "Boba", allergens: ["Sugar"], attrs: [] },
+    { name: "Brown Rice", allergens: [], attrs: [] },
+    { name: "Carrots", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Corn", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Crab Rangoon", allergens: ["Dairy/Milk", "Shellfish", "Wheat/ Gluten"], attrs: [] },
+    { name: "Crabmeat", allergens: ["Fish", "Shellfish", "Egg"], attrs: [] },
+    { name: "Cucumbers", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Edamame", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Eel Sauce", allergens: ["Soy", "Wheat/ Gluten", "Sugar"], attrs: [] },
+    { name: "Flavor Milk Teas", allergens: ["Sugar"], attrs: ["Non Dairy"] },
+    { name: "Fried Onions", allergens: ["Wheat/ Gluten"], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Fruit Teas", allergens: ["Sugar"], attrs: [] },
+    { name: "Furikake", allergens: ["Sesame"], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Ginger", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Gochujang", allergens: ["Soy", "Wheat/ Gluten", "Sugar", "Sesame"], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Green Onions", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Jalapenos", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Jasmin Tea", allergens: ["Sugar"], attrs: ["Non Dairy"] },
+    { name: "Kalbi Ribs", allergens: ["Soy", "Wheat/ Gluten", "Sugar"], attrs: [] },
+    { name: "Kimchi", allergens: ["Soy", "Shellfish", "Wheat/ Gluten", "Sugar", "Sesame"], attrs: [] },
+    { name: "Lychi Jelly", allergens: ["Sugar"], attrs: [] },
+    { name: "Mac Salad", allergens: ["Dairy/Milk", "Egg", "Wheat/ Gluten", "Sugar"], attrs: ["Vegetarian"] },
+    { name: "Mango", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Mango Pop", allergens: ["Sugar"], attrs: ["Vegetarian"] },
+    { name: "Mochi Donuts", allergens: ["Soy", "Dairy/Milk", "Egg", "Wheat/ Gluten", "Sugar"], attrs: [] },
+    { name: "Octopus", allergens: ["Shellfish"], attrs: [] },
+    { name: "Pineapple", allergens: ["Sugar"], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Poke Sauce", allergens: ["Soy", "Wheat/ Gluten", "Sugar", "MSG", "Sesame"], attrs: ["Vegetarian"] },
+    { name: "Ponzu", allergens: ["Soy", "Wheat/ Gluten", "MSG"], attrs: [] },
+    { name: "Pot Stickers/ Gyoza", allergens: ["Soy", "Wheat/ Gluten"], attrs: [] },
+    { name: "Pot Stickers/ Gyoza Sauce", allergens: ["Soy", "Wheat/ Gluten", "Sugar"], attrs: [] },
+    { name: "Purple Cabbage", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Salmon", allergens: ["Fish", "Raw"], attrs: [] },
+    { name: "Seaweed Salad", allergens: ["Sugar", "MSG", "Sesame"], attrs: ["Vegetarian"] },
+    { name: "Sesame Seeds", allergens: ["Sesame"], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Shrimp", allergens: ["Shellfish"], attrs: [] },
+    { name: "Soba Noodles", allergens: ["Wheat/ Gluten"], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Soft Shell Crab", allergens: ["Shellfish", "Egg", "Wheat/ Gluten", "Sugar"], attrs: [] },
+    { name: "Sous Vide Chicken", allergens: [], attrs: [] },
+    { name: "Soy Sauce", allergens: ["Soy", "Wheat/ Gluten", "MSG"], attrs: [] },
+    { name: "Spicy Mayo", allergens: ["Egg", "Sugar"], attrs: [] },
+    { name: "Spicy Tuna", allergens: ["Fish", "Soy", "Wheat/ Gluten"], attrs: [] },
+    { name: "Spring Mix", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Sweet Thai Chili", allergens: ["Sugar"], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Tempura Shrimp", allergens: ["Dairy/Milk", "Shellfish", "Egg", "Wheat/ Gluten"], attrs: [] },
+    { name: "Teriyaki Mayo", allergens: ["Soy", "Egg", "Wheat/ Gluten", "Sugar"], attrs: ["Vegetarian"] },
+    { name: "Tofu", allergens: ["Soy"], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Togarashi", allergens: ["Sesame"], attrs: [] },
+    { name: "Wasabi", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Wasabi Mayo", allergens: ["Egg", "Sugar"], attrs: [] },
+    { name: "White Onions", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "White Rice", allergens: [], attrs: ["Vegan", "Vegetarian"] },
+    { name: "Wings", allergens: ["Dairy/Milk", "Egg", "Wheat/ Gluten"], attrs: [] },
+    { name: "Wonton Chips", allergens: ["Egg", "Wheat/ Gluten"], attrs: [] },
+    { name: "Miso Soup", allergens: ["Fish", "Soy", "Dairy/Milk", "Sugar"], attrs: [] },
+    { name: "Poke Sauce GF", allergens: ["Soy", "MSG", "Sesame"], attrs: ["Vegan", "Vegetarian"] },
+];
+
+        const ALLERGEN_ICONS = {
+            "Tree Nut": "🌰",
+            "Peanut": "🥜",
+            "Fish": "🐟",
+            "Soy": "🫘",
+            "Dairy/Milk": "🥛",
+            "Shellfish": "🦐",
+            "Egg": "🥚",
+            "Wheat/ Gluten": "🌾",
+            "Raw": "❄️",
+            "Sugar": "🍬",
+            "MSG": "🧪",
+            "Sesame": "🌱"
+        };
+
+        const ALL_ALLERGENS = ["Tree Nut", "Peanut", "Fish", "Soy", "Dairy/Milk", "Shellfish", "Egg", "Wheat/ Gluten", "Raw", "Sugar", "MSG", "Sesame"];
+        const ALL_ATTRS = ["Vegan", "Vegetarian", "Non Dairy"];
+
+        function Allergens({ language }) {
+            const [mode, setMode] = useState("search"); // "search" or "filter"
+            const [query, setQuery] = useState("");
+            const [filterAvoid, setFilterAvoid] = useState([]); // allergens to AVOID
+            const [filterPositive, setFilterPositive] = useState([]); // attrs to REQUIRE (vegan etc)
+            const [selectedItem, setSelectedItem] = useState(null);
+
+            const t = (en, es) => language === "es" ? es : en;
+
+            // Search mode
+            const searchResults = query.trim() ?
+                ALLERGEN_DATA.filter(it => it.name.toLowerCase().includes(query.toLowerCase()))
+                : ALLERGEN_DATA;
+
+            // Filter mode
+            const filterResults = ALLERGEN_DATA.filter(it => {
+                // Must NOT have any of the avoid allergens
+                if (filterAvoid.some(a => it.allergens.includes(a))) return false;
+                // Must have ALL the required positive attrs
+                if (filterPositive.length > 0 && !filterPositive.every(a => it.attrs.includes(a))) return false;
+                return true;
+            });
+
+            const toggleAvoid = (a) => setFilterAvoid(prev => prev.includes(a) ? prev.filter(x=>x!==a) : [...prev, a]);
+            const togglePositive = (a) => setFilterPositive(prev => prev.includes(a) ? prev.filter(x=>x!==a) : [...prev, a]);
+
+            // Item detail view
+            if (selectedItem) {
+                const item = selectedItem;
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <button onClick={()=>setSelectedItem(null)} className="text-sm text-poke-600 font-bold mb-3">← {t("Back","Volver")}</button>
+                        <div className="card-premium p-5 mb-4">
+                            <h2 className="font-display text-3xl font-bold mb-3" style={{color:"var(--text-primary)"}}>{item.name}</h2>
+                            {item.attrs.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mb-3">
+                                    {item.attrs.map(a => (
+                                        <span key={a} className="px-3 py-1 rounded-full text-sm font-bold" style={{background:"#d1fae5", color:"#065f46"}}>✅ {a}</span>
+                                    ))}
+                                </div>
+                            )}
+                            {item.allergens.length === 0 ? (
+                                <p className="text-sm" style={{color:"var(--text-muted)"}}>{t("No allergens","Sin alérgenos")}</p>
+                            ) : (
+                                <div>
+                                    <p className="text-xs font-bold mb-2" style={{color:"var(--text-secondary)"}}>⚠️ {t("CONTAINS","CONTIENE")}:</p>
+                                    <div className="space-y-2">
+                                        {item.allergens.map(a => (
+                                            <div key={a} className="flex items-center gap-3 p-3 rounded-xl" style={{background:"#fef2f2", border:"1px solid #fecaca"}}>
+                                                <span style={{fontSize:24}}>{ALLERGEN_ICONS[a] || "⚠️"}</span>
+                                                <span className="font-bold" style={{color:"#991b1b"}}>{a}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>⚠️ {t("Allergens","Alérgenos")}</h2>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{t("Quick reference for customer allergy questions","Referencia rápida para preguntas de alergias")}</p>
+
+                    {/* Mode toggle */}
+                    <div className="flex gap-2 mb-4">
+                        <button onClick={()=>setMode("search")} className={"flex-1 py-2 rounded-xl text-xs font-bold "+(mode==="search"?"bg-poke-600 text-white":"bg-gray-200 text-gray-600")}>
+                            🔍 {t("Look up ingredient","Buscar ingrediente")}
+                        </button>
+                        <button onClick={()=>setMode("filter")} className={"flex-1 py-2 rounded-xl text-xs font-bold "+(mode==="filter"?"bg-poke-600 text-white":"bg-gray-200 text-gray-600")}>
+                            🚫 {t("Filter by allergy","Filtrar por alergia")}
+                        </button>
+                    </div>
+
+                    {mode === "search" ? (
+                        <div>
+                            <input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder={t("Search ingredient...","Buscar ingrediente...")} className="w-full px-4 py-3 border rounded-xl text-base mb-3" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                            <p className="text-xs mb-2" style={{color:"var(--text-muted)"}}>{searchResults.length} {t("items","artículos")}</p>
+                            <div className="space-y-2">
+                                {searchResults.map(item => (
+                                    <button key={item.name} onClick={()=>setSelectedItem(item)} className="w-full card p-3 text-left active:scale-98 transition">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{item.name}</p>
+                                                {item.allergens.length === 0 ? (
+                                                    <p className="text-xs" style={{color:"#10b981"}}>✓ {t("No allergens","Sin alérgenos")}</p>
+                                                ) : (
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {item.allergens.map(a => (
+                                                            <span key={a} className="text-xs px-1.5 py-0.5 rounded" style={{background:"#fef2f2",color:"#991b1b"}}>{ALLERGEN_ICONS[a]} {a}</span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {item.attrs.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {item.attrs.map(a => (
+                                                            <span key={a} className="text-xs px-1.5 py-0.5 rounded" style={{background:"#d1fae5",color:"#065f46"}}>✓ {a}</span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <span style={{color:"var(--text-muted)"}}>→</span>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div>
+                            <p className="text-xs font-bold mb-2" style={{color:"var(--text-secondary)"}}>🚫 {t("Customer is allergic to:","El cliente es alérgico a:")}</p>
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                {ALL_ALLERGENS.map(a => (
+                                    <button key={a} onClick={()=>toggleAvoid(a)} className={"px-3 py-1.5 rounded-full text-xs font-bold transition "+(filterAvoid.includes(a)?"bg-red-500 text-white":"bg-gray-100 text-gray-600")}>
+                                        {ALLERGEN_ICONS[a]} {a}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <p className="text-xs font-bold mb-2" style={{color:"var(--text-secondary)"}}>✅ {t("Must be:","Debe ser:")}</p>
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                {ALL_ATTRS.map(a => (
+                                    <button key={a} onClick={()=>togglePositive(a)} className={"px-3 py-1.5 rounded-full text-xs font-bold transition "+(filterPositive.includes(a)?"bg-green-500 text-white":"bg-gray-100 text-gray-600")}>
+                                        {a}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="card p-3 mb-3" style={{background:"#ecfeff"}}>
+                                <p className="font-bold text-sm" style={{color:"#155e75"}}>✅ {filterResults.length} {t("safe ingredient(s)","ingrediente(s) seguro(s)")}</p>
+                                {(filterAvoid.length > 0 || filterPositive.length > 0) && (
+                                    <button onClick={()=>{setFilterAvoid([]);setFilterPositive([]);}} className="text-xs mt-1 underline" style={{color:"#0891b2"}}>{t("Clear filters","Limpiar filtros")}</button>
+                                )}
+                            </div>
+
+                            <div className="space-y-2">
+                                {filterResults.map(item => (
+                                    <button key={item.name} onClick={()=>setSelectedItem(item)} className="w-full card p-3 text-left active:scale-98 transition">
+                                        <div className="flex justify-between items-center">
+                                            <div>
+                                                <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{item.name}</p>
+                                                {item.attrs.length > 0 && (
+                                                    <div className="flex gap-1 mt-1">
+                                                        {item.attrs.map(a => (
+                                                            <span key={a} className="text-xs px-1.5 py-0.5 rounded" style={{background:"#d1fae5",color:"#065f46"}}>✓ {a}</span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <span style={{color:"var(--text-muted)"}}>→</span>
+                                        </div>
+                                    </button>
+                                ))}
+                                {filterResults.length === 0 && (
+                                    <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{t("No matches — try fewer filters","Sin resultados — prueba menos filtros")}</p>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="mt-6 p-3 rounded-xl" style={{background:"var(--bg-subtle)"}}>
+                        <p className="text-xs italic" style={{color:"var(--text-muted)"}}>💡 {t("If unsure, always check with a manager before serving. Some ingredients may share prep surfaces.","Si no estás seguro, siempre verifica con un gerente antes de servir. Algunos ingredientes pueden compartir superficies de preparación.")}</p>
+                    </div>
+                </div>
+            );
+        }
+
         // ============ TIME CLOCK ============
         function TimeClock({ language, staffName, staffList }) {
             const [currentEntry, setCurrentEntry] = useState(null);
@@ -7864,6 +8116,14 @@
                                         </button>
                                     )}
                                     <button
+                                        onClick={() => setActiveTab("allergens")}
+                                        className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                    >
+                                        <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center text-2xl mb-3">⚠️</div>
+                                        <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Alérgenos" : "Allergens"}</div>
+                                        <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Referencia para clientes" : "Customer reference"}</div>
+                                    </button>
+                                    <button
                                         onClick={() => setActiveTab("timeclock")}
                                         className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
                                     >
@@ -7929,6 +8189,7 @@
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} />}
                         {activeTab === "timeclock" && <TimeClock language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "checklists" && <Checklists language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "allergens" && <Allergens language={language} />}
                         {activeTab === "sales" && staffIsAdmin && <SalesInput language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "activity" && staffIsOwner && <ActivityLog language={language} staffName={staffName} />}
                     </div>
