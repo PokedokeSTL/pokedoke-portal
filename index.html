@@ -4127,7 +4127,14 @@
                                                     </select>
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <div><label className="text-xs text-gray-500">{language==="es"?"Inicio":"Start"}</label><input type="time" value={newShiftStart} onChange={e=>setNewShiftStart(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
-                                                        <div><label className="text-xs text-gray-500">{language==="es"?"Fin":"End"}</label><input type="time" value={newShiftEnd} onChange={e=>setNewShiftEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                                        <div>
+                                                            <label className="text-xs text-gray-500">{language==="es"?"Fin":"End"}</label>
+                                                            <input type="time" value={newShiftEnd} onChange={e=>setNewShiftEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
+                                                            <div className="flex gap-1 mt-1">
+                                                                <button onClick={()=>setNewShiftEnd("22:00")} className={"flex-1 text-xs font-bold py-1 rounded-lg "+(newShiftEnd==="22:00"?"bg-poke-600 text-white":"bg-white text-gray-600 border border-gray-200")}>CL</button>
+                                                                <button onClick={()=>setNewShiftEnd("21:00")} className={"flex-1 text-xs font-bold py-1 rounded-lg "+(newShiftEnd==="21:00"?"bg-poke-600 text-white":"bg-white text-gray-600 border border-gray-200")}>BD</button>
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                     <input type="text" value={newShiftRole} onChange={e=>setNewShiftRole(e.target.value)} placeholder={language==="es"?"Rol / Estación":"Role / Station"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                     <input type="text" value={newShiftNotes} onChange={e=>setNewShiftNotes(e.target.value)} placeholder={language==="es"?"Notas (ej: día de entrenamiento)":"Notes (e.g., training day)"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
@@ -4182,6 +4189,10 @@
                                         <div>
                                             <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Fin":"End"}</label>
                                             <input type="time" value={editEnd} onChange={e=>setEditEnd(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                            <div className="flex gap-1 mt-1">
+                                                <button onClick={()=>setEditEnd("22:00")} className="flex-1 text-xs font-bold py-1 rounded-lg" style={{background: editEnd==="22:00"?"#0891b2":"var(--bg-subtle)", color: editEnd==="22:00"?"white":"var(--text-secondary)"}}>CL</button>
+                                                <button onClick={()=>setEditEnd("21:00")} className="flex-1 text-xs font-bold py-1 rounded-lg" style={{background: editEnd==="21:00"?"#0891b2":"var(--bg-subtle)", color: editEnd==="21:00"?"white":"var(--text-secondary)"}}>BD</button>
+                                            </div>
                                         </div>
                                     </div>
 
