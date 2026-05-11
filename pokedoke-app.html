@@ -254,6 +254,58 @@
         /* Print protection for recipes */
         @media print { .recipe-protected { display: none !important; } body::after { content: "RECIPES ARE CONFIDENTIAL — PRINTING NOT ALLOWED"; display: block; font-size: 48px; text-align: center; padding: 100px; } }
 
+        /* Toast notifications */
+        .toast-container {
+            position: fixed;
+            bottom: 88px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+            max-width: 90vw;
+        }
+        .toast {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 14px;
+            padding: 12px 16px;
+            box-shadow: var(--shadow-lg);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 240px;
+            animation: toastIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: auto;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .toast.success { border-left: 4px solid #10b981; color: #065f46; }
+        .toast.error { border-left: 4px solid #ef4444; color: #991b1b; }
+        .toast.info { border-left: 4px solid #0891b2; color: #155e75; }
+        .toast.warning { border-left: 4px solid #f59e0b; color: #92400e; }
+        :root.dark .toast.success { color: #6ee7b7; }
+        :root.dark .toast.error { color: #fca5a5; }
+        :root.dark .toast.info { color: #67e8f9; }
+        :root.dark .toast.warning { color: #fcd34d; }
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(20px) scale(0.95); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes toastOut {
+            from { opacity: 1; transform: translateY(0) scale(1); }
+            to { opacity: 0; transform: translateY(20px) scale(0.95); }
+        }
+        .toast.exiting { animation: toastOut 0.25s ease-in forwards; }
+
+        /* Skeleton loader specific shapes */
+        .skel-text { height: 14px; border-radius: 6px; margin: 6px 0; }
+        .skel-line { height: 12px; border-radius: 6px; margin: 4px 0; }
+        .skel-card { height: 80px; border-radius: 16px; margin-bottom: 12px; }
+        .skel-circle { width: 40px; height: 40px; border-radius: 50%; }
+
         /* Mini chart bars */
         .chart-bar {
             transition: height 0.8s cubic-bezier(0.16, 1, 0.3, 1);
@@ -409,6 +461,83 @@
                 </div>
             );
         };
+
+        // Global toast system. Use window.showToast(msg, type) anywhere.
+        window.__toastListeners = window.__toastListeners || [];
+        window.showToast = function(message, type = "success", duration = 3000) {
+            const toast = { id: Date.now() + Math.random(), message, type, duration };
+            window.__toastListeners.forEach(l => l(toast));
+        };
+
+        function ToastContainer() {
+            const [toasts, setToasts] = useState([]);
+            useEffect(() => {
+                const listener = (toast) => {
+                    setToasts(prev => [...prev, toast]);
+                    setTimeout(() => {
+                        setToasts(prev => prev.map(t => t.id === toast.id ? {...t, exiting: true} : t));
+                        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toast.id)), 250);
+                    }, toast.duration);
+                };
+                window.__toastListeners.push(listener);
+                return () => {
+                    window.__toastListeners = window.__toastListeners.filter(l => l !== listener);
+                };
+            }, []);
+            const icons = { success: "✅", error: "❌", info: "ℹ️", warning: "⚠️" };
+            return (
+                <div className="toast-container">
+                    {toasts.map(t => (
+                        <div key={t.id} className={"toast " + t.type + (t.exiting ? " exiting" : "")}>
+                            <span style={{fontSize: 16}}>{icons[t.type] || "ℹ️"}</span>
+                            <span>{t.message}</span>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
+        // Loading skeleton component
+        function Skeleton({ count = 3, className = "skel-card" }) {
+            return (
+                <div>
+                    {Array.from({length: count}).map((_, i) => (
+                        <div key={i} className={"skeleton " + className}></div>
+                    ))}
+                </div>
+            );
+        }
+
+        // Confirmation modal (replaces native confirm dialog)
+        window.__confirmListeners = window.__confirmListeners || [];
+        window.askConfirm = function(opts) {
+            return new Promise(resolve => {
+                window.__confirmListeners.forEach(l => l({ ...opts, resolve }));
+            });
+        };
+        function ConfirmModal() {
+            const [data, setData] = useState(null);
+            useEffect(() => {
+                const listener = (opts) => setData(opts);
+                window.__confirmListeners.push(listener);
+                return () => { window.__confirmListeners = window.__confirmListeners.filter(l => l !== listener); };
+            }, []);
+            if (!data) return null;
+            const close = (result) => { data.resolve(result); setData(null); };
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center animate-in" style={{background: "rgba(0,0,0,0.5)"}} onClick={()=>close(false)}>
+                    <div className="card p-5 max-w-sm w-11/12 animate-scale" onClick={e=>e.stopPropagation()}>
+                        <div className="text-3xl mb-2 text-center">{data.icon || "❓"}</div>
+                        <h3 className="font-display text-lg font-bold text-center mb-2" style={{color:"var(--text-primary)"}}>{data.title}</h3>
+                        {data.body && <p className="text-sm text-center mb-4" style={{color:"var(--text-secondary)"}}>{data.body}</p>}
+                        <div className="flex gap-2 mt-4">
+                            <button onClick={()=>close(false)} className="flex-1 py-3 rounded-xl font-bold text-sm" style={{background: "var(--bg-subtle)", color: "var(--text-secondary)"}}>{data.cancelLabel || "Cancel"}</button>
+                            <button onClick={()=>close(true)} className={"flex-1 py-3 rounded-xl font-bold text-sm text-white " + (data.danger?"bg-red-500":"bg-poke-600")}>{data.confirmLabel || "Confirm"}</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
         const canAccessRecipes = (name, atLocation) => {
             if (isOwner(name)) return true; // Owner: always, no geolocation needed
             if (isAdmin(name) && atLocation) return true; // Managers: only at location
@@ -3669,6 +3798,15 @@
             const [closeTime, setCloseTime] = useState("20:00");
             const [showSettings, setShowSettings] = useState(false);
             const [tempCloseTime, setTempCloseTime] = useState("20:00");
+            const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
+            const [showAllEmployees, setShowAllEmployees] = useState(true);
+            const [gridAddCell, setGridAddCell] = useState(null); // {employee, dayKey} when adding via grid
+
+            useEffect(() => {
+                const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
+                window.addEventListener("resize", handleResize);
+                return () => window.removeEventListener("resize", handleResize);
+            }, []);
             const [newShiftEmp, setNewShiftEmp] = useState("");
             const [newShiftStart, setNewShiftStart] = useState("10:00");
             const [newShiftEnd, setNewShiftEnd] = useState("18:00");
@@ -3967,6 +4105,7 @@
                 const locationStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>s.name);
                 const locName = LOCATIONS.find(l=>l.id===schedLocation)?.name || schedLocation;
                 sendNotification(locationStaff, "📅 New Schedule Published", locName + " schedule for week of " + new Date(weekStart+"T12:00:00").toLocaleDateString() + " is live!", {type:"schedule", weekKey});
+                window.showToast(language==="es"?"Horario publicado":"Schedule published", "success");
             };
 
             const unpublishSchedule = async () => {
@@ -4210,7 +4349,187 @@
                                 </div>
                             )}
 
-                            {DAY_KEYS.map((dayKey,dayIdx) => {
+                            {/* ========== DESKTOP GRID VIEW (managers, screens >= 1024px) ========== */}
+                            {isDesktop && mgrAccess && (() => {
+                                const locStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all");
+                                const empsWithShifts = new Set(shifts.filter(s=>s.employee!=="__OPEN__").map(s=>s.employee));
+                                const visibleEmps = showAllEmployees ? locStaff : locStaff.filter(s=>empsWithShifts.has(s.name));
+                                const openShifts = shifts.filter(s=>s.employee==="__OPEN__");
+
+                                return (
+                                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                        {/* Toolbar */}
+                                        <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex items-center justify-between flex-wrap gap-2">
+                                            <p className="font-bold text-poke-700 text-sm">🗓️ {language==="es"?"Vista de Cuadrícula":"Grid View"} — {LOCATIONS.find(l=>l.id===schedLocation)?.name}</p>
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={()=>setShowAllEmployees(!showAllEmployees)} className={"text-xs font-bold px-3 py-1.5 rounded-lg "+(showAllEmployees?"bg-poke-600 text-white":"bg-gray-200 text-gray-600")}>
+                                                    {showAllEmployees?(language==="es"?"👥 Todos los empleados":"👥 All Employees"):(language==="es"?"📋 Solo con turnos":"📋 With Shifts Only")}
+                                                </button>
+                                                <span className="text-xs text-gray-400">{visibleEmps.length} {language==="es"?"empleados":"staff"}</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Grid */}
+                                        <div className="overflow-x-auto">
+                                            <table style={{width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 900}}>
+                                                <thead>
+                                                    <tr style={{background: "var(--bg-subtle)"}}>
+                                                        <th style={{position: "sticky", left: 0, background: "var(--bg-subtle)", padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)", minWidth: 180, zIndex: 1}}>
+                                                            {language==="es"?"EMPLEADO":"EMPLOYEE"}
+                                                        </th>
+                                                        {DAY_KEYS.map((dk,di)=>(
+                                                            <th key={dk} style={{padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)"}}>
+                                                                <div>{DAYS[di].slice(0,3).toUpperCase()}</div>
+                                                                <div style={{fontSize: 10, fontWeight: 500, color: "var(--text-muted)", marginTop: 2}}>{getDateForDay(di)}</div>
+                                                            </th>
+                                                        ))}
+                                                        <th style={{padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", minWidth: 60}}>
+                                                            {language==="es"?"HRS":"HRS"}
+                                                        </th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {/* Open shifts row */}
+                                                    {openShifts.length > 0 && (
+                                                        <tr>
+                                                            <td style={{position: "sticky", left: 0, background: "#dbeafe", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", zIndex: 1}}>
+                                                                <div style={{fontWeight: 700, fontSize: 13, color: "#1e40af"}}>🆕 {language==="es"?"Turnos Abiertos":"Open Shifts"}</div>
+                                                                <div style={{fontSize: 10, color: "#3b82f6"}}>{openShifts.length} {language==="es"?"sin asignar":"unassigned"}</div>
+                                                            </td>
+                                                            {DAY_KEYS.map(dk=>{
+                                                                const cellShifts = openShifts.filter(s=>s.day===dk).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
+                                                                return (
+                                                                    <td key={dk}
+                                                                        onDragOver={(e)=>{e.preventDefault();e.currentTarget.style.background="#dbeafe";}}
+                                                                        onDragLeave={(e)=>{e.currentTarget.style.background="";}}
+                                                                        onDrop={(e)=>{e.preventDefault();e.currentTarget.style.background="";if(draggedShift)moveShift(draggedShift.id,dk);setDraggedShift(null);}}
+                                                                        onClick={()=>setGridAddCell({employee:"__OPEN__", dayKey:dk})}
+                                                                        style={{padding: 4, borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", verticalAlign: "top", minHeight: 60, background: "#eff6ff", cursor: "pointer"}}>
+                                                                        {cellShifts.map(shift=>(
+                                                                            <div key={shift.id}
+                                                                                draggable
+                                                                                onDragStart={(e)=>{e.stopPropagation();setDraggedShift(shift);}}
+                                                                                onClick={(e)=>{e.stopPropagation();openEditShift(shift);}}
+                                                                                style={{
+                                                                                    background: "#3b82f6", color: "white",
+                                                                                    padding: "4px 6px", borderRadius: 6, fontSize: 11,
+                                                                                    marginBottom: 2, cursor: "move", fontWeight: 600
+                                                                                }}>
+                                                                                {fmtShiftRange(shift)}
+                                                                                {shift.role && <div style={{fontSize: 10, opacity: 0.9, fontWeight: 400}}>{shift.role}</div>}
+                                                                            </div>
+                                                                        ))}
+                                                                    </td>
+                                                                );
+                                                            })}
+                                                            <td style={{padding: 4, fontSize: 11, color: "#3b82f6", textAlign: "center", borderBottom: "1px solid var(--border-subtle)"}}>—</td>
+                                                        </tr>
+                                                    )}
+
+                                                    {/* Employee rows */}
+                                                    {visibleEmps.map(emp=>{
+                                                        const empShifts = shifts.filter(s=>s.employee===emp.name);
+                                                        const totalHours = empShifts.reduce((sum,s)=>sum+calcHours(s.startTime,s.endTime),0);
+                                                        const isOT = totalHours > 40;
+                                                        const avail = allAvailability.find(a=>a.name===emp.name);
+                                                        return (
+                                                            <tr key={emp.id}>
+                                                                <td style={{position: "sticky", left: 0, background: "var(--bg-card)", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", zIndex: 1}}>
+                                                                    <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                                                                        <Avatar name={emp.name} prefs={{}} size={28} />
+                                                                        <div style={{flex: 1, minWidth: 0}}>
+                                                                            <div style={{fontWeight: 600, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>{emp.name}</div>
+                                                                            <div style={{fontSize: 10, color: "var(--text-muted)"}}>{emp.role}</div>
+                                                                        </div>
+                                                                    </div>
+                                                                </td>
+                                                                {DAY_KEYS.map((dk,dayIdx)=>{
+                                                                    const cellShifts = empShifts.filter(s=>s.day===dk).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
+                                                                    const hasConflict = hasTimeOffConflict(emp.name, dayIdx);
+                                                                    const dayAvail = avail?.days?.[dk];
+                                                                    const isAvailableDay = dayAvail?.available;
+                                                                    return (
+                                                                        <td key={dk}
+                                                                            onDragOver={(e)=>{e.preventDefault();e.currentTarget.style.background="#ecfeff";}}
+                                                                            onDragLeave={(e)=>{e.currentTarget.style.background="";}}
+                                                                            onDrop={(e)=>{e.preventDefault();e.currentTarget.style.background="";if(draggedShift){const updated=shifts.map(s=>s.id===draggedShift.id?{...s,day:dk,employee:emp.name}:s);setShifts(updated);writeDraft(updated);}setDraggedShift(null);}}
+                                                                            onClick={()=>cellShifts.length===0&&setGridAddCell({employee:emp.name, dayKey:dk})}
+                                                                            style={{
+                                                                                padding: 4,
+                                                                                borderRight: "1px solid var(--border-subtle)",
+                                                                                borderBottom: "1px solid var(--border-subtle)",
+                                                                                verticalAlign: "top",
+                                                                                minHeight: 60,
+                                                                                background: hasConflict ? "#fef2f2" : isAvailableDay === false ? "#fefce8" : "transparent",
+                                                                                cursor: cellShifts.length === 0 ? "pointer" : "default",
+                                                                                position: "relative"
+                                                                            }}>
+                                                                            {hasConflict && cellShifts.length===0 && (
+                                                                                <div style={{fontSize: 9, color: "#dc2626", textAlign: "center", padding: 4, fontWeight: 700}}>⛔ TIME OFF</div>
+                                                                            )}
+                                                                            {isAvailableDay === false && !hasConflict && cellShifts.length===0 && (
+                                                                                <div style={{fontSize: 9, color: "#a16207", textAlign: "center", padding: 4, fontWeight: 700}}>❌ {language==="es"?"NO DISP":"UNAVAIL"}</div>
+                                                                            )}
+                                                                            {cellShifts.map(shift=>(
+                                                                                <div key={shift.id}
+                                                                                    draggable
+                                                                                    onDragStart={(e)=>{e.stopPropagation();setDraggedShift(shift);}}
+                                                                                    onClick={(e)=>{e.stopPropagation();openEditShift(shift);}}
+                                                                                    style={{
+                                                                                        background: shift.isBD ? "#fbbf24" : isOT ? "#fb923c" : hasConflict ? "#ef4444" : "#0891b2",
+                                                                                        color: "white",
+                                                                                        padding: "4px 6px",
+                                                                                        borderRadius: 6,
+                                                                                        fontSize: 11,
+                                                                                        marginBottom: 2,
+                                                                                        cursor: "move",
+                                                                                        fontWeight: 600,
+                                                                                        boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                                                                                    }}>
+                                                                                    {fmtShiftRange(shift)}
+                                                                                    {shift.role && <div style={{fontSize: 10, opacity: 0.9, fontWeight: 400}}>{shift.role}</div>}
+                                                                                </div>
+                                                                            ))}
+                                                                            {/* Plus icon on hover (CSS will show it) */}
+                                                                            {cellShifts.length === 0 && !hasConflict && isAvailableDay !== false && (
+                                                                                <div style={{textAlign: "center", color: "#cbd5e0", fontSize: 18, padding: "8px 0"}}>+</div>
+                                                                            )}
+                                                                        </td>
+                                                                    );
+                                                                })}
+                                                                <td style={{padding: "8px 4px", textAlign: "center", fontSize: 13, fontWeight: 700, color: isOT ? "#ea580c" : "var(--text-primary)", borderBottom: "1px solid var(--border-subtle)"}}>
+                                                                    {totalHours.toFixed(1)}
+                                                                    {isOT && <div style={{fontSize: 9, color: "#ea580c"}}>OT</div>}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+
+                                                    {visibleEmps.length === 0 && (
+                                                        <tr>
+                                                            <td colSpan={9} style={{padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 14}}>
+                                                                {showAllEmployees ? (language==="es"?"Sin empleados en esta ubicación":"No staff at this location") : (language==="es"?"Sin turnos esta semana — cambia a 'Todos los empleados' para programar":"No shifts this week — switch to 'All Employees' to schedule")}
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        <div className="p-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500 flex flex-wrap gap-4">
+                                            <span><span style={{display: "inline-block", width: 10, height: 10, background: "#0891b2", borderRadius: 3, marginRight: 4, verticalAlign: "middle"}}></span>{language==="es"?"Turno":"Shift"}</span>
+                                            <span><span style={{display: "inline-block", width: 10, height: 10, background: "#3b82f6", borderRadius: 3, marginRight: 4, verticalAlign: "middle"}}></span>{language==="es"?"Abierto":"Open"}</span>
+                                            <span><span style={{display: "inline-block", width: 10, height: 10, background: "#fbbf24", borderRadius: 3, marginRight: 4, verticalAlign: "middle"}}></span>BD</span>
+                                            <span><span style={{display: "inline-block", width: 10, height: 10, background: "#fb923c", borderRadius: 3, marginRight: 4, verticalAlign: "middle"}}></span>OT (40h+)</span>
+                                            <span><span style={{display: "inline-block", width: 10, height: 10, background: "#ef4444", borderRadius: 3, marginRight: 4, verticalAlign: "middle"}}></span>{language==="es"?"Conflicto":"Conflict"}</span>
+                                            <span style={{marginLeft: "auto"}}>💡 {language==="es"?"Click celda para agregar · Click turno para editar · Arrastra para mover":"Click cell to add · Click shift to edit · Drag to move"}</span>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* ========== MOBILE/STAFF DAY CARDS (or desktop when not manager) ========== */}
+                            {(!isDesktop || !mgrAccess) && DAY_KEYS.map((dayKey,dayIdx) => {
                                 const dayShifts = visibleShifts.filter(s=>s.day===dayKey).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
                                 return (
                                     <div key={dayKey} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
@@ -4309,8 +4628,65 @@
                         </div>
                     )}
 
+                    {/* ===== GRID QUICK-ADD MODAL ===== */}
+                    {gridAddCell && (() => {
+                        const dayIdx = DAY_KEYS.indexOf(gridAddCell.dayKey);
+                        return (
+                            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center animate-in" style={{background: "rgba(0,0,0,0.5)"}} onClick={()=>{setGridAddCell(null);setNewShiftStart("10:00");setNewShiftEnd("18:00");setNewShiftRole("");setNewShiftNotes("");setNewShiftIsBD(false);}}>
+                                <div className="card p-5 max-w-md w-full animate-scale" style={{maxHeight: "90vh", overflowY: "auto", borderTopLeftRadius: 24, borderTopRightRadius: 24}} onClick={e=>e.stopPropagation()}>
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h2 className="font-display text-xl font-bold" style={{color: "var(--text-primary)"}}>+ {language==="es"?"Nuevo Turno":"New Shift"}</h2>
+                                        <button onClick={()=>{setGridAddCell(null);setNewShiftStart("10:00");setNewShiftEnd("18:00");setNewShiftRole("");setNewShiftNotes("");setNewShiftIsBD(false);}} className="text-2xl" style={{color: "var(--text-muted)"}}>×</button>
+                                    </div>
+
+                                    <div className="mb-3 px-3 py-2 rounded-xl" style={{background: "var(--bg-subtle)"}}>
+                                        <p className="text-xs" style={{color: "var(--text-muted)"}}>{language==="es"?"Empleado":"Employee"}</p>
+                                        <p className="font-bold text-sm" style={{color: "var(--text-primary)"}}>{gridAddCell.employee==="__OPEN__"?"🆕 "+(language==="es"?"Turno Abierto":"Open Shift"):gridAddCell.employee}</p>
+                                        <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{DAYS[dayIdx]} · {getDateForDay(dayIdx)}</p>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Inicio":"Start"}</label>
+                                                <input type="time" value={newShiftStart} onChange={e=>setNewShiftStart(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Fin":"End"}</label>
+                                                <input type="time" value={newShiftEnd} onChange={e=>setNewShiftEnd(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                                <button onClick={()=>setNewShiftEnd(closeTime)} className="w-full text-xs font-bold py-1 rounded-lg mt-1" style={{background: newShiftEnd===closeTime?"#0891b2":"var(--bg-subtle)", color: newShiftEnd===closeTime?"white":"var(--text-secondary)"}}>{language==="es"?"Cierre":"Close"} ({fmtTime(closeTime)})</button>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Rol":"Role"}</label>
+                                            <input type="text" value={newShiftRole} onChange={e=>setNewShiftRole(e.target.value)} placeholder={language==="es"?"Línea, Lavaplatos, etc.":"Line Server, Dishwasher, etc."} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Notas":"Notes"}</label>
+                                            <input type="text" value={newShiftNotes} onChange={e=>setNewShiftNotes(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                        </div>
+
+                                        <label className="flex items-center gap-2 cursor-pointer p-3 rounded-xl" style={{background: newShiftIsBD?"#fef3c7":"var(--bg-subtle)", border: newShiftIsBD?"1px solid #f59e0b":"1px solid var(--border-subtle)"}}>
+                                            <input type="checkbox" checked={newShiftIsBD} onChange={e=>setNewShiftIsBD(e.target.checked)} className="w-5 h-5"/>
+                                            <span className="font-bold text-sm" style={{color: newShiftIsBD?"#92400e":"var(--text-primary)"}}>📉 BD — {language==="es"?"puede ser liberado temprano":"may be cut early"}</span>
+                                        </label>
+
+                                        <div className="flex gap-2 pt-3">
+                                            <button onClick={()=>{setGridAddCell(null);setNewShiftStart("10:00");setNewShiftEnd("18:00");setNewShiftRole("");setNewShiftNotes("");setNewShiftIsBD(false);}} className="flex-1 py-3 rounded-xl font-bold text-sm" style={{background: "var(--bg-subtle)", color: "var(--text-secondary)"}}>{language==="es"?"Cancelar":"Cancel"}</button>
+                                            <button onClick={async ()=>{
+                                                await saveShift(gridAddCell.dayKey, gridAddCell.employee, newShiftStart, newShiftEnd, newShiftRole, newShiftNotes, newShiftIsBD);
+                                                setGridAddCell(null);
+                                            }} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold text-sm active:scale-95">+ {language==="es"?"Agregar":"Add Shift"}</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
                     {/* ===== SCHEDULE SETTINGS MODAL ===== */}
-                    {showSettings && (
                         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center animate-in" style={{background: "rgba(0,0,0,0.5)"}} onClick={()=>setShowSettings(false)}>
                             <div className="card p-5 max-w-md w-full animate-scale" style={{maxHeight: "90vh", overflowY: "auto", borderTopLeftRadius: 24, borderTopRightRadius: 24}} onClick={e=>e.stopPropagation()}>
                                 <div className="flex justify-between items-center mb-4">
@@ -6545,6 +6921,381 @@
             );
         }
 
+        // ============ TIME CLOCK ============
+        function TimeClock({ language, staffName, staffList }) {
+            const [currentEntry, setCurrentEntry] = useState(null);
+            const [recentEntries, setRecentEntries] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const myLoc = staffList.find(s=>s.name===staffName)?.location || "cwe";
+
+            useEffect(() => {
+                const unsub = db.collection("timeClock")
+                    .where("employee","==",staffName)
+                    .orderBy("clockIn","desc").limit(20)
+                    .onSnapshot(snap => {
+                        const entries = snap.docs.map(d=>({id:d.id,...d.data()}));
+                        setCurrentEntry(entries.find(e=>!e.clockOut) || null);
+                        setRecentEntries(entries.filter(e=>e.clockOut));
+                        setLoading(false);
+                    });
+                return () => unsub();
+            }, [staffName]);
+
+            const clockIn = async () => {
+                const now = new Date().toISOString();
+                await db.collection("timeClock").add({
+                    employee: staffName,
+                    clockIn: now,
+                    clockOut: null,
+                    location: myLoc,
+                    date: now.split("T")[0]
+                });
+                window.showToast(language==="es"?"⏰ Reloj iniciado":"⏰ Clocked in", "success");
+            };
+
+            const clockOut = async () => {
+                if (!currentEntry) return;
+                const now = new Date().toISOString();
+                const hours = (new Date(now) - new Date(currentEntry.clockIn)) / 1000 / 60 / 60;
+                await db.collection("timeClock").doc(currentEntry.id).update({
+                    clockOut: now,
+                    hoursWorked: hours
+                });
+                window.showToast((language==="es"?"⏰ Salida registrada — ":"⏰ Clocked out — ") + hours.toFixed(2) + "h", "success");
+            };
+
+            const fmtDuration = (entry) => {
+                const end = entry.clockOut ? new Date(entry.clockOut) : new Date();
+                const ms = end - new Date(entry.clockIn);
+                const h = Math.floor(ms / 3600000);
+                const m = Math.floor((ms % 3600000) / 60000);
+                return `${h}h ${m}m`;
+            };
+
+            const totalThisWeek = recentEntries.reduce((sum, e) => sum + (e.hoursWorked || 0), 0);
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>⏰ {language==="es"?"Reloj de Tiempo":"Time Clock"}</h2>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{language==="es"?"Marca tu entrada y salida":"Clock in and out for your shift"}</p>
+
+                    {loading ? <Skeleton count={2}/> : (
+                        <>
+                            {/* Current status */}
+                            <div className={"rounded-2xl p-6 text-center mb-4 " + (currentEntry?"bg-gradient-to-br from-green-500 to-emerald-600":"bg-gradient-to-br from-gray-200 to-gray-300")}>
+                                <p className={"text-xs font-bold uppercase tracking-wider mb-1 " + (currentEntry?"text-green-100":"text-gray-600")}>{currentEntry?(language==="es"?"Trabajando":"Clocked In"):(language==="es"?"Fuera":"Clocked Out")}</p>
+                                {currentEntry ? (
+                                    <>
+                                        <p className="text-4xl font-bold text-white font-display">{fmtDuration(currentEntry)}</p>
+                                        <p className="text-xs text-green-100 mt-1">{language==="es"?"Desde":"Since"} {new Date(currentEntry.clockIn).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
+                                    </>
+                                ) : (
+                                    <p className="text-2xl font-bold" style={{color:"var(--text-secondary)"}}>{new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
+                                )}
+                            </div>
+
+                            {currentEntry ? (
+                                <button onClick={clockOut} className="w-full py-4 bg-red-500 text-white rounded-2xl font-bold text-lg active:scale-95 transition shadow-lg">
+                                    🕔 {language==="es"?"Marcar Salida":"Clock Out"}
+                                </button>
+                            ) : (
+                                <button onClick={clockIn} className="w-full py-4 bg-green-600 text-white rounded-2xl font-bold text-lg active:scale-95 transition shadow-lg">
+                                    🕘 {language==="es"?"Marcar Entrada":"Clock In"}
+                                </button>
+                            )}
+
+                            <div className="mt-4 card p-3">
+                                <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Esta semana":"This week"}</p>
+                                <p className="font-display text-2xl font-bold" style={{color:"var(--text-primary)"}}>{totalThisWeek.toFixed(1)}h</p>
+                            </div>
+
+                            <p className="font-bold text-sm mt-4 mb-2" style={{color:"var(--text-primary)"}}>📋 {language==="es"?"Entradas Recientes":"Recent Entries"}</p>
+                            <div className="space-y-2">
+                                {recentEntries.length === 0 && <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin entradas":"No entries yet"}</p>}
+                                {recentEntries.slice(0,10).map(e => (
+                                    <div key={e.id} className="card p-3 flex justify-between items-center">
+                                        <div>
+                                            <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>{new Date(e.clockIn).toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})}</p>
+                                            <p className="text-xs" style={{color:"var(--text-muted)"}}>{new Date(e.clockIn).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})} → {new Date(e.clockOut).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
+                                        </div>
+                                        <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{(e.hoursWorked||0).toFixed(2)}h</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                </div>
+            );
+        }
+
+        // ============ DAILY CHECKLISTS ============
+        function Checklists({ language, staffName, staffList }) {
+            const [activeList, setActiveList] = useState("opening");
+            const [todayStatus, setTodayStatus] = useState({});
+            const [loading, setLoading] = useState(true);
+            const mgrAccess = isAdmin(staffName);
+            const myLoc = staffList.find(s=>s.name===staffName)?.location || "cwe";
+            const today = new Date().toISOString().split("T")[0];
+            const docId = today + "_" + (myLoc==="all"?"cwe":myLoc) + "_" + activeList;
+
+            const DEFAULT_LISTS = {
+                opening: {
+                    name: language==="es"?"Apertura":"Opening",
+                    icon: "🌅",
+                    items: [
+                        language==="es"?"Encender luces y equipos":"Turn on lights and equipment",
+                        language==="es"?"Verificar temperatura del refrigerador":"Check refrigerator temperature",
+                        language==="es"?"Preparar proteínas (poke)":"Prep proteins (poke)",
+                        language==="es"?"Lavar y picar vegetales":"Wash and chop vegetables",
+                        language==="es"?"Preparar arroz":"Prepare rice",
+                        language==="es"?"Llenar contenedores de salsas":"Fill sauce containers",
+                        language==="es"?"Configurar registradora (POS)":"Set up POS",
+                        language==="es"?"Limpiar mostrador":"Wipe down counter",
+                        language==="es"?"Verificar baños":"Check bathrooms",
+                        language==="es"?"Caja con cambio":"Cash drawer with float"
+                    ]
+                },
+                closing: {
+                    name: language==="es"?"Cierre":"Closing",
+                    icon: "🌙",
+                    items: [
+                        language==="es"?"Apagar línea de servicio":"Shut down line",
+                        language==="es"?"Guardar proteínas y vegetales":"Store proteins and vegetables",
+                        language==="es"?"Limpiar todas las superficies":"Clean all surfaces",
+                        language==="es"?"Barrer y trapear pisos":"Sweep and mop floors",
+                        language==="es"?"Sacar basura":"Take out trash",
+                        language==="es"?"Limpiar baños":"Clean bathrooms",
+                        language==="es"?"Cerrar registradora":"Close out POS",
+                        language==="es"?"Cuenta de caja":"Cash count",
+                        language==="es"?"Configurar alarmas":"Set alarms",
+                        language==="es"?"Asegurar puertas":"Lock doors"
+                    ]
+                },
+                weekly: {
+                    name: language==="es"?"Semanal":"Weekly",
+                    icon: "📅",
+                    items: [
+                        language==="es"?"Limpieza profunda de refrigerador":"Deep clean refrigerator",
+                        language==="es"?"Descongelar congelador":"Defrost freezer",
+                        language==="es"?"Revisar inventario":"Take inventory",
+                        language==="es"?"Lavar tapetes":"Wash mats",
+                        language==="es"?"Mantenimiento de equipos":"Equipment maintenance"
+                    ]
+                }
+            };
+
+            useEffect(() => {
+                const unsub = db.collection("checklists").doc(docId).onSnapshot(doc => {
+                    setTodayStatus(doc.exists ? (doc.data().completed || {}) : {});
+                    setLoading(false);
+                });
+                return () => unsub();
+            }, [docId]);
+
+            const toggleItem = async (idx) => {
+                const updated = { ...todayStatus };
+                if (updated[idx]) delete updated[idx];
+                else updated[idx] = { by: staffName, at: new Date().toISOString() };
+                setTodayStatus(updated);
+                await db.collection("checklists").doc(docId).set({
+                    date: today,
+                    location: myLoc==="all"?"cwe":myLoc,
+                    type: activeList,
+                    completed: updated,
+                    updatedAt: new Date().toISOString()
+                }, {merge: true});
+            };
+
+            const list = DEFAULT_LISTS[activeList];
+            const completedCount = Object.keys(todayStatus).length;
+            const totalCount = list.items.length;
+            const pct = totalCount ? Math.round(completedCount / totalCount * 100) : 0;
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>✅ {language==="es"?"Listas de Tareas":"Checklists"}</h2>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{new Date().toLocaleDateString(language==="es"?"es-US":"en-US",{weekday:"long",month:"long",day:"numeric"})}</p>
+
+                    <div className="flex gap-2 mb-4">
+                        {Object.entries(DEFAULT_LISTS).map(([key, l]) => (
+                            <button key={key} onClick={()=>setActiveList(key)} className={"flex-1 py-2 rounded-xl text-xs font-bold "+(activeList===key?"bg-poke-600 text-white":"bg-gray-200 text-gray-600")}>
+                                {l.icon} {l.name}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="card p-4 mb-3">
+                        <div className="flex justify-between items-center mb-2">
+                            <p className="font-bold" style={{color:"var(--text-primary)"}}>{list.icon} {list.name}</p>
+                            <p className="text-sm font-bold" style={{color:pct===100?"#10b981":"var(--text-secondary)"}}>{completedCount}/{totalCount}</p>
+                        </div>
+                        <div style={{height: 8, background: "var(--bg-subtle)", borderRadius: 99}}>
+                            <div style={{height: "100%", width: pct+"%", background: pct===100?"#10b981":"#0891b2", borderRadius: 99, transition: "width 0.5s ease"}}></div>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        {list.items.map((item, i) => {
+                            const done = todayStatus[i];
+                            return (
+                                <button key={i} onClick={()=>toggleItem(i)} className="card p-3 w-full text-left flex items-center gap-3 active:scale-98 transition">
+                                    <div style={{
+                                        width: 24, height: 24, borderRadius: 8,
+                                        border: done?"none":"2px solid var(--border-default)",
+                                        background: done?"#10b981":"transparent",
+                                        display: "flex", alignItems: "center", justifyContent: "center",
+                                        flexShrink: 0
+                                    }}>{done && <span style={{color:"white",fontSize:14,fontWeight:900}}>✓</span>}</div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className={"text-sm "+(done?"line-through":"")} style={{color: done?"var(--text-muted)":"var(--text-primary)"}}>{item}</p>
+                                        {done && <p className="text-xs" style={{color:"var(--text-muted)"}}>{done.by} · {new Date(done.at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        }
+
+        // ============ SALES INPUT (managers/owners) ============
+        function SalesInput({ language, staffName, staffList }) {
+            const [sales, setSales] = useState([]);
+            const [today, setToday] = useState(new Date().toISOString().split("T")[0]);
+            const [salesAmount, setSalesAmount] = useState("");
+            const [salesLocation, setSalesLocation] = useState("cwe");
+            const [loading, setLoading] = useState(true);
+            const ownerAccess = isOwner(staffName);
+
+            useEffect(() => {
+                const unsub = db.collection("dailySales").orderBy("date","desc").limit(60).onSnapshot(snap => {
+                    setSales(snap.docs.map(d=>({id:d.id,...d.data()})));
+                    setLoading(false);
+                });
+                return () => unsub();
+            }, []);
+
+            const saveSale = async () => {
+                if (!salesAmount) return;
+                const docId = today + "_" + salesLocation;
+                await db.collection("dailySales").doc(docId).set({
+                    date: today, location: salesLocation, amount: parseFloat(salesAmount),
+                    enteredBy: staffName, updatedAt: new Date().toISOString()
+                }, {merge:true});
+                setSalesAmount("");
+                window.showToast(language==="es"?"Ventas guardadas":"Sales saved", "success");
+            };
+
+            // Recent week sales by location
+            const weekSales = sales.slice(0, 14);
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>💵 {language==="es"?"Ventas Diarias":"Daily Sales"}</h2>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{language==="es"?"Registra las ventas para ver costo laboral como % de ventas":"Log daily sales to see labor as % of revenue"}</p>
+
+                    <div className="card p-4 mb-4 space-y-3">
+                        <p className="font-bold" style={{color:"var(--text-primary)"}}>📝 {language==="es"?"Registrar Ventas":"Log Sales"}</p>
+                        <div>
+                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Fecha":"Date"}</label>
+                            <input type="date" value={today} onChange={e=>setToday(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Ubicación":"Location"}</label>
+                            <select value={salesLocation} onChange={e=>setSalesLocation(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                                <option value="cwe">Central West End</option>
+                                <option value="kirkwood">Kirkwood</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Ventas ($)":"Sales ($)"}</label>
+                            <input type="number" step="0.01" value={salesAmount} onChange={e=>setSalesAmount(e.target.value)} placeholder="2500.00" className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                        </div>
+                        <button onClick={saveSale} disabled={!salesAmount} className={"w-full py-3 rounded-xl font-bold text-sm "+(salesAmount?"bg-green-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>💾 {language==="es"?"Guardar":"Save"}</button>
+                    </div>
+
+                    <p className="font-bold text-sm mb-2" style={{color:"var(--text-primary)"}}>📊 {language==="es"?"Ventas Recientes":"Recent Sales"}</p>
+                    {loading ? <Skeleton count={4}/> : weekSales.length===0 ? (
+                        <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin ventas registradas":"No sales logged yet"}</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {weekSales.map(s => (
+                                <div key={s.id} className="card p-3 flex justify-between items-center">
+                                    <div>
+                                        <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>{new Date(s.date+"T12:00:00").toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})}</p>
+                                        <p className="text-xs" style={{color:"var(--text-muted)"}}>{s.location==="cwe"?"Central West End":"Kirkwood"} · {s.enteredBy}</p>
+                                    </div>
+                                    <p className="font-display font-bold text-lg" style={{color:"var(--text-primary)"}}>${(s.amount||0).toLocaleString()}</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // ============ ACTIVITY LOG (owner only) ============
+        function ActivityLog({ language, staffName }) {
+            const [activity, setActivity] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                let mounted = true;
+                async function load() {
+                    try {
+                        const items = [];
+                        const promises = [
+                            db.collection("audits").orderBy("date","desc").limit(20).get(),
+                            db.collection("pendingOrders").orderBy("date","desc").limit(20).get(),
+                            db.collection("deliveryLog").orderBy("date","desc").limit(20).get(),
+                            db.collection("timeOffRequests").orderBy("requestedAt","desc").limit(20).get(),
+                            db.collection("shiftSwaps").orderBy("createdAt","desc").limit(20).get(),
+                            db.collection("schedules").orderBy("publishedAt","desc").limit(20).get(),
+                            db.collection("wasteLog").orderBy("date","desc").limit(20).get()
+                        ];
+                        const [audits, orders, deliveries, timeOff, swaps, schedules, waste] = await Promise.all(promises);
+                        audits.forEach(d=>{const a=d.data();items.push({icon:"🔍",text:a.auditedBy+" "+(language==="es"?"auditó inventario":"audited inventory"),date:a.date,who:a.auditedBy});});
+                        orders.forEach(d=>{const o=d.data();items.push({icon:"📦",text:o.orderedBy+" "+(language==="es"?"ordenó de":"ordered from")+" "+o.supplier,date:o.date,who:o.orderedBy});});
+                        deliveries.forEach(d=>{const r=d.data();items.push({icon:"📥",text:r.receivedBy+" "+(language==="es"?"recibió entrega":"received delivery"),date:r.date,who:r.receivedBy});});
+                        timeOff.forEach(d=>{const t=d.data();items.push({icon:"🏖️",text:t.employee+" "+(language==="es"?"solicitó descanso":"requested time off")+(t.reviewedBy?" — "+(t.status==="approved"?"✅":"❌")+" "+t.reviewedBy:""),date:t.requestedAt,who:t.employee});});
+                        swaps.forEach(d=>{const sw=d.data();items.push({icon:"🔄",text:sw.offeredBy+" "+(language==="es"?"ofreció turno":"offered shift")+(sw.claimedBy?" → "+sw.claimedBy:""),date:sw.createdAt,who:sw.offeredBy});});
+                        schedules.forEach(d=>{const s=d.data();if(s.publishedAt)items.push({icon:"📅",text:(s.publishedBy||"?")+" "+(language==="es"?"publicó":"published")+" "+(s.location||"")+" "+(language==="es"?"horario":"schedule"),date:s.publishedAt,who:s.publishedBy});});
+                        waste.forEach(d=>{const w=d.data();items.push({icon:"🗑️",text:(w.loggedBy||"?")+" "+(language==="es"?"registró merma":"logged waste"),date:w.date,who:w.loggedBy});});
+                        items.sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+                        if (mounted) {
+                            setActivity(items.slice(0, 60));
+                            setLoading(false);
+                        }
+                    } catch(e) { console.error(e); if(mounted) setLoading(false); }
+                }
+                load();
+                return () => { mounted = false; };
+            }, [language]);
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>📜 {language==="es"?"Registro de Actividad":"Activity Log"}</h2>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{language==="es"?"Lo que ha sucedido recientemente":"Recent activity across the business"}</p>
+
+                    {loading ? <Skeleton count={6}/> : activity.length===0 ? (
+                        <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin actividad":"No activity yet"}</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {activity.map((a,i) => (
+                                <div key={i} className="card p-3 flex items-start gap-3">
+                                    <div style={{fontSize: 20, lineHeight: 1}}>{a.icon}</div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm" style={{color:"var(--text-primary)"}}>{a.text}</p>
+                                        <p className="text-xs mt-0.5" style={{color:"var(--text-muted)"}}>{a.date ? new Date(a.date).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : ""}</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         // ============ DASHBOARD (owner only) ============
         function Dashboard({ language, staffName, staffList }) {
             const [stats, setStats] = useState({});
@@ -6598,6 +7349,16 @@
                         const weekAgo = new Date(Date.now()-7*86400000).toISOString();
                         const wasteSnap = await db.collection("wasteLog").where("date",">=",weekAgo).get();
 
+                        // Get this week's sales for labor cost percentage
+                        const salesSnap = await db.collection("dailySales").where("date",">=",weekStart).get();
+                        let weekSalesCWE = 0, weekSalesKW = 0;
+                        salesSnap.forEach(d => {
+                            const s = d.data();
+                            if (s.location === "cwe") weekSalesCWE += s.amount || 0;
+                            else if (s.location === "kirkwood") weekSalesKW += s.amount || 0;
+                        });
+                        const totalSales = weekSalesCWE + weekSalesKW;
+
                         if(!mounted)return;
                         setStats({
                             belowPar, outOfStock,
@@ -6610,6 +7371,12 @@
                             laborCWE: totalLaborCWE,
                             laborKW: totalLaborKW,
                             laborTotal: totalLaborCWE + totalLaborKW,
+                            salesCWE: weekSalesCWE,
+                            salesKW: weekSalesKW,
+                            totalSales: totalSales,
+                            laborPctCWE: weekSalesCWE > 0 ? (totalLaborCWE / weekSalesCWE * 100) : 0,
+                            laborPctKW: weekSalesKW > 0 ? (totalLaborKW / weekSalesKW * 100) : 0,
+                            laborPctTotal: totalSales > 0 ? ((totalLaborCWE + totalLaborKW) / totalSales * 100) : 0,
                             wasteThisWeek: wasteSnap.size,
                             activeStaff: staffList.length
                         });
@@ -6675,23 +7442,37 @@
                         {card("🆕",language==="es"?"Abiertos":"Open",stats.openShifts||0,stats.openShifts>0?"text-blue-600":"text-gray-800",language==="es"?"sin asignar":"unassigned")}
                     </div>
 
-                    <p className="font-bold text-gray-700 text-sm mb-2">💰 {language==="es"?"Costos":"Costs"}</p>
+                    <p className="font-bold text-gray-700 text-sm mb-2">💰 {language==="es"?"Costos":"Labor Costs"}</p>
                     <div className="grid grid-cols-2 gap-2 mb-4">
                         <div className="bg-white rounded-2xl border border-gray-100 p-4">
                             <p className="text-xs text-gray-400">CWE</p>
                             <p className="text-2xl font-bold text-poke-600">${(stats.laborCWE||0).toFixed(0)}</p>
-                            <p className="text-[10px] text-gray-400">{language==="es"?"costo laboral":"labor cost"}</p>
+                            {stats.salesCWE > 0 ? (
+                                <p className={"text-xs font-bold mt-1 "+(stats.laborPctCWE > 30 ? "text-red-600" : stats.laborPctCWE > 25 ? "text-orange-600" : "text-green-600")}>{stats.laborPctCWE.toFixed(1)}% {language==="es"?"de ventas":"of sales"}</p>
+                            ) : (
+                                <p className="text-[10px] text-gray-400 mt-1">{language==="es"?"agrega ventas":"add sales to see %"}</p>
+                            )}
                         </div>
                         <div className="bg-white rounded-2xl border border-gray-100 p-4">
                             <p className="text-xs text-gray-400">Kirkwood</p>
                             <p className="text-2xl font-bold text-poke-600">${(stats.laborKW||0).toFixed(0)}</p>
-                            <p className="text-[10px] text-gray-400">{language==="es"?"costo laboral":"labor cost"}</p>
+                            {stats.salesKW > 0 ? (
+                                <p className={"text-xs font-bold mt-1 "+(stats.laborPctKW > 30 ? "text-red-600" : stats.laborPctKW > 25 ? "text-orange-600" : "text-green-600")}>{stats.laborPctKW.toFixed(1)}% {language==="es"?"de ventas":"of sales"}</p>
+                            ) : (
+                                <p className="text-[10px] text-gray-400 mt-1">{language==="es"?"agrega ventas":"add sales to see %"}</p>
+                            )}
                         </div>
                     </div>
                     <div className="bg-gradient-to-r from-poke-700 to-poke-600 rounded-2xl p-4 mb-4 text-white">
                         <p className="text-xs text-poke-200">{language==="es"?"Total Semanal":"Weekly Total"}</p>
                         <p className="text-3xl font-bold">${(stats.laborTotal||0).toFixed(0)}</p>
-                        <p className="text-xs text-poke-200">{language==="es"?"costo laboral combinado":"combined labor"}</p>
+                        {stats.totalSales > 0 ? (
+                            <p className="text-xs text-poke-100 mt-1">
+                                <span className="font-bold">{stats.laborPctTotal.toFixed(1)}%</span> {language==="es"?"de ":"of "} ${(stats.totalSales||0).toLocaleString()} {language==="es"?"en ventas":"in sales"}
+                            </p>
+                        ) : (
+                            <p className="text-xs text-poke-200 mt-1">{language==="es"?"costo laboral combinado":"combined labor"}</p>
+                        )}
                     </div>
 
                     {/* Recent Activity */}
@@ -7035,6 +7816,42 @@
                                             <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Info detallada" : "Detailed info"}</div>
                                         </button>
                                     )}
+                                    <button
+                                        onClick={() => setActiveTab("timeclock")}
+                                        className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                    >
+                                        <div className="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center text-2xl mb-3">⏰</div>
+                                        <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Reloj de Tiempo" : "Time Clock"}</div>
+                                        <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Marca entrada y salida" : "Clock in & out"}</div>
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab("checklists")}
+                                        className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                    >
+                                        <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-2xl mb-3">✅</div>
+                                        <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Listas" : "Checklists"}</div>
+                                        <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Apertura y cierre" : "Opening & closing"}</div>
+                                    </button>
+                                    {staffIsAdmin && (
+                                        <button
+                                            onClick={() => setActiveTab("sales")}
+                                            className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                        >
+                                            <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center text-2xl mb-3">💵</div>
+                                            <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Ventas" : "Daily Sales"}</div>
+                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Registro diario" : "Daily log"}</div>
+                                        </button>
+                                    )}
+                                    {staffIsOwner && (
+                                        <button
+                                            onClick={() => setActiveTab("activity")}
+                                            className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                        >
+                                            <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center text-2xl mb-3">📜</div>
+                                            <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Actividad" : "Activity Log"}</div>
+                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Qué ha pasado" : "What happened"}</div>
+                                        </button>
+                                    )}
                                     {staffIsAdmin && (
                                         <button
                                             onClick={() => setActiveTab("admin")}
@@ -7063,6 +7880,10 @@
                         {activeTab === "recipes" && canViewRecipes && <Recipes language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} />}
+                        {activeTab === "timeclock" && <TimeClock language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "checklists" && <Checklists language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "sales" && staffIsAdmin && <SalesInput language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "activity" && staffIsOwner && <ActivityLog language={language} staffName={staffName} />}
                     </div>
 
                     {/* Bottom Navigation */}
@@ -7133,6 +7954,8 @@
                             </div>
                         </div>
                     </nav>
+                    <ToastContainer />
+                    <ConfirmModal />
                 </div>
             );
         }
