@@ -3879,6 +3879,7 @@
             const [templateName, setTemplateName] = useState("");
             const [showTemplateSave, setShowTemplateSave] = useState(false);
             const [draggedShift, setDraggedShift] = useState(null);
+            const [dayNotes, setDayNotes] = useState({});
             const [hoursView, setHoursView] = useState("week");
             const [myUpcomingShifts, setMyUpcomingShifts] = useState([]);
             const [timeClockEntries, setTimeClockEntries] = useState([]);
@@ -3938,11 +3939,13 @@
                         setShifts(mgrAccess ? draftShifts : pubShifts);
                         setSchedStatus(data.status || "draft");
                         setHasUnpublishedChanges(!!data.hasUnpublishedChanges);
+                        setDayNotes(data.dayNotes || {});
                     } else {
                         setPublishedShifts([]);
                         setShifts([]);
                         setSchedStatus("draft");
                         setHasUnpublishedChanges(false);
+                        setDayNotes({});
                     }
                 });
                 return () => unsub();
@@ -4073,6 +4076,12 @@
                 await db.collection("ops").doc("scheduleSettings").set({closeTime: tempCloseTime, updatedBy: staffName, updatedAt: new Date().toISOString()}, {merge: true});
                 setCloseTime(tempCloseTime);
                 setShowSettings(false);
+            };
+
+            const saveDayNote = async (dayKey, note) => {
+                const updated = {...dayNotes, [dayKey]: note};
+                setDayNotes(updated);
+                await db.collection("schedules").doc(weekKey).set({dayNotes: updated}, {merge: true});
             };
 
             // Format a time string (24h) to display format like "3:00pm"
@@ -4724,6 +4733,24 @@
                                                         </span>
                                                     </div>
                                                 ))}
+                                            </div>
+                                        )}
+
+                                        {/* Manager Day Notes */}
+                                        {(dayNotes[dayKey] || mgrAccess) && (
+                                            <div style={{background: dayNotes[dayKey] ? "#eff6ff" : "transparent", borderBottom: dayNotes[dayKey] ? "1px solid #bfdbfe" : "none", padding: dayNotes[dayKey] || mgrAccess ? "8px 12px" : 0}}>
+                                                {dayNotes[dayKey] && !mgrAccess && (
+                                                    <p className="text-xs" style={{color:"#1e40af"}}>📌 {dayNotes[dayKey]}</p>
+                                                )}
+                                                {mgrAccess && (
+                                                    <div className="flex items-center gap-2">
+                                                        <span style={{fontSize:12}}>📌</span>
+                                                        <input type="text" value={dayNotes[dayKey]||""} onChange={e=>setDayNotes(prev=>({...prev,[dayKey]:e.target.value}))}
+                                                            onBlur={e=>saveDayNote(dayKey, e.target.value)}
+                                                            placeholder={language==="es"?"Nota del día...":"Day note..."}
+                                                            className="flex-1 text-xs px-2 py-1 border rounded-lg" style={{background:"white",borderColor:"#bfdbfe",color:"#1e40af"}}/>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
 
@@ -9069,6 +9096,30 @@
                 return () => unsub();
             }, []);
 
+            // Load today's shifts for shift reminder banner
+            const [todayShifts, setTodayShifts] = useState([]);
+            useEffect(() => {
+                if (!staffName) return;
+                const today = new Date();
+                const dow = today.getDay() === 0 ? 7 : today.getDay();
+                const monday = new Date(today); monday.setDate(today.getDate() - dow + 1);
+                const ws = window.fmtLocalDate(monday);
+                const dayKeys = ["mon","tue","wed","thu","fri","sat","sun"];
+                const todayDayKey = dayKeys[dow - 1];
+                const unsubs = ["cwe","kirkwood"].map(loc => {
+                    const docId = loc + "_" + ws;
+                    return db.collection("schedules").doc(docId).onSnapshot(doc => {
+                        if (!doc.exists) { setTodayShifts(prev => prev.filter(s => s._loc !== loc)); return; }
+                        const data = doc.data();
+                        const useShifts = data.status === "published" ? (data.publishedShifts || data.shifts || []) : [];
+                        const mine = useShifts.filter(s => s.employee === staffName && s.day === todayDayKey)
+                            .map(s => ({...s, _loc: loc, _locName: loc === "cwe" ? "CWE" : "Kirkwood"}));
+                        setTodayShifts(prev => [...prev.filter(s => s._loc !== loc), ...mine]);
+                    });
+                });
+                return () => unsubs.forEach(u => u());
+            }, [staffName]);
+
             const staffIsAdmin = isAdmin(staffName);
             const staffIsOwner = isOwner(staffName);
             const canViewRecipes = canAccessRecipes(staffName, isAtPokedoke);
@@ -9166,6 +9217,25 @@
                                         </button>
                                     );
                                 })()}
+
+                                {/* Shift Reminder Banner */}
+                                {todayShifts.length > 0 && (
+                                    <button onClick={()=>setActiveTab("schedule")} className="w-full mb-4 text-left">
+                                        <div className="rounded-2xl p-4 bg-gradient-to-r from-green-500 to-emerald-500 shadow-sm">
+                                            <p className="text-white/80 text-[10px] font-bold uppercase tracking-wider">{language==="es"?"HOY TRABAJAS":"YOU WORK TODAY"}</p>
+                                            {todayShifts.map((shift,i) => (
+                                                <div key={i} className="flex items-center justify-between mt-1">
+                                                    <p className="text-white font-bold text-lg font-display">
+                                                        {(()=>{ const [h,m]=shift.startTime.split(":").map(Number); const p=h>=12?"pm":"am"; const h12=h===0?12:h>12?h-12:h; return m===0?h12+p:h12+":"+String(m).padStart(2,"0")+p; })()}
+                                                        {" — "}
+                                                        {(()=>{ const [h,m]=shift.endTime.split(":").map(Number); const p=h>=12?"pm":"am"; const h12=h===0?12:h>12?h-12:h; return m===0?h12+p:h12+":"+String(m).padStart(2,"0")+p; })()}
+                                                    </p>
+                                                    <span className="text-white/90 text-xs font-bold bg-white/20 px-2 py-1 rounded-lg">📍 {shift._locName}{shift.role?" · "+shift.role:""}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </button>
+                                )}
 
                                 <h2 className="text-2xl font-bold text-gray-800 mb-1">{t("welcome", language)}, {staffName.split(" ")[0]}!</h2>
                                 <p className="text-sm text-gray-400 mb-5">{language === "es" ? "¿Qué necesitas hoy?" : "What do you need today?"}</p>
