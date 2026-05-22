@@ -1669,6 +1669,7 @@
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invViewMode, setInvViewMode] = useState("count");
+            const [invVendorFilter, setInvVendorFilter] = useState("all");
             const [wasteLog, setWasteLog] = useState([]);
             const [wasteItem, setWasteItem] = useState("");
             const [wasteQty, setWasteQty] = useState("1");
@@ -2941,6 +2942,27 @@
                                 ))}
                             </div>
 
+                            {/* Vendor Filter */}
+                            {(invViewMode==="count"||invViewMode==="quick"||invViewMode==="audit") && (
+                                <div className="flex gap-1 overflow-x-auto pb-1">
+                                    <button onClick={()=>setInvVendorFilter("all")}
+                                        className={"px-3 py-1.5 rounded-xl text-xs font-bold border-2 transition whitespace-nowrap "+(invVendorFilter==="all"?"border-gray-800 bg-gray-800 text-white":"border-gray-200 text-gray-500")}>
+                                        {language==="es"?"Todos":"All"}
+                                    </button>
+                                    {Object.values(VENDORS).map(v=>(
+                                        <button key={v.id} onClick={()=>setInvVendorFilter(v.id)}
+                                            className={"px-3 py-1.5 rounded-xl text-xs font-bold border-2 transition whitespace-nowrap"}
+                                            style={{
+                                                borderColor: invVendorFilter===v.id ? v.color : "#e5e7eb",
+                                                background: invVendorFilter===v.id ? v.color : "transparent",
+                                                color: invVendorFilter===v.id ? "white" : v.color
+                                            }}>
+                                            {v.name}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+
                             {invViewMode === "count" && (
                                 <div className="space-y-4">
                                     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
@@ -2956,14 +2978,18 @@
                                         </button>
                                         )}
                                     </div>
-                                    {customInventory.map((category,catIdx)=>(
+                                    {customInventory.map((category,catIdx)=>{
+                                        const filteredItems = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                        if (filteredItems.length === 0) return null;
+                                        return (
                                         <div key={category.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                                             <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center">
                                                 <span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span>
-                                                <span className="text-xs text-gray-400">{category.items.length} items</span>
+                                                <span className="text-xs text-gray-400">{filteredItems.length} items</span>
                                             </div>
                                             <div className="divide-y divide-gray-50">
-                                                {category.items.map((item,itemIdx)=>{
+                                                {filteredItems.map((item)=>{
+                                                    const itemIdx = category.items.indexOf(item);
                                                     const isEditing=invEditMode&&invEditingIdx&&invEditingIdx.catIdx===catIdx&&invEditingIdx.itemIdx===itemIdx;
                                                     const status=getStockStatus(item);
                                                     const sc={out:"bg-red-50",critical:"bg-orange-50",low:"bg-yellow-50",ok:""};
@@ -2991,7 +3017,7 @@
                                                                             {status==="low"&&<span className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></span>}
                                                                             <p className="font-semibold text-gray-800 text-sm truncate">{language==="es"&&item.nameEs?item.nameEs:item.name}</p>
                                                                         </div>
-                                                                        <p className="text-xs text-gray-400 mt-0.5">{item.unit&&<span className="mr-2">📏{item.unit}</span>}{item.supplier&&<span className="mr-2">🏭{item.supplier}</span>}PAR:{getParLevel(item)}</p>
+                                                                        <p className="text-xs text-gray-400 mt-0.5">{item.unit&&<span className="mr-2">📏{item.unit}</span>}{item.supplier&&VENDORS[item.supplier]&&<span className="mr-2 font-bold" style={{color:VENDORS[item.supplier].color}}>🏭{VENDORS[item.supplier].name}</span>}PAR:{getParLevel(item)}</p>
                                                                     </div>
                                                                     <div className="flex items-center gap-1 flex-shrink-0">
                                                                         {invEditMode?(
@@ -3030,7 +3056,7 @@
                                                 )}
                                             </div>
                                         </div>
-                                    ))}
+                                    );}).filter(Boolean)}
                                 </div>
                             )}
 
@@ -3040,15 +3066,21 @@
                                         <p className="font-bold text-gray-800 text-sm">⚡ {language==="es"?"Revisión Rápida — Diario":"Quick Check — Daily"}</p>
                                         <p className="text-xs text-gray-400 mt-1">{language==="es"?"Usa esto todos los días. Solo toca ✅ Bien, ⚠️ Bajo, o ❌ Agotado para cada artículo. Toma 2 minutos. Steve recibe una notificación cuando lo guardes para saber qué pedir.":"Use this every day. Just tap ✅ Good, ⚠️ Low, or ❌ Out for each item. Takes 2 minutes. Steve gets notified when you save so he knows what to order."}</p>
                                     </div>
-                                    {customInventory.map(category=>(
+                                    {customInventory.map(category=>{
+                                        const filteredItems = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                        if (filteredItems.length === 0) return null;
+                                        return (
                                         <div key={category.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                                             <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b"><span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span></div>
                                             <div className="divide-y divide-gray-50">
-                                                {category.items.map(item=>{
+                                                {filteredItems.map(item=>{
                                                     const qc=quickCounts[item.id]||"";
                                                     return (
                                                         <div key={item.id} className="p-3 flex items-center justify-between">
-                                                            <p className="font-medium text-gray-800 text-sm flex-1">{language==="es"&&item.nameEs?item.nameEs:item.name}</p>
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className="font-medium text-gray-800 text-sm truncate">{language==="es"&&item.nameEs?item.nameEs:item.name}</p>
+                                                                {item.supplier&&VENDORS[item.supplier]&&<p className="text-[10px] font-bold mt-0.5" style={{color:VENDORS[item.supplier].color}}>{VENDORS[item.supplier].name}</p>}
+                                                            </div>
                                                             <div className="flex gap-1">
                                                                 {[{v:"good",l:"✅",c:"bg-green-100 border-green-400"},{v:"low",l:"⚠️",c:"bg-yellow-100 border-yellow-400"},{v:"out",l:"❌",c:"bg-red-100 border-red-400"}].map(o=>(
                                                                     <button key={o.v} onClick={()=>setQuickCounts(p=>({...p,[item.id]:p[item.id]===o.v?"":o.v}))}
@@ -3060,7 +3092,7 @@
                                                 })}
                                             </div>
                                         </div>
-                                    ))}
+                                    );}).filter(Boolean)}
                                     <button onClick={async()=>{try{
                                         await db.collection("quickCounts").doc(window.fmtLocalDate()).set({counts:quickCounts,countedBy:staffName,date:new Date().toISOString()});
                                         const lowItems=Object.entries(quickCounts).filter(([k,v])=>v==="low"||v==="out");
@@ -3331,16 +3363,19 @@
                                                 <p className="text-xs text-gray-400 mt-1">{language==="es"?"Usa esto una vez por semana. Cuenta físicamente cada artículo e ingresa la cantidad real. El sistema compara con lo que cree que tienes y muestra las diferencias. Al guardar, el inventario se actualiza con tus conteos físicos y Steve recibe una notificación.":"Use this once a week. Physically count each item and enter the actual quantity. The system compares against what it thinks you have and shows variances. When saved, inventory updates to your physical counts and Steve gets notified."}</p>
                                             </div>
 
-                                            {customInventory.map(category=>(
+                                            {customInventory.map(category=>{
+                                                const filteredItems = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                                if (filteredItems.length === 0) return null;
+                                                return (
                                                 <div key={category.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                                                     <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center">
                                                         <span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span>
                                                         <span className="text-xs text-gray-400">
-                                                            {category.items.filter(i=>auditCounts[i.id]!==undefined&&auditCounts[i.id]!=="").length}/{category.items.length} {language==="es"?"contados":"counted"}
+                                                            {filteredItems.filter(i=>auditCounts[i.id]!==undefined&&auditCounts[i.id]!=="").length}/{filteredItems.length} {language==="es"?"contados":"counted"}
                                                         </span>
                                                     </div>
                                                     <div className="divide-y divide-gray-50">
-                                                        {category.items.map(item=>{
+                                                        {filteredItems.map(item=>{
                                                             const systemCount=inventory[item.id]||0;
                                                             const variance=getAuditVariance(item);
                                                             const hasVariance=variance!==null&&variance!==0;
@@ -3351,6 +3386,7 @@
                                                                         <div className="flex-1 min-w-0">
                                                                             <p className="font-semibold text-gray-800 text-sm truncate">{language==="es"&&item.nameEs?item.nameEs:item.name}</p>
                                                                             <p className="text-xs text-gray-400">
+                                                                                {item.supplier&&VENDORS[item.supplier]&&<span className="font-bold mr-2" style={{color:VENDORS[item.supplier].color}}>{VENDORS[item.supplier].name}</span>}
                                                                                 {language==="es"?"Sistema":"System"}: <span className="font-bold">{systemCount}</span> {item.unit}
                                                                                 {hasVariance&&(
                                                                                     <span className={"ml-2 font-bold "+(variance<0?"text-red-600":"text-yellow-600")}>
@@ -3376,7 +3412,7 @@
                                                         })}
                                                     </div>
                                                 </div>
-                                            ))}
+                                            );}).filter(Boolean)}
 
                                             {/* Audit Summary & Submit */}
                                             {(()=>{
