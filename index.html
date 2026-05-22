@@ -1659,11 +1659,13 @@
             const [invEditName, setInvEditName] = useState("");
             const [invEditNameEs, setInvEditNameEs] = useState("");
             const [invEditSupplier, setInvEditSupplier] = useState("");
+            const [invEditPar, setInvEditPar] = useState(0);
             const [invEditOrderDay, setInvEditOrderDay] = useState("Fri");
             const [invShowAddForm, setInvShowAddForm] = useState(null);
             const [invNewName, setInvNewName] = useState("");
             const [invNewNameEs, setInvNewNameEs] = useState("");
             const [invNewSupplier, setInvNewSupplier] = useState("");
+            const [invNewPar, setInvNewPar] = useState(0);
             const [invNewOrderDay, setInvNewOrderDay] = useState("Fri");
             const [customInventory, setCustomInventory] = useState(INVENTORY_CATEGORIES.map(c => ({...c, items: [...c.items]})));
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
@@ -2495,14 +2497,15 @@
                     name: invNewName.trim(),
                     nameEs: invNewNameEs.trim(),
                     supplier: invNewSupplier.trim(),
-                    orderDay: invNewOrderDay
+                    orderDay: invNewOrderDay,
+                    par: Number(invNewPar) || 0
                 };
                 const updated = customInventory.map((cat, idx) =>
                     idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat
                 );
                 setCustomInventory(updated);
                 await saveInventory(inventory, updated);
-                setInvNewName(""); setInvNewNameEs(""); setInvNewSupplier(""); setInvNewOrderDay("Fri"); setInvShowAddForm(null);
+                setInvNewName(""); setInvNewNameEs(""); setInvNewSupplier(""); setInvNewOrderDay("Fri"); setInvNewPar(0); setInvShowAddForm(null);
             };
 
             const saveInvEdit = async (catIdx, itemIdx) => {
@@ -2511,14 +2514,14 @@
                     cIdx === catIdx
                         ? { ...cat, items: cat.items.map((item, iIdx) =>
                             iIdx === itemIdx
-                                ? { ...item, name: invEditName.trim(), nameEs: invEditNameEs.trim(), supplier: invEditSupplier.trim(), orderDay: invEditOrderDay }
+                                ? { ...item, name: invEditName.trim(), nameEs: invEditNameEs.trim(), supplier: invEditSupplier.trim(), orderDay: invEditOrderDay, par: Number(invEditPar) || 0 }
                                 : item
                             )}
                         : cat
                 );
                 setCustomInventory(updated);
                 await saveInventory(inventory, updated);
-                setInvEditingIdx(null); setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri");
+                setInvEditingIdx(null); setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri"); setInvEditPar(0);
             };
 
             const deleteInvItem = async (catIdx, itemIdx) => {
@@ -3037,6 +3040,12 @@
                                                                         <input type="text" value={invEditSupplier} onChange={e=>setInvEditSupplier(e.target.value)} placeholder="Supplier" className="px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                                         <input type="text" value={invEditOrderDay} onChange={e=>setInvEditOrderDay(e.target.value)} placeholder="Order day" className="px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                                     </div>
+                                                                    <div className="grid grid-cols-2 gap-2">
+                                                                        <div>
+                                                                            <label className="text-[10px] font-bold text-gray-500">PAR Level</label>
+                                                                            <input type="number" min="0" value={invEditPar} onChange={e=>setInvEditPar(e.target.value)} placeholder="PAR" className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
+                                                                        </div>
+                                                                    </div>
                                                                     <div className="flex gap-2">
                                                                         <button onClick={()=>saveInvEdit(catIdx,itemIdx)} className="flex-1 bg-green-600 text-white py-2 rounded-xl text-sm font-bold">Save</button>
                                                                         <button onClick={()=>setInvEditingIdx(null)} className="flex-1 bg-gray-400 text-white py-2 rounded-xl text-sm font-bold">Cancel</button>
@@ -3056,7 +3065,7 @@
                                                                     <div className="flex items-center gap-1 flex-shrink-0">
                                                                         {invEditMode?(
                                                                             <>
-                                                                                <button onClick={()=>{setInvEditingIdx({catIdx,itemIdx});setInvEditName(item.name);setInvEditNameEs(item.nameEs||"");setInvEditSupplier(item.supplier);setInvEditOrderDay(item.orderDay);}} className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm">✏️</button>
+                                                                                <button onClick={()=>{setInvEditingIdx({catIdx,itemIdx});setInvEditName(item.name);setInvEditNameEs(item.nameEs||"");setInvEditSupplier(item.supplier||"");setInvEditOrderDay(item.orderDay||"");setInvEditPar(item.par||0);}} className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm">✏️</button>
                                                                                 <button onClick={()=>deleteInvItem(catIdx,itemIdx)} className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center text-sm">🗑️</button>
                                                                             </>
                                                                         ):(
@@ -3079,6 +3088,10 @@
                                                         <div className="grid grid-cols-2 gap-2">
                                                             <input type="text" value={invNewSupplier} onChange={e=>setInvNewSupplier(e.target.value)} placeholder="Supplier" className="px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                             <input type="text" value={invNewOrderDay} onChange={e=>setInvNewOrderDay(e.target.value)} placeholder="Order day" className="px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-gray-500">PAR Level</label>
+                                                            <input type="number" min="0" value={invNewPar} onChange={e=>setInvNewPar(e.target.value)} placeholder="PAR" className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                         </div>
                                                         <div className="flex gap-2">
                                                             <button onClick={()=>addInvItem(catIdx)} className="flex-1 bg-green-600 text-white py-2 rounded-xl text-sm font-bold">Add</button>
