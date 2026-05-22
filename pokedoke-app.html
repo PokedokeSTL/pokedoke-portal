@@ -4706,6 +4706,7 @@
                 if (lines.length < 2) return [];
                 const header = lines[0].map(h => h.replace(/"/g,"").trim());
                 const dayColumns = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+                const dayKeyMap = {"Monday":"mon","Tuesday":"tue","Wednesday":"wed","Thursday":"thu","Friday":"fri","Saturday":"sat","Sunday":"sun"};
 
                 const allShifts = [];
                 let idCounter = Date.now();
@@ -4721,10 +4722,7 @@
                         const cell = (cells[colIdx] || "").replace(/"/g,"").trim();
                         if (!cell) continue;
 
-                        // Get date for this day
-                        const dateObj = new Date(weekStart + "T12:00:00");
-                        dateObj.setDate(dateObj.getDate() + d);
-                        const dayKey = fmtLocalDate(dateObj);
+                        const dayKey = dayKeyMap[dayColumns[d]];
 
                         // Split multiple shifts by |
                         const parts = cell.split("|");
