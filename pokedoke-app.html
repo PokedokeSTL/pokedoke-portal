@@ -4498,10 +4498,12 @@
                 return timeOffRequests.some(req => req.employee===empName && req.status==="approved" && shiftDate >= req.startDate && shiftDate <= req.endDate);
             };
 
-            // Get all time-off requests for a given day (approved AND pending), grouped by status
+            // Get all time-off requests for a given day (approved AND pending), filtered to current location
             const getTimeOffForDay = (dayIdx) => {
                 const shiftDate = getDateForDayKey(dayIdx);
+                const locStaffNames = new Set(staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>s.name));
                 return timeOffRequests.filter(req =>
+                    locStaffNames.has(req.employee) &&
                     (req.status === "approved" || req.status === "pending") &&
                     shiftDate >= req.startDate &&
                     shiftDate <= req.endDate
