@@ -5018,7 +5018,7 @@
                                     <button onClick={autoSchedule} className="py-2 bg-purple-600 text-white rounded-xl text-xs font-bold active:scale-95">✨ {language==="es"?"Auto-generar":"Auto-Generate"}</button>
                                     <button onClick={printSchedule} className="py-2 bg-gray-700 text-white rounded-xl text-xs font-bold active:scale-95">🖨️ {language==="es"?"Imprimir":"Print"}</button>
                                     <input type="file" accept=".csv" ref={csvFileRef} onChange={handleCsvImport} className="hidden" />
-                                    <button onClick={()=>csvFileRef.current?.click()} className="py-2 bg-blue-600 text-white rounded-xl text-xs font-bold active:scale-95">📤 {language==="es"?"Importar 7Shifts":"Import 7Shifts CSV"}</button>
+                                    <button onClick={()=>csvFileRef.current?.click()} className="py-2 bg-blue-600 text-white rounded-xl text-xs font-bold active:scale-95">📤 {language==="es"?"Importar CSV":"Import CSV"}</button>
                                     <button onClick={()=>{setTempCloseTime(closeTime);setShowSettings(true);}} className="col-span-2 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold active:scale-95">⚙️ {language==="es"?"Ajustes — Hora de Cierre":"Settings — Close Time"}: {fmtTime(closeTime)}</button>
                                 </div>
                             )}
