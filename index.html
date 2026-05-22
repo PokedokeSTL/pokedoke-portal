@@ -1142,131 +1142,242 @@
             }
         };
 
-        // Inventory Data — Complete PokeDoke inventory with PAR levels
+        // Vendor definitions with ordering info
+        const VENDORS = {
+            WIS: { id: "WIS", name: "Wismettac", color: "#dc2626", cutoff: "Friday 12:00pm", cutoffEs: "Viernes 12:00pm", delivery: "CWE/Delmar: Mon-Tue, Kirkwood: Wed", deliveryEs: "CWE/Delmar: Lun-Mar, Kirkwood: Mié", url: "https://econnect.wismettacusa.com/login" },
+            PFG: { id: "PFG", name: "PFG", color: "#2563eb", cutoff: "Tuesday 3:00pm", cutoffEs: "Martes 3:00pm", delivery: "Wednesday", deliveryEs: "Miércoles", url: "https://www.customerfirstsolutions.com" },
+            RDC: { id: "RDC", name: "RD/Costco/Other", color: "#059669", cutoff: "Tuesday EOD", cutoffEs: "Martes fin del día", delivery: "Wed-Fri", deliveryEs: "Mié-Vie", url: "" },
+            BOB: { id: "BOB", name: "Bubble Tea Supplier", color: "#7c3aed", cutoff: "Mon-Fri (anytime)", cutoffEs: "Lun-Vie (cualquier hora)", delivery: "FedEx 3-5 days", deliveryEs: "FedEx 3-5 días", url: "" }
+        };
+
+        // Inventory Data — Complete PokeDoke inventory with PAR levels and vendor tags
         const INVENTORY_CATEGORIES = [
             {
                 id: 0, name: "Proteins", nameEs: "Proteínas",
                 items: [
-                    { id: "0-0", name: "Ahi Tuna (sashimi grade)", nameEs: "Atún Ahi", supplier: "", orderDay: "", unit: "case", par: 15 },
-                    { id: "0-1", name: "Salmon (sashimi grade)", nameEs: "Salmón", supplier: "", orderDay: "", unit: "unit", par: 15 },
-                    { id: "0-2", name: "Spicy Tuna Mix", nameEs: "Mezcla Atún Picante", supplier: "", orderDay: "", unit: "case", par: 10 },
-                    { id: "0-3", name: "Shrimp (cooked)", nameEs: "Camarón Cocido", supplier: "", orderDay: "", unit: "case", par: 8 },
-                    { id: "0-4", name: "Tempura Shrimp", nameEs: "Camarón Tempura", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "0-5", name: "Tofu (firm)", nameEs: "Tofu Firme", supplier: "", orderDay: "", unit: "case", par: 6 },
-                    { id: "0-6", name: "Crabmeat (imitation)", nameEs: "Cangrejo Imitación", supplier: "", orderDay: "", unit: "case", par: 10 },
-                    { id: "0-7", name: "Soft-Shell Crab", nameEs: "Cangrejo Suave", supplier: "", orderDay: "", unit: "case", par: 12 },
-                    { id: "0-8", name: "Chicken (raw, for frying)", nameEs: "Pollo para Freír", supplier: "", orderDay: "", unit: "case", par: 15 },
-                    { id: "0-9", name: "Kalbi Short Ribs", nameEs: "Costillas Kalbi", supplier: "", orderDay: "", unit: "case", par: 8 },
-                    { id: "0-10", name: "BBQ Chicken (marinated)", nameEs: "Pollo BBQ", supplier: "", orderDay: "", unit: "case", par: 8 },
-                    { id: "0-11", name: "Gyoza (frozen)", nameEs: "Gyoza Congelados", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "0-12", name: "Crab Rangoon Filling", nameEs: "Relleno Rangoon", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "0-13", name: "Chicken Wings (raw)", nameEs: "Alitas de Pollo", supplier: "", orderDay: "", unit: "case", par: 15 }
+                    { id: "0-0", name: "Tuna Loins", nameEs: "Atún Ahi", supplier: "WIS", orderDay: "fri", unit: "case", par: 15 },
+                    { id: "0-1", name: "Salmon (sashimi grade)", nameEs: "Salmón", supplier: "WIS", orderDay: "fri", unit: "unit", par: 15 },
+                    { id: "0-2", name: "Ground Tuna (Spicy Tuna Mix)", nameEs: "Atún Molido", supplier: "WIS", orderDay: "fri", unit: "case", par: 10 },
+                    { id: "0-3", name: "71/90 P/D Shrimp", nameEs: "Camarón P/D", supplier: "PFG", orderDay: "tue", unit: "case", par: 8 },
+                    { id: "0-4", name: "Tempura Shrimp", nameEs: "Camarón Tempura", supplier: "WIS", orderDay: "fri", unit: "case", par: 4 },
+                    { id: "0-5", name: "Tofu", nameEs: "Tofu Firme", supplier: "RDC", orderDay: "tue", unit: "case", par: 6 },
+                    { id: "0-6", name: "Shredded Crabmeat", nameEs: "Cangrejo Desmenuzado", supplier: "WIS", orderDay: "fri", unit: "case", par: 10 },
+                    { id: "0-7", name: "Softshell Crab", nameEs: "Cangrejo Suave", supplier: "WIS", orderDay: "fri", unit: "case", par: 12 },
+                    { id: "0-8", name: "Chicken Breast", nameEs: "Pechuga de Pollo", supplier: "PFG", orderDay: "tue", unit: "case", par: 15 },
+                    { id: "0-9", name: "Chicken Thighs", nameEs: "Muslos de Pollo", supplier: "PFG", orderDay: "tue", unit: "case", par: 8 },
+                    { id: "0-10", name: "Chicken Wings", nameEs: "Alitas de Pollo", supplier: "PFG", orderDay: "tue", unit: "case", par: 15 },
+                    { id: "0-11", name: "Short Ribs (Kalbi)", nameEs: "Costillas Kalbi", supplier: "RDC", orderDay: "tue", unit: "case", par: 8 },
+                    { id: "0-12", name: "Gyoza", nameEs: "Gyoza", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "0-13", name: "Crab Rangoon Cream Cheese", nameEs: "Queso Crema Rangoon", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 }
                 ]
             },
             {
                 id: 1, name: "Bases & Grains", nameEs: "Bases y Granos",
                 items: [
-                    { id: "1-0", name: "Sushi Rice (dry)", nameEs: "Arroz Sushi Seco", supplier: "", orderDay: "", unit: "case", par: 6 },
-                    { id: "1-1", name: "Brown Rice (dry)", nameEs: "Arroz Integral", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "1-2", name: "White Rice (for plates)", nameEs: "Arroz Blanco", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "1-3", name: "Spring Mix / Greens", nameEs: "Verduras Mixtas", supplier: "", orderDay: "", unit: "case", par: 6 },
-                    { id: "1-4", name: "Soba Noodles", nameEs: "Fideos Soba", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "1-5", name: "Wonton Wrappers / Chips", nameEs: "Masa / Chips Wonton", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "1-6", name: "Elbow Macaroni", nameEs: "Macarrones", supplier: "", orderDay: "", unit: "case", par: 4 }
+                    { id: "1-0", name: "White Rice", nameEs: "Arroz Blanco", supplier: "WIS", orderDay: "fri", unit: "case", par: 6 },
+                    { id: "1-1", name: "Brown Rice", nameEs: "Arroz Integral", supplier: "WIS", orderDay: "fri", unit: "case", par: 3 },
+                    { id: "1-2", name: "Spring Mix", nameEs: "Verduras Mixtas", supplier: "PFG", orderDay: "tue", unit: "case", par: 6 },
+                    { id: "1-3", name: "Soba Noodles", nameEs: "Fideos Soba", supplier: "WIS", orderDay: "fri", unit: "case", par: 4 },
+                    { id: "1-4", name: "Udon Noodles", nameEs: "Fideos Udon", supplier: "WIS", orderDay: "fri", unit: "case", par: 3 },
+                    { id: "1-5", name: "Wonton Skins", nameEs: "Masa Wonton", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "1-6", name: "Macaroni Pasta", nameEs: "Macarrones", supplier: "PFG", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "1-7", name: "Tempura Flour", nameEs: "Harina Tempura", supplier: "PFG", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "1-8", name: "High Gluten Flour", nameEs: "Harina Alto Gluten", supplier: "PFG", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "1-9", name: "Fries", nameEs: "Papas Fritas", supplier: "PFG", orderDay: "tue", unit: "case", par: 3 }
                 ]
             },
             {
                 id: 2, name: "Toppings & Produce", nameEs: "Toppings y Produce",
                 items: [
-                    { id: "2-0", name: "Avocado", nameEs: "Aguacate", supplier: "", orderDay: "", unit: "case", par: 30 },
-                    { id: "2-1", name: "Cucumber", nameEs: "Pepino", supplier: "", orderDay: "", unit: "case", par: 15 },
-                    { id: "2-2", name: "Edamame (frozen)", nameEs: "Edamame", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "2-3", name: "Mango", nameEs: "Mango", supplier: "", orderDay: "", unit: "case", par: 10 },
-                    { id: "2-4", name: "Pineapple", nameEs: "Piña", supplier: "", orderDay: "", unit: "case", par: 6 },
-                    { id: "2-5", name: "Corn (frozen/canned)", nameEs: "Maíz", supplier: "", orderDay: "", unit: "case", par: 6 },
-                    { id: "2-6", name: "White Onions", nameEs: "Cebollas", supplier: "", orderDay: "", unit: "case", par: 12 },
-                    { id: "2-7", name: "Green Onion", nameEs: "Cebollín", supplier: "", orderDay: "", unit: "case", par: 8 },
-                    { id: "2-8", name: "Purple Cabbage", nameEs: "Col Morada", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "2-9", name: "Shredded Carrots", nameEs: "Zanahoria Rallada", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "2-10", name: "Pickled Ginger", nameEs: "Jengibre", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "2-11", name: "Kimchi", nameEs: "Kimchi", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "2-12", name: "Seaweed Salad", nameEs: "Ensalada de Algas", supplier: "", orderDay: "", unit: "unit", par: 5 },
-                    { id: "2-13", name: "Masago", nameEs: "Masago", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "2-14", name: "Nori Sheets", nameEs: "Hojas de Nori", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "2-15", name: "Fried Onions", nameEs: "Cebolla Frita", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "2-16", name: "Tempura Flakes", nameEs: "Hojuelas Tempura", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "2-17", name: "Lemons / Limes", nameEs: "Limones", supplier: "", orderDay: "", unit: "case", par: 15 },
-                    { id: "2-18", name: "Potatoes (for fries)", nameEs: "Papas para Freír", supplier: "", orderDay: "", unit: "case", par: 3 }
+                    { id: "2-0", name: "Avocado", nameEs: "Aguacate", supplier: "PFG", orderDay: "tue", unit: "case", par: 30 },
+                    { id: "2-1", name: "English Cucumbers", nameEs: "Pepinos", supplier: "PFG", orderDay: "tue", unit: "case", par: 15 },
+                    { id: "2-2", name: "Edamame", nameEs: "Edamame", supplier: "WIS", orderDay: "fri", unit: "case", par: 4 },
+                    { id: "2-3", name: "Mango", nameEs: "Mango", supplier: "PFG", orderDay: "tue", unit: "case", par: 10 },
+                    { id: "2-4", name: "Pineapple Tidbits", nameEs: "Piña en Trozos", supplier: "PFG", orderDay: "tue", unit: "case", par: 6 },
+                    { id: "2-5", name: "Corn", nameEs: "Maíz", supplier: "PFG", orderDay: "tue", unit: "case", par: 6 },
+                    { id: "2-6", name: "White Onions", nameEs: "Cebollas", supplier: "PFG", orderDay: "tue", unit: "case", par: 12 },
+                    { id: "2-7", name: "Green Onions", nameEs: "Cebollín", supplier: "PFG", orderDay: "tue", unit: "case", par: 8 },
+                    { id: "2-8", name: "Red Cabbage", nameEs: "Col Morada", supplier: "PFG", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "2-9", name: "Carrots", nameEs: "Zanahoria", supplier: "PFG", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "2-10", name: "Jalapeno", nameEs: "Jalapeño", supplier: "PFG", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "2-11", name: "Pickled Ginger", nameEs: "Jengibre", supplier: "WIS", orderDay: "fri", unit: "case", par: 3 },
+                    { id: "2-12", name: "Kimchi", nameEs: "Kimchi", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "2-13", name: "Seaweed Salad", nameEs: "Ensalada de Algas", supplier: "WIS", orderDay: "fri", unit: "unit", par: 5 },
+                    { id: "2-14", name: "Masago", nameEs: "Masago", supplier: "WIS", orderDay: "fri", unit: "case", par: 3 },
+                    { id: "2-15", name: "Fried Onions", nameEs: "Cebolla Frita", supplier: "WIS", orderDay: "fri", unit: "case", par: 3 },
+                    { id: "2-16", name: "Fresh Peeled Garlic", nameEs: "Ajo Pelado", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "2-17", name: "Milk", nameEs: "Leche", supplier: "RDC", orderDay: "tue", unit: "unit", par: 4 }
                 ]
             },
             {
                 id: 3, name: "Sauces & Seasonings", nameEs: "Salsas y Condimentos",
                 items: [
-                    { id: "3-0", name: "Poke Sauce (house)", nameEs: "Salsa Poke", supplier: "", orderDay: "", unit: "unit", par: 4 },
-                    { id: "3-1", name: "Spicy Mayo", nameEs: "Mayo Picante", supplier: "", orderDay: "", unit: "unit", par: 3 },
-                    { id: "3-2", name: "Wasabi Mayo", nameEs: "Mayo Wasabi", supplier: "", orderDay: "", unit: "unit", par: 2 },
-                    { id: "3-3", name: "Eel Sauce", nameEs: "Salsa Anguila", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "3-4", name: "Ponzu", nameEs: "Ponzu", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "3-5", name: "Sriracha", nameEs: "Sriracha", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "3-6", name: "Sweet Thai Chili", nameEs: "Chile Thai Dulce", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "3-7", name: "Teriyaki Mayo", nameEs: "Mayo Teriyaki", supplier: "", orderDay: "", unit: "unit", par: 2 },
-                    { id: "3-8", name: "Gochujang", nameEs: "Gochujang", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "3-9", name: "Soy Sauce / Shoyu", nameEs: "Salsa de Soya", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "3-10", name: "Sesame Oil", nameEs: "Aceite Sésamo", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "3-11", name: "Rice Vinegar", nameEs: "Vinagre de Arroz", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "3-12", name: "Sesame Seeds", nameEs: "Semillas Sésamo", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "3-13", name: "Furikake", nameEs: "Furikake", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "3-14", name: "Togarashi", nameEs: "Togarashi", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "3-15", name: "Wing Sauce (PokeDoke)", nameEs: "Salsa de Alitas", supplier: "", orderDay: "", unit: "unit", par: 2 },
-                    { id: "3-16", name: "Frying Oil", nameEs: "Aceite para Freír", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "3-17", name: "Tempura Batter Mix", nameEs: "Mezcla Tempura", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "3-18", name: "Mayonnaise (base)", nameEs: "Mayonesa Base", supplier: "", orderDay: "", unit: "case", par: 2 }
+                    { id: "3-0", name: "Eel Sauce", nameEs: "Salsa Anguila", supplier: "WIS", orderDay: "fri", unit: "case", par: 3 },
+                    { id: "3-1", name: "Ponzu", nameEs: "Ponzu", supplier: "WIS", orderDay: "fri", unit: "case", par: 3 },
+                    { id: "3-2", name: "Sriracha", nameEs: "Sriracha", supplier: "WIS", orderDay: "fri", unit: "case", par: 3 },
+                    { id: "3-3", name: "Gochujang", nameEs: "Gochujang", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-4", name: "Sesame Oil", nameEs: "Aceite Sésamo", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-5", name: "Mirin", nameEs: "Mirin", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-6", name: "Soy Sauce Packets", nameEs: "Paquetes Soya", supplier: "WIS", orderDay: "fri", unit: "case", par: 4 },
+                    { id: "3-7", name: "Soy Sauce (bulk)", nameEs: "Salsa de Soya", supplier: "PFG", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "3-8", name: "GF Soy Sauce — Tamari", nameEs: "Soya Sin Gluten", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-9", name: "Sweet Thai Chili", nameEs: "Chile Thai Dulce", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "3-10", name: "Sambal Chili", nameEs: "Sambal", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-11", name: "Sweet & Sour Packets", nameEs: "Paquetes Agridulce", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-12", name: "Mayo", nameEs: "Mayonesa", supplier: "PFG", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-13", name: "Wasabi", nameEs: "Wasabi", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-14", name: "White Sesame Seeds", nameEs: "Sésamo Blanco", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-15", name: "Black Sesame Seeds", nameEs: "Sésamo Negro", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-16", name: "Furikake", nameEs: "Furikake", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-17", name: "Togarashi", nameEs: "Togarashi", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-18", name: "Bonito Flakes", nameEs: "Hojuelas Bonito", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-19", name: "Kombu", nameEs: "Kombu", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "3-20", name: "Vegetable Oil", nameEs: "Aceite Vegetal", supplier: "PFG", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "3-21", name: "Fryer Shortening/Oil", nameEs: "Aceite Freidora", supplier: "PFG", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "3-22", name: "Salt", nameEs: "Sal", supplier: "PFG", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-23", name: "Sugar", nameEs: "Azúcar", supplier: "PFG", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-24", name: "Apple Cider Vinegar", nameEs: "Vinagre de Manzana", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-25", name: "White Vinegar", nameEs: "Vinagre Blanco", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-26", name: "Corn Starch", nameEs: "Maicena", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-27", name: "Potato Starch", nameEs: "Almidón de Papa", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "3-28", name: "White Pepper", nameEs: "Pimienta Blanca", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "3-29", name: "Black Pepper", nameEs: "Pimienta Negra", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "3-30", name: "Garlic Powder", nameEs: "Ajo en Polvo", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "3-31", name: "Onion Powder", nameEs: "Cebolla en Polvo", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 }
                 ]
             },
             {
                 id: 4, name: "Boba & Drinks", nameEs: "Boba y Bebidas",
                 items: [
-                    { id: "4-0", name: "Tapioca Boba Pearls", nameEs: "Perlas de Boba", supplier: "", orderDay: "", unit: "case", par: 6 },
-                    { id: "4-1", name: "Popping Boba — Mango", nameEs: "Boba Mango", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "4-2", name: "Popping Boba — Strawberry", nameEs: "Boba Fresa", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "4-3", name: "Popping Boba — Lychee", nameEs: "Boba Lychee", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "4-4", name: "Lychee Jelly", nameEs: "Gelatina Lychee", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "4-5", name: "Non-Dairy Creamer", nameEs: "Crema No Láctea", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "4-6", name: "Tea Powders (assorted)", nameEs: "Polvos de Té", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "4-7", name: "Assam Black Tea", nameEs: "Té Negro Assam", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "4-8", name: "Green Tea", nameEs: "Té Verde", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "4-9", name: "Fruit Tea Syrup", nameEs: "Jarabe de Té Frutas", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "4-10", name: "Boba Cups + Lids", nameEs: "Vasos + Tapas Boba", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "4-11", name: "Boba Straws (fat)", nameEs: "Popotes Boba", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "4-12", name: "Sugar Syrup", nameEs: "Jarabe de Azúcar", supplier: "", orderDay: "", unit: "case", par: 2 }
+                    { id: "4-0", name: "Boba Pearls", nameEs: "Perlas de Boba", supplier: "BOB", orderDay: "", unit: "case", par: 6 },
+                    { id: "4-1", name: "Mango Pop Boba", nameEs: "Boba Pop Mango", supplier: "BOB", orderDay: "", unit: "case", par: 2 },
+                    { id: "4-2", name: "Strawberry Pop Boba", nameEs: "Boba Pop Fresa", supplier: "BOB", orderDay: "", unit: "case", par: 2 },
+                    { id: "4-3", name: "Lychee Pop Boba", nameEs: "Boba Pop Lychee", supplier: "BOB", orderDay: "", unit: "case", par: 2 },
+                    { id: "4-4", name: "Lychee Jelly", nameEs: "Gelatina Lychee", supplier: "BOB", orderDay: "", unit: "case", par: 2 },
+                    { id: "4-5", name: "Strawberry Fruit Syrup", nameEs: "Jarabe Fresa", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-6", name: "Peach Fruit Syrup", nameEs: "Jarabe Durazno", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-7", name: "Lychee Fruit Syrup", nameEs: "Jarabe Lychee", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-8", name: "Passion Fruit Syrup", nameEs: "Jarabe Maracuyá", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-9", name: "Green Grape Syrup", nameEs: "Jarabe Uva Verde", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-10", name: "Brown Sugar Molasses", nameEs: "Melaza", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-11", name: "NDC Creamer", nameEs: "Crema No Láctea", supplier: "BOB", orderDay: "", unit: "case", par: 4 },
+                    { id: "4-12", name: "Assam Black Tea", nameEs: "Té Negro Assam", supplier: "BOB", orderDay: "", unit: "case", par: 2 },
+                    { id: "4-13", name: "Jasmine Tea", nameEs: "Té Jazmín", supplier: "BOB", orderDay: "", unit: "case", par: 2 },
+                    { id: "4-14", name: "Thai Tea", nameEs: "Té Tailandés", supplier: "BOB", orderDay: "", unit: "case", par: 2 },
+                    { id: "4-15", name: "Mango Powder", nameEs: "Polvo Mango", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-16", name: "Honeydew Powder", nameEs: "Polvo Melón", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-17", name: "Watermelon Powder", nameEs: "Polvo Sandía", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-18", name: "Taro Powder", nameEs: "Polvo Taro", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-19", name: "Chocolate Powder", nameEs: "Polvo Chocolate", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-20", name: "Blueberry Powder", nameEs: "Polvo Arándano", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-21", name: "Strawberry Powder", nameEs: "Polvo Fresa", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-22", name: "Sakura Rose Powder", nameEs: "Polvo Sakura Rosa", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-23", name: "Green Tea Powder", nameEs: "Polvo Té Verde", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-24", name: "Ube Powder", nameEs: "Polvo Ube", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-25", name: "Cappuccino Powder", nameEs: "Polvo Cappuccino", supplier: "BOB", orderDay: "", unit: "unit", par: 2 },
+                    { id: "4-26", name: "Regular Boba Cups", nameEs: "Vasos Boba Regular", supplier: "BOB", orderDay: "", unit: "case", par: 3 },
+                    { id: "4-27", name: "Large Boba Cups", nameEs: "Vasos Boba Grande", supplier: "BOB", orderDay: "", unit: "case", par: 3 },
+                    { id: "4-28", name: "Sealer Film", nameEs: "Película Selladora", supplier: "BOB", orderDay: "", unit: "case", par: 2 },
+                    { id: "4-29", name: "Boba Straws", nameEs: "Popotes Boba", supplier: "BOB", orderDay: "", unit: "case", par: 3 },
+                    { id: "4-30", name: "Ramune — Original", nameEs: "Ramune Original", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-31", name: "Ramune — Melon", nameEs: "Ramune Melón", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-32", name: "Ramune — Grape", nameEs: "Ramune Uva", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-33", name: "Ramune — Strawberry", nameEs: "Ramune Fresa", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-34", name: "Ramune — Blueberry", nameEs: "Ramune Arándano", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-35", name: "Mitsuya Cider", nameEs: "Mitsuya Cider", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-36", name: "Japanese Green Tea", nameEs: "Té Verde Japonés", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-37", name: "Hawaiian Sun — Passo Guava", nameEs: "Hawaiian Sun Guava", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-38", name: "Hawaiian Sun — Pineapple Orange", nameEs: "Hawaiian Sun Piña", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-39", name: "Hawaiian Sun — Passion Orange", nameEs: "Hawaiian Sun Maracuyá", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-40", name: "Hawaiian Sun — Green Tea Lychee", nameEs: "Hawaiian Sun Lychee", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-41", name: "Hawaiian Sun — Island Iced Tea", nameEs: "Hawaiian Sun Iced Tea", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-42", name: "Pocky — Melty Chocolate", nameEs: "Pocky Chocolate", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-43", name: "Pocky — Cookies and Cream", nameEs: "Pocky Cookies", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-44", name: "Pocky — Strawberry Crunch", nameEs: "Pocky Fresa", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-45", name: "Shrimp Chips", nameEs: "Chips de Camarón", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-46", name: "Purple Sweet Potato Chips", nameEs: "Chips Camote Morado", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-47", name: "Smart Water", nameEs: "Smart Water", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "4-48", name: "Fitz's Variety", nameEs: "Fitz's Variado", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-49", name: "Jarritos — Pineapple", nameEs: "Jarritos Piña", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-50", name: "Jarritos — Passion Fruit", nameEs: "Jarritos Maracuyá", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-51", name: "Jarritos — Watermelon", nameEs: "Jarritos Sandía", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-52", name: "Perrier", nameEs: "Perrier", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-53", name: "Unsweet Tea", nameEs: "Té Sin Azúcar", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-54", name: "Sanpellegrino Aranciata Rossa", nameEs: "Sanpellegrino Rossa", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-55", name: "Sanpellegrino Melograno", nameEs: "Sanpellegrino Melograno", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-56", name: "Energy Drinks", nameEs: "Bebidas Energéticas", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "4-57", name: "Kamaboko (Fish Cake)", nameEs: "Kamaboko", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 },
+                    { id: "4-58", name: "Fried Fish Cake", nameEs: "Pastel Pescado Frito", supplier: "WIS", orderDay: "fri", unit: "case", par: 2 }
                 ]
             },
             {
                 id: 5, name: "Packaging & Supplies", nameEs: "Empaques y Suministros",
                 items: [
-                    { id: "5-0", name: "Bowls — Large", nameEs: "Bowls Grandes", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "5-1", name: "Bowls — Small/Mini", nameEs: "Bowls Pequeños", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "5-2", name: "Push Pop Tubes", nameEs: "Tubos Push Pop", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "5-3", name: "To-Go Containers", nameEs: "Contenedores Llevar", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "5-4", name: "Chopsticks", nameEs: "Palillos", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "5-5", name: "Forks / Spoons", nameEs: "Tenedores / Cucharas", supplier: "", orderDay: "", unit: "case", par: 2 },
-                    { id: "5-6", name: "Napkins", nameEs: "Servilletas", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "5-7", name: "Gloves (M)", nameEs: "Guantes M", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "5-8", name: "Gloves (L)", nameEs: "Guantes L", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "5-9", name: "Paper Towels", nameEs: "Toallas Papel", supplier: "", orderDay: "", unit: "case", par: 6 },
-                    { id: "5-10", name: "Trash Bags", nameEs: "Bolsas Basura", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "5-11", name: "Sanitizer / Cleaner", nameEs: "Sanitizante", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "5-12", name: "Foil / Plastic Wrap", nameEs: "Aluminio / Plástico", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "5-13", name: "To-Go Bags (paper)", nameEs: "Bolsas Para Llevar", supplier: "", orderDay: "", unit: "case", par: 3 },
-                    { id: "5-14", name: "Sauce Cups (2oz)", nameEs: "Vasitos de Salsa", supplier: "", orderDay: "", unit: "case", par: 4 },
-                    { id: "5-15", name: "Receipt Paper", nameEs: "Papel Recibos", supplier: "", orderDay: "", unit: "case", par: 4 }
+                    { id: "5-0", name: "Mini Bowls", nameEs: "Bowls Mini", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-1", name: "Small Bowls", nameEs: "Bowls Pequeños", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-2", name: "Regular Bowls", nameEs: "Bowls Regulares", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-3", name: "Lids — Sm & Reg Bowls", nameEs: "Tapas Sm/Reg", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-4", name: "Large Bowls", nameEs: "Bowls Grandes", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-5", name: "Lids — Large Bowls", nameEs: "Tapas Grandes", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-6", name: "Eco Box #1", nameEs: "Eco Box #1", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-7", name: "Eco Box #8", nameEs: "Eco Box #8", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-8", name: "#250 Food Tray", nameEs: "Bandeja #250", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-9", name: "8x8 3 Compartment", nameEs: "8x8 3 Compartimentos", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-10", name: "Chopsticks", nameEs: "Palillos", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-11", name: "Heavy Duty Forks", nameEs: "Tenedores", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-12", name: "Heavy Duty Knives", nameEs: "Cuchillos", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-13", name: "Heavy Duty Spoons", nameEs: "Cucharas", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-14", name: "Napkins", nameEs: "Servilletas", supplier: "RDC", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-15", name: "Poly Gloves", nameEs: "Guantes Poly", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-16", name: "Vinyl Gloves — M", nameEs: "Guantes Vinyl M", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-17", name: "Vinyl Gloves — L", nameEs: "Guantes Vinyl L", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-18", name: "Paper Towels", nameEs: "Toallas Papel", supplier: "PFG", orderDay: "tue", unit: "case", par: 6 },
+                    { id: "5-19", name: "Small Paper Bags", nameEs: "Bolsas Pequeñas", supplier: "PFG", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-20", name: "Large Paper Bags", nameEs: "Bolsas Grandes", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-21", name: "Plastic Thank You Bags", nameEs: "Bolsas Plástico", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-22", name: "3lb Glassine Bags", nameEs: "Bolsas Glassine", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-23", name: "Clear Plastic Film", nameEs: "Plástico Transparente", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-24", name: "Foil", nameEs: "Aluminio", supplier: "RDC", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-25", name: "Foil Sheets", nameEs: "Hojas Aluminio", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-26", name: "Deli Paper", nameEs: "Papel Deli", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-27", name: "2oz Portion Cups", nameEs: "Vasitos 2oz", supplier: "PFG", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-28", name: "2oz Portion Cup Lids", nameEs: "Tapas 2oz", supplier: "PFG", orderDay: "tue", unit: "case", par: 4 },
+                    { id: "5-29", name: "5oz Portion Cups", nameEs: "Vasitos 5oz", supplier: "PFG", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-30", name: "5oz Portion Cup Lids", nameEs: "Tapas 5oz", supplier: "PFG", orderDay: "tue", unit: "case", par: 3 },
+                    { id: "5-31", name: "16oz Fountain Cups (KW)", nameEs: "Vasos 16oz (KW)", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-32", name: "24oz Fountain Cups (KW)", nameEs: "Vasos 24oz (KW)", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-33", name: "Water Cups (KW)", nameEs: "Vasos Agua (KW)", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-34", name: "Fountain Cup Straws", nameEs: "Popotes Fuente", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-35", name: "Fountain Cup Lids (KW)", nameEs: "Tapas Fuente (KW)", supplier: "RDC", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "5-36", name: "Use First Stickers", nameEs: "Stickers Use First", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "5-37", name: "Day Stickers", nameEs: "Stickers de Día", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "5-38", name: "Scotch Tape", nameEs: "Cinta Scotch", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "5-39", name: "Masking Tape", nameEs: "Cinta Masking", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "5-40", name: "Staples", nameEs: "Grapas", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "5-41", name: "PokeDoke Stickers", nameEs: "Stickers PokeDoke", supplier: "RDC", orderDay: "tue", unit: "unit", par: 2 }
+                ]
+            },
+            {
+                id: 6, name: "Cleaning Supplies", nameEs: "Limpieza",
+                items: [
+                    { id: "6-0", name: "Sink Pots & Pans Detergent", nameEs: "Detergente Ollas", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-1", name: "Quat Sanitizer", nameEs: "Sanitizante Quat", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-2", name: "Neutral Floor Cleaner", nameEs: "Limpiador Piso Neutro", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-3", name: "Floor Cleaner", nameEs: "Limpiador de Piso", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-4", name: "Glass Cleaner", nameEs: "Limpia Vidrios", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-5", name: "Grease Lift", nameEs: "Desengrasante", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-6", name: "Dishmachine Sanitizer", nameEs: "Sanitizante Lavavajillas", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-7", name: "Dishmachine Detergent", nameEs: "Detergente Lavavajillas", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-8", name: "Hand Soap", nameEs: "Jabón de Manos", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-9", name: "De-limer", nameEs: "Desincrustante", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-10", name: "Bleach", nameEs: "Cloro", supplier: "PFG", orderDay: "tue", unit: "unit", par: 2 },
+                    { id: "6-11", name: "Green Scouring Pads", nameEs: "Esponjas Verdes", supplier: "PFG", orderDay: "tue", unit: "case", par: 2 },
+                    { id: "6-12", name: "Stainless Steel Scrubbing Pad", nameEs: "Esponja Acero Inox", supplier: "PFG", orderDay: "tue", unit: "case", par: 2 }
                 ]
             }
         ];
 
-        // Utility function to get translation
-        const t = (key, lang) => {
-            return T[key]?.[lang === "es" ? "es" : "en"] || key;
+        // Utility function to get translationey]?.[lang === "es" ? "es" : "en"] || key;
         };
 
         // Home Page Component
@@ -2301,9 +2412,10 @@
                 const list = getOrderList();
                 const grouped = {};
                 list.forEach(item => {
-                    const key = item.supplier || (language === "es" ? "Sin Proveedor" : "No Supplier Assigned");
-                    if (!grouped[key]) grouped[key] = [];
-                    grouped[key].push(item);
+                    const v = VENDORS[item.supplier];
+                    const key = v ? v.name : (item.supplier || (language === "es" ? "Sin Proveedor" : "No Supplier"));
+                    if (!grouped[key]) grouped[key] = { items: [], vendor: v || null };
+                    grouped[key].items.push(item);
                 });
                 return grouped;
             };
@@ -2987,14 +3099,27 @@
                                             </div>
                                         )}
 
-                                        {keys.map(supplier=>(
+                                        {keys.map(supplier=>{
+                                            const group = bySupplier[supplier];
+                                            const items = group.items;
+                                            const vendor = group.vendor;
+                                            return (
                                             <div key={supplier} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                                                <div className="p-3 bg-gradient-to-r from-gold-50 to-white border-b flex justify-between items-center">
-                                                    <span className="font-bold text-gold-600 text-sm">🏭 {supplier}</span>
-                                                    <span className="text-xs bg-gold-100 text-gold-600 px-2 py-1 rounded-full font-bold">{bySupplier[supplier].length}</span>
+                                                <div className="p-3 border-b" style={{background: vendor ? vendor.color + "10" : "var(--bg-subtle)"}}>
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="font-bold text-sm" style={{color: vendor ? vendor.color : "var(--text-primary)"}}>🏭 {supplier}</span>
+                                                        <span className="text-xs px-2 py-1 rounded-full font-bold" style={{background: vendor ? vendor.color + "20" : "#f3f4f6", color: vendor ? vendor.color : "#6b7280"}}>{items.length}</span>
+                                                    </div>
+                                                    {vendor && (
+                                                        <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                                                            <span className="text-[10px]" style={{color:"var(--text-muted)"}}>⏰ {language==="es"?"Corte":"Cutoff"}: <b>{language==="es"?vendor.cutoffEs:vendor.cutoff}</b></span>
+                                                            <span className="text-[10px]" style={{color:"var(--text-muted)"}}>🚚 {language==="es"?vendor.deliveryEs:vendor.delivery}</span>
+                                                            {vendor.url && <a href={vendor.url} target="_blank" rel="noopener" className="text-[10px] font-bold underline" style={{color:vendor.color}}>{language==="es"?"Ordenar ↗":"Order ↗"}</a>}
+                                                        </div>
+                                                    )}
                                                 </div>
                                                 <div className="divide-y divide-gray-50">
-                                                    {bySupplier[supplier].map(item=>(
+                                                    {items.map(item=>(
                                                         <div key={item.id} className="p-3 flex items-center justify-between">
                                                             <div className="flex-1"><p className="font-semibold text-gray-800 text-sm">{item.name}</p><p className="text-xs text-gray-400">Have: {item.currentCount} · PAR: {item.par} {item.unit}</p></div>
                                                             <div className="bg-red-100 text-red-700 px-3 py-1.5 rounded-xl font-bold text-sm">+{item.needed} {item.unit}</div>
@@ -3002,13 +3127,14 @@
                                                     ))}
                                                 </div>
                                                 <button onClick={async()=>{
-                                                    await placeOrder(supplier,bySupplier[supplier]);
+                                                    await placeOrder(supplier,items);
                                                     alert(language==="es"?"✅ Pedido registrado para "+supplier:"✅ Order placed for "+supplier);
                                                 }} className="w-full py-3 bg-poke-600 text-white font-bold text-sm border-t border-gray-100 active:bg-poke-700 transition">
                                                     📋 {language==="es"?"Marcar como Pedido":"Mark as Ordered"}
                                                 </button>
                                             </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 );
                             })()}
