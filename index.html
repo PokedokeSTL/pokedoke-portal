@@ -7947,6 +7947,501 @@
             );
         }
 
+
+        // ============ BOOKKEEPING / P&L (owner only) ============
+        const EXPENSE_CATEGORIES = [
+            {id:"cogs",label:"COGS",labelEs:"Costo de Bienes",icon:"🥩",color:"#dc2626"},
+            {id:"labor",label:"Labor",labelEs:"Nómina",icon:"👥",color:"#ea580c"},
+            {id:"supplies",label:"Supplies",labelEs:"Suministros",icon:"📦",color:"#d97706"},
+            {id:"rent",label:"Rent",labelEs:"Renta",icon:"🏠",color:"#0891b2"},
+            {id:"utilities",label:"Utilities",labelEs:"Servicios",icon:"💡",color:"#7c3aed"},
+            {id:"marketing",label:"Marketing",labelEs:"Marketing",icon:"📣",color:"#db2777"},
+            {id:"equipment",label:"Equipment",labelEs:"Equipo",icon:"🔧",color:"#4f46e5"},
+            {id:"insurance",label:"Insurance",labelEs:"Seguro",icon:"🛡️",color:"#0d9488"},
+            {id:"other",label:"Other",labelEs:"Otro",icon:"📋",color:"#6b7280"}
+        ];
+
+        function Bookkeeping({ language, staffName }) {
+            const [bkTab, setBkTab] = useState("flash");
+            const [expenses, setExpenses] = useState([]);
+            const [sales, setSales] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            // Flash state
+            const [flashDate, setFlashDate] = useState(window.fmtLocalDate());
+            const [flashLoc, setFlashLoc] = useState("all");
+
+            // Expense form
+            const [showExpForm, setShowExpForm] = useState(false);
+            const [expDate, setExpDate] = useState(window.fmtLocalDate());
+            const [expLoc, setExpLoc] = useState("cwe");
+            const [expCat, setExpCat] = useState("cogs");
+            const [expAmt, setExpAmt] = useState("");
+            const [expVendor, setExpVendor] = useState("");
+            const [expNotes, setExpNotes] = useState("");
+            const [expRecurring, setExpRecurring] = useState(false);
+            const [expSaving, setExpSaving] = useState(false);
+
+            // P&L state
+            const [plRange, setPlRange] = useState("month");
+            const [plLoc, setPlLoc] = useState("all");
+
+            // Expense list filter
+            const [expFilterCat, setExpFilterCat] = useState("all");
+            const [expFilterLoc, setExpFilterLoc] = useState("all");
+
+            // Load data
+            useEffect(() => {
+                const unsub1 = db.collection("expenses").orderBy("date","desc").limit(300).onSnapshot(snap => {
+                    setExpenses(snap.docs.map(d=>({id:d.id,...d.data()})));
+                });
+                const unsub2 = db.collection("dailySales").orderBy("date","desc").limit(90).onSnapshot(snap => {
+                    setSales(snap.docs.map(d=>({id:d.id,...d.data()})));
+                    setLoading(false);
+                });
+                return () => { unsub1(); unsub2(); };
+            }, []);
+
+            // Helpers
+            const fmtM = (n) => "$" + (n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+            const fmtMK = (n) => n >= 1000 ? "$" + (n/1000).toFixed(1) + "k" : "$" + Math.round(n||0).toLocaleString();
+            const pct = (part, total) => total > 0 ? (part / total * 100).toFixed(1) + "%" : "—";
+            const catInfo = (id) => EXPENSE_CATEGORIES.find(c=>c.id===id) || EXPENSE_CATEGORIES[8];
+
+            const getDateRange = (range) => {
+                const today = new Date();
+                const end = window.fmtLocalDate();
+                let start;
+                if (range === "week") { const d = new Date(today); d.setDate(d.getDate()-6); start = window.fmtLocalDate(d); }
+                else if (range === "month") { const d = new Date(today); d.setDate(1); start = window.fmtLocalDate(d); }
+                else { const d = new Date(today); d.setMonth(d.getMonth()-2); d.setDate(1); start = window.fmtLocalDate(d); }
+                return { start, end };
+            };
+
+            const filterByDateLoc = (items, start, end, loc) =>
+                items.filter(i => i.date >= start && i.date <= end && (loc === "all" || i.location === loc));
+
+            // Save expense
+            const saveExpense = async () => {
+                if (!expAmt || parseFloat(expAmt) <= 0) return;
+                setExpSaving(true);
+                try {
+                    await db.collection("expenses").add({
+                        date: expDate, location: expLoc, category: expCat,
+                        amount: parseFloat(expAmt), vendor: expVendor.trim(),
+                        notes: expNotes.trim(), recurring: expRecurring,
+                        enteredBy: staffName, createdAt: new Date().toISOString()
+                    });
+                    setExpAmt(""); setExpVendor(""); setExpNotes(""); setExpRecurring(false);
+                    setShowExpForm(false);
+                    window.showToast(language==="es"?"Gasto guardado":"Expense saved","success");
+                } catch(e) { console.error(e); }
+                setExpSaving(false);
+            };
+
+            const deleteExpense = async (id) => {
+                if (!confirm(language==="es"?"¿Eliminar este gasto?":"Delete this expense?")) return;
+                await db.collection("expenses").doc(id).delete();
+                window.showToast(language==="es"?"Eliminado":"Deleted","success");
+            };
+
+            // ═══ FLASH DATA ═══
+            const fSales = sales.filter(s => s.date===flashDate && (flashLoc==="all"||s.location===flashLoc));
+            const fExp = expenses.filter(e => e.date===flashDate && (flashLoc==="all"||e.location===flashLoc));
+            const fRev = fSales.reduce((s,x)=>s+(x.amount||0),0);
+            const fTotalExp = fExp.reduce((s,x)=>s+(x.amount||0),0);
+            const fCOGS = fExp.filter(e=>e.category==="cogs").reduce((s,x)=>s+(x.amount||0),0);
+            const fLabor = fExp.filter(e=>e.category==="labor").reduce((s,x)=>s+(x.amount||0),0);
+            const fOther = fTotalExp - fCOGS - fLabor;
+            const fProfit = fRev - fTotalExp;
+            const fMargin = fRev > 0 ? (fProfit/fRev*100) : 0;
+
+            // ═══ P&L DATA ═══
+            const plDates = getDateRange(plRange);
+            const plSalesData = filterByDateLoc(sales, plDates.start, plDates.end, plLoc);
+            const plExpData = filterByDateLoc(expenses, plDates.start, plDates.end, plLoc);
+            const plRev = plSalesData.reduce((s,x)=>s+(x.amount||0),0);
+            const plTotalExp = plExpData.reduce((s,x)=>s+(x.amount||0),0);
+            const plProfit = plRev - plTotalExp;
+            const plCatBreakdown = EXPENSE_CATEGORIES.map(cat => {
+                const total = plExpData.filter(e=>e.category===cat.id).reduce((s,x)=>s+(x.amount||0),0);
+                return { ...cat, total };
+            }).filter(c=>c.total>0).sort((a,b)=>b.total-a.total);
+
+            // Filtered expenses for list
+            const filteredExp = expenses.filter(e =>
+                (expFilterCat === "all" || e.category === expFilterCat) &&
+                (expFilterLoc === "all" || e.location === expFilterLoc)
+            );
+
+            if (loading) return <div className="p-4 pb-24 animate-in"><Skeleton count={5}/></div>;
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>💰 {language==="es"?"Contabilidad":"Bookkeeping"}</h2>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{language==="es"?"Gastos, P&L, y flash diario":"Expenses, P&L, and daily flash"}</p>
+
+                    {/* Sub-tabs */}
+                    <div className="flex gap-1 rounded-2xl p-1 mb-4" style={{background:"var(--bg-subtle)"}}>
+                        {[
+                            {id:"flash",l:"⚡ "+(language==="es"?"Flash":"Flash")},
+                            {id:"expenses",l:"💳 "+(language==="es"?"Gastos":"Expenses")},
+                            {id:"pnl",l:"📊 P&L"}
+                        ].map(tab=>(
+                            <button key={tab.id} onClick={()=>setBkTab(tab.id)}
+                                className={"flex-1 py-2 px-1 rounded-xl text-xs font-bold transition-all whitespace-nowrap "+(bkTab===tab.id?"bg-poke-600 text-white shadow-md":"")}
+                                style={bkTab!==tab.id?{color:"var(--text-secondary)"}:{}}>{tab.l}</button>
+                        ))}
+                    </div>
+
+                    {/* ═══════════════════════════════════ */}
+                    {/* ═══ DAILY FLASH TAB ═══ */}
+                    {/* ═══════════════════════════════════ */}
+                    {bkTab === "flash" && (
+                        <div className="space-y-3">
+                            {/* Date + Location */}
+                            <div className="card p-3 flex gap-2">
+                                <div className="flex-1">
+                                    <label className="text-[10px] font-bold" style={{color:"var(--text-muted)"}}>{language==="es"?"FECHA":"DATE"}</label>
+                                    <input type="date" value={flashDate} onChange={e=>setFlashDate(e.target.value)}
+                                        className="w-full px-2 py-1.5 border rounded-lg text-sm mt-0.5" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-[10px] font-bold" style={{color:"var(--text-muted)"}}>{language==="es"?"UBICACIÓN":"LOCATION"}</label>
+                                    <select value={flashLoc} onChange={e=>setFlashLoc(e.target.value)}
+                                        className="w-full px-2 py-1.5 border rounded-lg text-sm mt-0.5" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                                        <option value="all">{language==="es"?"Todas":"All"}</option>
+                                        <option value="cwe">CWE</option>
+                                        <option value="kirkwood">Kirkwood</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Big P&L card */}
+                            <div className="card overflow-hidden">
+                                <div style={{background: fProfit >= 0 ? "linear-gradient(135deg, #059669, #10b981)" : "linear-gradient(135deg, #dc2626, #ef4444)", padding: "16px 20px"}}>
+                                    <p className="text-white/70 text-xs font-bold">{language==="es"?"GANANCIA NETA":"NET PROFIT"}</p>
+                                    <p className="text-white text-3xl font-bold font-display">{fmtM(fProfit)}</p>
+                                    <p className="text-white/70 text-sm mt-1">{language==="es"?"Margen":"Margin"}: {fRev>0?fMargin.toFixed(1)+"%":"—"}</p>
+                                </div>
+                                <div style={{padding: "16px 20px"}}>
+                                    <div className="flex justify-between items-center py-2" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                        <span className="text-sm" style={{color:"var(--text-secondary)"}}>💵 {language==="es"?"Ventas":"Revenue"}</span>
+                                        <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(fRev)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center py-2" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                        <span className="text-sm" style={{color:"var(--text-secondary)"}}>🥩 COGS</span>
+                                        <div className="text-right">
+                                            <span className="font-bold text-sm" style={{color:"#dc2626"}}>{fmtM(fCOGS)}</span>
+                                            <span className="text-xs ml-1" style={{color:"var(--text-muted)"}}>{pct(fCOGS,fRev)}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between items-center py-2" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                        <span className="text-sm" style={{color:"var(--text-secondary)"}}>👥 {language==="es"?"Nómina":"Labor"}</span>
+                                        <div className="text-right">
+                                            <span className="font-bold text-sm" style={{color:"#ea580c"}}>{fmtM(fLabor)}</span>
+                                            <span className="text-xs ml-1" style={{color:"var(--text-muted)"}}>{pct(fLabor,fRev)}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between items-center py-2" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                        <span className="text-sm" style={{color:"var(--text-secondary)"}}>📋 {language==="es"?"Otros":"Other"}</span>
+                                        <div className="text-right">
+                                            <span className="font-bold text-sm" style={{color:"#6b7280"}}>{fmtM(fOther)}</span>
+                                            <span className="text-xs ml-1" style={{color:"var(--text-muted)"}}>{pct(fOther,fRev)}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between items-center pt-2">
+                                        <span className="text-sm font-bold" style={{color:"var(--text-primary)"}}>{language==="es"?"Total Gastos":"Total Expenses"}</span>
+                                        <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(fTotalExp)}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Quick-add expense for this day */}
+                            {fRev > 0 && fTotalExp === 0 && (
+                                <button onClick={()=>{setExpDate(flashDate);setShowExpForm(true);}}
+                                    className="w-full card p-3 text-center active:scale-95 transition">
+                                    <p className="text-sm font-bold" style={{color:"var(--poke-600)"}}>+ {language==="es"?"Agregar gastos de hoy":"Add today's expenses"}</p>
+                                </button>
+                            )}
+
+                            {/* Today's expense breakdown */}
+                            {fExp.length > 0 && (
+                                <div className="card p-3">
+                                    <p className="text-xs font-bold mb-2" style={{color:"var(--text-muted)"}}>{language==="es"?"GASTOS DEL DÍA":"DAY'S EXPENSES"}</p>
+                                    <div className="space-y-1.5">
+                                        {fExp.map(e => {
+                                            const ci = catInfo(e.category);
+                                            return (
+                                                <div key={e.id} className="flex items-center justify-between py-1">
+                                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                        <span style={{fontSize:14}}>{ci.icon}</span>
+                                                        <div className="min-w-0">
+                                                            <p className="text-xs font-semibold truncate" style={{color:"var(--text-primary)"}}>{e.vendor || (language==="es"?ci.labelEs:ci.label)}</p>
+                                                            {e.notes && <p className="text-[10px] truncate" style={{color:"var(--text-muted)"}}>{e.notes}</p>}
+                                                        </div>
+                                                    </div>
+                                                    <span className="text-xs font-bold ml-2" style={{color:ci.color}}>{fmtM(e.amount)}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ═══════════════════════════════════ */}
+                    {/* ═══ EXPENSES TAB ═══ */}
+                    {/* ═══════════════════════════════════ */}
+                    {bkTab === "expenses" && (
+                        <div className="space-y-3">
+                            <button onClick={()=>setShowExpForm(true)}
+                                className="w-full py-3 bg-poke-600 text-white rounded-xl font-bold text-sm active:scale-95 transition">
+                                + {language==="es"?"Agregar Gasto":"Add Expense"}
+                            </button>
+
+                            {/* Filters */}
+                            <div className="flex gap-2">
+                                <select value={expFilterCat} onChange={e=>setExpFilterCat(e.target.value)}
+                                    className="flex-1 px-2 py-2 border rounded-xl text-xs font-bold" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                                    <option value="all">{language==="es"?"Categoría":"Category"}: {language==="es"?"Todas":"All"}</option>
+                                    {EXPENSE_CATEGORIES.map(c=><option key={c.id} value={c.id}>{c.icon} {language==="es"?c.labelEs:c.label}</option>)}
+                                </select>
+                                <select value={expFilterLoc} onChange={e=>setExpFilterLoc(e.target.value)}
+                                    className="px-2 py-2 border rounded-xl text-xs font-bold" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",width:100}}>
+                                    <option value="all">{language==="es"?"Todas":"All"}</option>
+                                    <option value="cwe">CWE</option>
+                                    <option value="kirkwood">KWD</option>
+                                </select>
+                            </div>
+
+                            {/* Expense list */}
+                            {filteredExp.length === 0 ? (
+                                <p className="text-center text-sm py-8" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin gastos":"No expenses yet"}</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {filteredExp.slice(0, 50).map(e => {
+                                        const ci = catInfo(e.category);
+                                        return (
+                                            <div key={e.id} className="card p-3 flex items-center gap-3">
+                                                <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0" style={{background: ci.color+"18"}}>{ci.icon}</div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-semibold truncate" style={{color:"var(--text-primary)"}}>{e.vendor || (language==="es"?ci.labelEs:ci.label)}</p>
+                                                    <p className="text-[10px]" style={{color:"var(--text-muted)"}}>
+                                                        {new Date(e.date+"T12:00:00").toLocaleDateString([],{month:"short",day:"numeric"})} · {e.location==="cwe"?"CWE":"KWD"} · {e.enteredBy?.split(" ")[0]}
+                                                        {e.recurring && " · 🔄"}
+                                                    </p>
+                                                    {e.notes && <p className="text-[10px] truncate mt-0.5" style={{color:"var(--text-muted)"}}>{e.notes}</p>}
+                                                </div>
+                                                <div className="text-right flex-shrink-0">
+                                                    <p className="font-bold text-sm" style={{color:ci.color}}>{fmtM(e.amount)}</p>
+                                                    <button onClick={()=>deleteExpense(e.id)} className="text-[10px] text-red-400 mt-1">🗑️</button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ═══════════════════════════════════ */}
+                    {/* ═══ P&L TAB ═══ */}
+                    {/* ═══════════════════════════════════ */}
+                    {bkTab === "pnl" && (
+                        <div className="space-y-3">
+                            {/* Range + Location */}
+                            <div className="flex gap-2">
+                                <div className="flex gap-1 rounded-xl p-1 flex-1" style={{background:"var(--bg-subtle)"}}>
+                                    {[{id:"week",l:language==="es"?"Sem":"Week"},{id:"month",l:language==="es"?"Mes":"Month"},{id:"quarter",l:language==="es"?"Trim":"Qtr"}].map(r=>(
+                                        <button key={r.id} onClick={()=>setPlRange(r.id)}
+                                            className={"flex-1 py-1.5 rounded-lg text-xs font-bold transition "+(plRange===r.id?"bg-poke-600 text-white":"")}>
+                                            {r.l}
+                                        </button>
+                                    ))}
+                                </div>
+                                <select value={plLoc} onChange={e=>setPlLoc(e.target.value)}
+                                    className="px-2 py-1.5 border rounded-xl text-xs font-bold" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",width:90}}>
+                                    <option value="all">{language==="es"?"Todas":"All"}</option>
+                                    <option value="cwe">CWE</option>
+                                    <option value="kirkwood">KWD</option>
+                                </select>
+                            </div>
+
+                            {/* Summary cards */}
+                            <div className="grid grid-cols-3 gap-2">
+                                <div className="card p-3 text-center">
+                                    <p className="text-[10px] font-bold" style={{color:"var(--text-muted)"}}>{language==="es"?"VENTAS":"REVENUE"}</p>
+                                    <p className="font-display font-bold text-lg mt-1" style={{color:"var(--text-primary)"}}>{fmtMK(plRev)}</p>
+                                </div>
+                                <div className="card p-3 text-center">
+                                    <p className="text-[10px] font-bold" style={{color:"var(--text-muted)"}}>{language==="es"?"GASTOS":"EXPENSES"}</p>
+                                    <p className="font-display font-bold text-lg mt-1" style={{color:"#dc2626"}}>{fmtMK(plTotalExp)}</p>
+                                </div>
+                                <div className="card p-3 text-center">
+                                    <p className="text-[10px] font-bold" style={{color:"var(--text-muted)"}}>{language==="es"?"GANANCIA":"PROFIT"}</p>
+                                    <p className="font-display font-bold text-lg mt-1" style={{color:plProfit>=0?"#059669":"#dc2626"}}>{fmtMK(plProfit)}</p>
+                                </div>
+                            </div>
+
+                            {/* Margin bar */}
+                            {plRev > 0 && (
+                                <div className="card p-3">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <p className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Margen Neto":"Net Margin"}</p>
+                                        <p className="text-sm font-bold" style={{color:plProfit>=0?"#059669":"#dc2626"}}>{(plProfit/plRev*100).toFixed(1)}%</p>
+                                    </div>
+                                    <div className="w-full h-3 rounded-full overflow-hidden" style={{background:"var(--bg-subtle)"}}>
+                                        <div className="h-full rounded-full transition-all" style={{
+                                            width: Math.min(100, Math.max(0, (plRev-plTotalExp)/plRev*100)) + "%",
+                                            background: plProfit >= 0 ? "linear-gradient(90deg,#059669,#10b981)" : "linear-gradient(90deg,#dc2626,#ef4444)"
+                                        }}></div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Category breakdown */}
+                            <div className="card p-3">
+                                <p className="text-xs font-bold mb-3" style={{color:"var(--text-muted)"}}>{language==="es"?"DESGLOSE POR CATEGORÍA":"EXPENSE BREAKDOWN"}</p>
+                                {plCatBreakdown.length === 0 ? (
+                                    <p className="text-xs text-center py-3" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin gastos en este periodo":"No expenses this period"}</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {plCatBreakdown.map(cat => (
+                                            <div key={cat.id}>
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <span className="text-xs font-semibold" style={{color:"var(--text-primary)"}}>{cat.icon} {language==="es"?cat.labelEs:cat.label}</span>
+                                                    <div>
+                                                        <span className="text-xs font-bold" style={{color:cat.color}}>{fmtM(cat.total)}</span>
+                                                        <span className="text-[10px] ml-1" style={{color:"var(--text-muted)"}}>{pct(cat.total, plRev)}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="w-full h-2 rounded-full overflow-hidden" style={{background:"var(--bg-subtle)"}}>
+                                                    <div className="h-full rounded-full" style={{
+                                                        width: Math.min(100, (cat.total/plTotalExp*100)) + "%",
+                                                        background: cat.color
+                                                    }}></div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Location comparison */}
+                            {plLoc === "all" && (
+                                <div className="card p-3">
+                                    <p className="text-xs font-bold mb-3" style={{color:"var(--text-muted)"}}>{language==="es"?"POR UBICACIÓN":"BY LOCATION"}</p>
+                                    {["cwe","kirkwood"].map(loc => {
+                                        const locSales = filterByDateLoc(sales, plDates.start, plDates.end, loc).reduce((s,x)=>s+(x.amount||0),0);
+                                        const locExp = filterByDateLoc(expenses, plDates.start, plDates.end, loc).reduce((s,x)=>s+(x.amount||0),0);
+                                        const locProfit = locSales - locExp;
+                                        return (
+                                            <div key={loc} className="flex items-center justify-between py-2" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                                <div>
+                                                    <p className="text-sm font-bold" style={{color:"var(--text-primary)"}}>📍 {loc==="cwe"?"Central West End":"Kirkwood"}</p>
+                                                    <p className="text-[10px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Ventas":"Rev"}: {fmtMK(locSales)} · {language==="es"?"Gastos":"Exp"}: {fmtMK(locExp)}</p>
+                                                </div>
+                                                <p className="font-bold text-sm" style={{color:locProfit>=0?"#059669":"#dc2626"}}>{fmtMK(locProfit)}</p>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ═══════════════════════════════════ */}
+                    {/* ═══ EXPENSE FORM MODAL ═══ */}
+                    {/* ═══════════════════════════════════ */}
+                    {showExpForm && (
+                        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center"}}
+                            onClick={e=>{if(e.target===e.currentTarget)setShowExpForm(false);}}>
+                            <div style={{background:"var(--bg-card)",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",padding:20}}>
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-display font-bold text-lg" style={{color:"var(--text-primary)"}}>💳 {language==="es"?"Agregar Gasto":"Add Expense"}</h3>
+                                    <button onClick={()=>setShowExpForm(false)} style={{fontSize:24,color:"var(--text-muted)"}}>✕</button>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {/* Category */}
+                                    <div>
+                                        <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Categoría":"Category"}</label>
+                                        <div className="grid grid-cols-3 gap-1.5 mt-1">
+                                            {EXPENSE_CATEGORIES.map(cat=>(
+                                                <button key={cat.id} onClick={()=>setExpCat(cat.id)}
+                                                    className="py-2 px-1 rounded-xl text-center transition border-2"
+                                                    style={{
+                                                        borderColor: expCat===cat.id?cat.color:"var(--border-subtle)",
+                                                        background: expCat===cat.id?cat.color+"15":"transparent"
+                                                    }}>
+                                                    <span style={{fontSize:16}}>{cat.icon}</span>
+                                                    <p className="text-[10px] font-bold mt-0.5" style={{color:expCat===cat.id?cat.color:"var(--text-muted)"}}>{language==="es"?cat.labelEs:cat.label}</p>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Amount */}
+                                    <div>
+                                        <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Monto ($)":"Amount ($)"}</label>
+                                        <input type="number" step="0.01" value={expAmt} onChange={e=>setExpAmt(e.target.value)} placeholder="0.00"
+                                            className="w-full px-3 py-3 border rounded-xl text-lg font-bold mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                                    </div>
+
+                                    {/* Date + Location */}
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Fecha":"Date"}</label>
+                                            <input type="date" value={expDate} onChange={e=>setExpDate(e.target.value)}
+                                                className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Ubicación":"Location"}</label>
+                                            <select value={expLoc} onChange={e=>setExpLoc(e.target.value)}
+                                                className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                                                <option value="cwe">CWE</option>
+                                                <option value="kirkwood">Kirkwood</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {/* Vendor */}
+                                    <div>
+                                        <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Proveedor":"Vendor"}</label>
+                                        <input type="text" value={expVendor} onChange={e=>setExpVendor(e.target.value)} placeholder={language==="es"?"Ej: US Foods, Sysco":"e.g. US Foods, Sysco"}
+                                            className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                                    </div>
+
+                                    {/* Notes */}
+                                    <div>
+                                        <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Notas":"Notes"}</label>
+                                        <input type="text" value={expNotes} onChange={e=>setExpNotes(e.target.value)} placeholder={language==="es"?"Opcional":"Optional"}
+                                            className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                                    </div>
+
+                                    {/* Recurring toggle */}
+                                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl" style={{background:expRecurring?"#f0fdfa":"transparent",border:expRecurring?"1px solid #14b8a6":"1px solid transparent"}}>
+                                        <input type="checkbox" checked={expRecurring} onChange={e=>setExpRecurring(e.target.checked)} className="w-4 h-4"/>
+                                        <span className="text-xs font-bold" style={{color:expRecurring?"#0d9488":"var(--text-muted)"}}>🔄 {language==="es"?"Gasto recurrente (mensual)":"Recurring expense (monthly)"}</span>
+                                    </label>
+
+                                    {/* Save */}
+                                    <button onClick={saveExpense} disabled={expSaving || !expAmt}
+                                        className={"w-full py-3 rounded-xl font-bold text-sm transition "+(expSaving||!expAmt?"bg-gray-200 text-gray-400":"bg-green-600 text-white active:scale-95")}>
+                                        {expSaving ? "..." : "💾 " + (language==="es"?"Guardar":"Save")}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+
+
         // ============ DASHBOARD (owner only) ============
         function Dashboard({ language, staffName, staffList }) {
             const [stats, setStats] = useState({});
@@ -8473,6 +8968,20 @@
                                             </div>
                                         </button>
                                     )}
+                                    {staffIsOwner && (
+                                        <button
+                                            onClick={() => setActiveTab("bookkeeping")}
+                                            className="card-hover col-span-2 p-4 bg-gradient-to-r from-emerald-700 to-emerald-600 rounded-2xl shadow-sm text-left"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center text-2xl">💰</div>
+                                                <div>
+                                                    <div className="font-bold text-white text-sm">{language === "es" ? "Contabilidad" : "Bookkeeping"}</div>
+                                                    <div className="text-xs text-emerald-200 mt-0.5">{language === "es" ? "Gastos, P&L, flash diario" : "Expenses, P&L, daily flash"}</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => setActiveTab("messages")}
                                         className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
@@ -8558,6 +9067,7 @@
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} staffList={staffList} />}
                         {activeTab === "dashboard" && staffIsOwner && <Dashboard language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "bookkeeping" && staffIsOwner && <Bookkeeping language={language} staffName={staffName} />}
                         {activeTab === "employees" && staffIsOwner && <Employees language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "messages" && <Messages language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "recipes" && canViewRecipes && <Recipes language={language} staffName={staffName} />}
