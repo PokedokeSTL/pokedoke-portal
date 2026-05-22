@@ -2117,7 +2117,41 @@
                     if (doc.exists) {
                         const data = doc.data();
                         setInventory(data.counts || {});
-                        if (data.customInventory) setCustomInventory(data.customInventory);
+                        if (data.customInventory) {
+                            // Merge vendor/supplier info from defaults into Firestore data
+                            const defaultLookup = {};
+                            INVENTORY_CATEGORIES.forEach(cat => cat.items.forEach(item => { defaultLookup[item.id] = item; }));
+                            const merged = data.customInventory.map(cat => {
+                                const defaultCat = INVENTORY_CATEGORIES.find(c => c.id === cat.id);
+                                return {
+                                    ...cat,
+                                    items: cat.items.map(item => {
+                                        const def = defaultLookup[item.id];
+                                        return {
+                                            ...item,
+                                            supplier: item.supplier || (def ? def.supplier : ""),
+                                            orderDay: item.orderDay || (def ? def.orderDay : ""),
+                                            par: item.par || (def ? def.par : 0),
+                                            unit: item.unit || (def ? def.unit : "")
+                                        };
+                                    })
+                                };
+                            });
+                            // Add any new categories/items from defaults not in Firestore
+                            INVENTORY_CATEGORIES.forEach(defCat => {
+                                const existing = merged.find(c => c.id === defCat.id);
+                                if (!existing) {
+                                    merged.push({...defCat, items: [...defCat.items]});
+                                } else {
+                                    defCat.items.forEach(defItem => {
+                                        if (!existing.items.find(i => i.id === defItem.id)) {
+                                            existing.items.push({...defItem});
+                                        }
+                                    });
+                                }
+                            });
+                            setCustomInventory(merged);
+                        }
                         setLastUpdated(prev => ({ ...prev, inventory: new Date(data.date).toLocaleString() }));
                     }
                 });
