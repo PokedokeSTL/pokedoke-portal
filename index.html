@@ -3880,6 +3880,10 @@
             const [showTemplateSave, setShowTemplateSave] = useState(false);
             const [draggedShift, setDraggedShift] = useState(null);
             const [hoursView, setHoursView] = useState("week");
+            const [myUpcomingShifts, setMyUpcomingShifts] = useState([]);
+            const [timeClockEntries, setTimeClockEntries] = useState([]);
+            const [laborBudgetPct, setLaborBudgetPct] = useState(30);
+            const [weekSalesTotal, setWeekSalesTotal] = useState(0);
             const mgrAccess = isAdmin(staffName);
             const ownerAccess = isOwner(staffName);
             const DAYS = language==="es"?["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]:["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -3997,6 +4001,73 @@
                 });
                 return () => unsub();
             }, []);
+
+            // Load upcoming shifts for "My Shifts" tab (next 4 weeks, both locations)
+            useEffect(() => {
+                const today = new Date();
+                const weekKeys = [];
+                for (let w = 0; w < 4; w++) {
+                    const d = new Date(today);
+                    const dow = d.getDay() === 0 ? 7 : d.getDay();
+                    d.setDate(d.getDate() - dow + 1 + (w * 7));
+                    const ws = fmtLocalDate(d);
+                    ["cwe","kirkwood"].forEach(loc => weekKeys.push(loc + "_" + ws));
+                }
+                const unsubs = weekKeys.map(key =>
+                    db.collection("schedules").doc(key).onSnapshot(doc => {
+                        setMyUpcomingShifts(prev => {
+                            const filtered = prev.filter(s => s._weekKey !== key);
+                            if (!doc.exists) return filtered;
+                            const data = doc.data();
+                            const useShifts = data.publishedShifts && data.publishedShifts.length > 0 ? data.publishedShifts : (data.status === "published" ? data.shifts || [] : []);
+                            const mine = useShifts
+                                .filter(s => s.employee === staffName)
+                                .map(s => ({...s, _weekKey: key, _weekStart: key.split("_").slice(1).join("_"), _location: key.split("_")[0], _published: data.status === "published"}));
+                            return [...filtered, ...mine].sort((a,b) => {
+                                const dateA = a._weekStart + "_" + (a.day||"") + "_" + (a.startTime||"");
+                                const dateB = b._weekStart + "_" + (b.day||"") + "_" + (b.startTime||"");
+                                return dateA.localeCompare(dateB);
+                            });
+                        });
+                    })
+                );
+                return () => unsubs.forEach(u => u());
+            }, [staffName]);
+
+            // Load time clock entries for "Scheduled vs Actual" (current week)
+            useEffect(() => {
+                if (!mgrAccess) return;
+                const unsub = db.collection("timeClock")
+                    .where("date", ">=", weekStart)
+                    .orderBy("date","desc").limit(200)
+                    .onSnapshot(snap => {
+                        setTimeClockEntries(snap.docs.map(d=>({id:d.id,...d.data()})));
+                    });
+                return () => unsub();
+            }, [weekStart, mgrAccess]);
+
+            // Load labor budget target + weekly sales
+            useEffect(() => {
+                const unsub = db.collection("ops").doc("scheduleSettings").onSnapshot(doc => {
+                    if (doc.exists && doc.data().laborBudgetPct) setLaborBudgetPct(doc.data().laborBudgetPct);
+                });
+                return () => unsub();
+            }, []);
+
+            useEffect(() => {
+                if (!mgrAccess) return;
+                const endDate = fmtLocalDate(new Date(new Date(weekStart+"T12:00:00").getTime() + 6*86400000));
+                db.collection("dailySales").where("date",">=",weekStart).where("date","<=",endDate).get().then(snap => {
+                    let total = 0;
+                    snap.forEach(d => { if (d.data().location === schedLocation || !mgrAccess) total += d.data().amount || 0; });
+                    setWeekSalesTotal(total);
+                });
+            }, [weekStart, schedLocation, mgrAccess]);
+
+            const saveLaborBudget = async (pct) => {
+                setLaborBudgetPct(pct);
+                await db.collection("ops").doc("scheduleSettings").set({laborBudgetPct: pct}, {merge: true});
+            };
 
             const saveCloseTime = async () => {
                 await db.collection("ops").doc("scheduleSettings").set({closeTime: tempCloseTime, updatedBy: staffName, updatedAt: new Date().toISOString()}, {merge: true});
@@ -4291,7 +4362,12 @@
             };
 
             const offerShift = async (shift) => {
-                await db.collection("shiftSwaps").add({offeredBy:staffName, shift, status:"open", createdAt:new Date().toISOString(), weekKey});
+                const ackMsg = language === "es"
+                    ? "⚠️ IMPORTANTE: Este turno sigue siendo tu responsabilidad hasta que otro empleado lo tome Y un gerente lo apruebe. Si nadie lo toma, tú sigues obligado a trabajarlo.\n\n¿Deseas continuar?"
+                    : "⚠️ IMPORTANT: This shift remains YOUR responsibility until another employee picks it up AND a manager approves the swap. If no one claims it, you are still required to work this shift.\n\nDo you want to continue?";
+                if (!confirm(ackMsg)) return;
+                await db.collection("shiftSwaps").add({offeredBy:staffName, shift, status:"open", createdAt:new Date().toISOString(), weekKey, acknowledgedResponsibility: true});
+                window.showToast(language==="es"?"Turno ofrecido — sigue siendo tu responsabilidad hasta que sea tomado":"Shift offered — still your responsibility until claimed","info",5000);
             };
 
             const claimSwap = async (swapId) => {
@@ -4363,7 +4439,7 @@
             return (
                 <div className="p-4 pb-24 animate-in">
                     <div className="flex gap-1 rounded-2xl p-1 mb-4 overflow-x-auto sticky z-20" style={{background:"var(--bg-subtle)", top: "0px", scrollbarWidth: "none"}}>
-                        {[{id:"view",l:"📅 "+(language==="es"?"Horario":"Schedule")},{id:"avail",l:"🕐 "+(language==="es"?"Disponibilidad":"Availability")},{id:"timeoff",l:"🏖️ "+(language==="es"?"Descanso":"Time Off")},{id:"swaps",l:"🔄 "+(language==="es"?"Cambios":"Swaps")},...(mgrAccess?[{id:"hours",l:"⏱️ "+(language==="es"?"Horas":"Hours")},{id:"templates",l:"📋 "+(language==="es"?"Plantillas":"Templates")},{id:"labor",l:"💰 "+(language==="es"?"Costos":"Labor")}]:[])].map(tab=>(
+                        {[{id:"view",l:"📅 "+(language==="es"?"Horario":"Schedule")},{id:"mine",l:"👤 "+(language==="es"?"Mis Turnos":"My Shifts")},{id:"avail",l:"🕐 "+(language==="es"?"Disponibilidad":"Availability")},{id:"timeoff",l:"🏖️ "+(language==="es"?"Descanso":"Time Off")},{id:"swaps",l:"🔄 "+(language==="es"?"Cambios":"Swaps")},...(mgrAccess?[{id:"hours",l:"⏱️ "+(language==="es"?"Horas":"Hours")},{id:"actual",l:"📊 "+(language==="es"?"Real":"Actual")},{id:"templates",l:"📋 "+(language==="es"?"Plantillas":"Templates")}]:[]),...(ownerAccess?[{id:"labor",l:"💰 "+(language==="es"?"Costos":"Labor")}]:[])].map(tab=>(
                             <button key={tab.id} onClick={()=>setSchedTab(tab.id)}
                                 className={"flex-1 py-2 px-1 rounded-xl text-xs font-bold transition-all whitespace-nowrap "+(schedTab===tab.id?"bg-poke-600 text-white shadow-md":"")} style={schedTab!==tab.id?{color:"var(--text-secondary)"}:{}}>{tab.l}</button>
                         ))}
@@ -4901,6 +4977,71 @@
                         </div>
                     )}
 
+                    {schedTab === "mine" && (
+                        <div className="space-y-3">
+                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                <p className="font-bold text-gray-800 text-sm">👤 {language==="es"?"Mis Próximos Turnos":"My Upcoming Shifts"}</p>
+                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Tus turnos publicados de las próximas semanas.":"Your published shifts for the coming weeks."}</p>
+                            </div>
+                            {(()=>{
+                                const today = window.fmtLocalDate();
+                                const upcoming = myUpcomingShifts.filter(s => {
+                                    if (!s._weekStart || !s.day) return false;
+                                    const ws = new Date(s._weekStart + "T12:00:00");
+                                    const dayIdx = DAY_KEYS.indexOf(s.day);
+                                    if (dayIdx < 0) return false;
+                                    const shiftDate = new Date(ws); shiftDate.setDate(ws.getDate() + dayIdx);
+                                    return fmtLocalDate(shiftDate) >= today;
+                                });
+                                if (upcoming.length === 0) return (
+                                    <div className="text-center py-10">
+                                        <p style={{fontSize:48}}>📭</p>
+                                        <p className="text-sm mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin turnos próximos":"No upcoming shifts"}</p>
+                                    </div>
+                                );
+                                let lastWeek = "";
+                                return upcoming.map((shift, idx) => {
+                                    const ws = new Date(shift._weekStart + "T12:00:00");
+                                    const dayIdx = DAY_KEYS.indexOf(shift.day);
+                                    const shiftDate = new Date(ws); shiftDate.setDate(ws.getDate() + dayIdx);
+                                    const dateStr = fmtLocalDate(shiftDate);
+                                    const isToday = dateStr === today;
+                                    const dayLabel = DAYS[dayIdx];
+                                    const locLabel = shift._location === "cwe" ? "CWE" : "KWD";
+                                    const weekLabel = language==="es"?"Semana del ":"Week of ";
+                                    const showWeekHeader = shift._weekStart !== lastWeek;
+                                    lastWeek = shift._weekStart;
+                                    return (
+                                        <React.Fragment key={idx}>
+                                            {showWeekHeader && (
+                                                <p className="text-xs font-bold mt-2 pt-2" style={{color:"var(--text-muted)", borderTop: idx>0?"1px solid var(--border-subtle)":"none"}}>
+                                                    {weekLabel}{ws.toLocaleDateString(language==="es"?"es-US":"en-US",{month:"short",day:"numeric"})}
+                                                </p>
+                                            )}
+                                            <div className={"card p-3 flex items-center justify-between " + (isToday?"ring-2 ring-green-400":"")}>
+                                                <div className="flex items-center gap-3">
+                                                    <div className={"w-11 h-11 rounded-xl flex items-center justify-center text-sm font-bold " + (isToday?"bg-green-500 text-white":"bg-gray-100 text-gray-600")}>
+                                                        {shiftDate.getDate()}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>
+                                                            {isToday && "🟢 "}{dayLabel}
+                                                        </p>
+                                                        <p className="text-xs" style={{color:"var(--text-muted)"}}>
+                                                            {fmtTime(shift.startTime)} — {fmtTime(shift.endTime)}
+                                                            {shift.role && " · " + shift.role}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className="text-xs font-bold px-2 py-1 rounded-lg bg-gray-100" style={{color:"var(--text-secondary)"}}>📍 {locLabel}</span>
+                                            </div>
+                                        </React.Fragment>
+                                    );
+                                });
+                            })()}
+                        </div>
+                    )}
+
                     {schedTab === "avail" && (
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
@@ -5026,6 +5167,7 @@
                     )}
 
                     {schedTab === "hours" && mgrAccess && (
+
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
                                 <p className="font-bold text-gray-800 text-sm">⏱️ {language==="es"?"Horas del Equipo":"Team Hours"}</p>
@@ -5054,6 +5196,87 @@
                                         </div>
                                     );
                                 });
+                            })()}
+                        </div>
+                    )}
+
+                    {schedTab === "actual" && mgrAccess && (
+                        <div className="space-y-3">
+                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
+                                <p className="font-bold text-gray-800 text-sm">📊 {language==="es"?"Programado vs Real":"Scheduled vs Actual"}</p>
+                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Compara los turnos programados contra el reloj de tiempo real.":"Compare scheduled shifts against actual time clock punches."}</p>
+                            </div>
+                            {(()=>{
+                                const locStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all");
+                                const empData = locStaff.map(s => {
+                                    const empShifts = shifts.filter(sh=>sh.employee===s.name);
+                                    const scheduledHrs = empShifts.reduce((sum,sh)=>sum+calcHours(sh.startTime,sh.endTime),0);
+                                    const empClocks = timeClockEntries.filter(tc=>tc.employee===s.name);
+                                    const actualHrs = empClocks.reduce((sum,tc)=>sum+(tc.hoursWorked||0),0);
+                                    const variance = actualHrs - scheduledHrs;
+                                    return { name: s.name, scheduledHrs, actualHrs, variance, shifts: empShifts, clocks: empClocks };
+                                }).filter(e=>e.scheduledHrs>0||e.actualHrs>0).sort((a,b)=>Math.abs(b.variance)-Math.abs(a.variance));
+
+                                const totSched = empData.reduce((s,e)=>s+e.scheduledHrs,0);
+                                const totActual = empData.reduce((s,e)=>s+e.actualHrs,0);
+                                const totVar = totActual - totSched;
+
+                                return (
+                                    <>
+                                        {/* Summary */}
+                                        <div className="bg-gradient-to-r from-poke-700 to-poke-600 rounded-2xl p-4 text-white">
+                                            <div className="grid grid-cols-3 gap-2 text-center">
+                                                <div><p className="text-2xl font-bold">{totSched.toFixed(1)}</p><p className="text-xs text-poke-200">{language==="es"?"Programadas":"Scheduled"}</p></div>
+                                                <div><p className="text-2xl font-bold">{totActual.toFixed(1)}</p><p className="text-xs text-poke-200">{language==="es"?"Reales":"Actual"}</p></div>
+                                                <div><p className={"text-2xl font-bold "+(totVar>0.5?"text-red-300":totVar<-0.5?"text-green-300":"text-white")}>{totVar>0?"+":""}{totVar.toFixed(1)}</p><p className="text-xs text-poke-200">{language==="es"?"Diferencia":"Variance"}</p></div>
+                                            </div>
+                                        </div>
+
+                                        {/* Per-employee breakdown */}
+                                        {empData.length === 0 ? (
+                                            <p className="text-center text-sm py-8" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin datos esta semana":"No data this week"}</p>
+                                        ) : empData.map(emp => {
+                                            const absVar = Math.abs(emp.variance);
+                                            const isOver = emp.variance > 0.25;
+                                            const isUnder = emp.variance < -0.25;
+                                            return (
+                                                <div key={emp.name} className={"card p-3 " + (isOver?"border-l-4 border-red-400":isUnder?"border-l-4 border-green-400":"")}>
+                                                    <div className="flex justify-between items-start mb-1">
+                                                        <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>{emp.name}</p>
+                                                        <span className={"text-xs font-bold px-2 py-0.5 rounded " + (isOver?"bg-red-100 text-red-600":isUnder?"bg-green-100 text-green-600":"bg-gray-100 text-gray-600")}>
+                                                            {emp.variance>0?"+":""}{emp.variance.toFixed(1)}h
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex gap-4 text-xs" style={{color:"var(--text-muted)"}}>
+                                                        <span>📅 {language==="es"?"Prog":"Sched"}: {emp.scheduledHrs.toFixed(1)}h</span>
+                                                        <span>⏰ {language==="es"?"Real":"Actual"}: {emp.actualHrs.toFixed(1)}h</span>
+                                                        <span>{emp.clocks.length} {language==="es"?"registros":"punches"}</span>
+                                                    </div>
+                                                    {/* Show detail per day */}
+                                                    {emp.shifts.map(sh => {
+                                                        const dayDate = getDateForDayKey(DAY_KEYS.indexOf(sh.day));
+                                                        const matchingClock = emp.clocks.find(c=>c.date===dayDate);
+                                                        const schedH = calcHours(sh.startTime, sh.endTime);
+                                                        const actH = matchingClock?.hoursWorked || 0;
+                                                        const noClock = !matchingClock && dayDate <= window.fmtLocalDate();
+                                                        return (
+                                                            <div key={sh.id} className="flex items-center justify-between mt-1.5 pt-1.5" style={{borderTop:"1px solid var(--border-subtle)"}}>
+                                                                <span className="text-[11px]" style={{color:"var(--text-muted)"}}>{DAYS[DAY_KEYS.indexOf(sh.day)]?.slice(0,3)} {fmtTime(sh.startTime)}–{fmtTime(sh.endTime)}</span>
+                                                                {noClock ? (
+                                                                    <span className="text-[10px] font-bold text-orange-500">⚠️ {language==="es"?"Sin registro":"No punch"}</span>
+                                                                ) : matchingClock ? (
+                                                                    <span className={"text-[10px] font-bold " + (Math.abs(actH-schedH)>0.5?"text-red-500":"text-green-600")}>{actH.toFixed(1)}h {language==="es"?"real":"actual"}</span>
+                                                                ) : (
+                                                                    <span className="text-[10px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Futuro":"Upcoming"}</span>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            );
+                                        })}
+                                    </>
+                                );
                             })()}
                         </div>
                     )}
@@ -5099,12 +5322,53 @@
                         </div>
                     )}
 
-                    {schedTab === "labor" && mgrAccess && (
+                    {schedTab === "labor" && ownerAccess && (
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
                                 <p className="font-bold text-gray-800 text-sm">💰 {language==="es"?"Costos Laborales":"Labor Costs"}</p>
                                 <p className="text-xs text-gray-400 mt-1">{language==="es"?"Resumen de horas y costos estimados.":"Summary of hours and estimated costs."}</p>
                             </div>
+
+                            {/* Labor Budget Target */}
+                            {(()=>{
+                                const empHrs = {}; shifts.forEach(s=>{if(s.employee!=="__OPEN__") empHrs[s.employee]=(empHrs[s.employee]||0)+calcHours(s.startTime,s.endTime);});
+                                let estCost = 0; Object.entries(empHrs).forEach(([e,h])=>{estCost+=h*(wages[e.replace(/\s/g,"_")]||0);});
+                                const budgetDollars = weekSalesTotal > 0 ? weekSalesTotal * (laborBudgetPct/100) : 0;
+                                const actualPct = weekSalesTotal > 0 ? (estCost / weekSalesTotal * 100) : 0;
+                                const isOver = actualPct > laborBudgetPct;
+                                return (
+                                    <div className={"card p-4 " + (isOver?"border-l-4 border-red-400":"border-l-4 border-green-400")}>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>🎯 {language==="es"?"Presupuesto Laboral":"Labor Budget"}</p>
+                                            <div className="flex items-center gap-1">
+                                                <input type="number" value={laborBudgetPct} onChange={e=>saveLaborBudget(Number(e.target.value)||0)}
+                                                    className="w-12 text-center text-xs font-bold border rounded-lg py-1" style={{borderColor:"var(--border-subtle)"}}/>
+                                                <span className="text-xs font-bold" style={{color:"var(--text-muted)"}}>%</span>
+                                            </div>
+                                        </div>
+                                        {weekSalesTotal > 0 ? (
+                                            <>
+                                                <div className="flex justify-between text-xs mb-1">
+                                                    <span style={{color:"var(--text-muted)"}}>{language==="es"?"Ventas semana":"Week sales"}: ${weekSalesTotal.toLocaleString()}</span>
+                                                    <span style={{color:"var(--text-muted)"}}>{language==="es"?"Presupuesto":"Budget"}: ${budgetDollars.toFixed(0)}</span>
+                                                </div>
+                                                <div className="w-full h-4 rounded-full overflow-hidden bg-gray-100 mb-1">
+                                                    <div className="h-full rounded-full transition-all" style={{
+                                                        width: Math.min(100, (estCost / Math.max(budgetDollars, 1)) * 100) + "%",
+                                                        background: isOver ? "linear-gradient(90deg,#ef4444,#dc2626)" : "linear-gradient(90deg,#22c55e,#16a34a)"
+                                                    }}></div>
+                                                </div>
+                                                <div className="flex justify-between text-xs">
+                                                    <span className={"font-bold " + (isOver?"text-red-600":"text-green-600")}>${estCost.toFixed(0)} ({actualPct.toFixed(1)}%)</span>
+                                                    <span style={{color:"var(--text-muted)"}}>{isOver?(language==="es"?"⚠️ Sobre presupuesto":"⚠️ Over budget"):(language==="es"?"✅ Dentro del presupuesto":"✅ Within budget")}</span>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Registra ventas en 'Ventas Diarias' para ver el % laboral":"Log sales in 'Daily Sales' to see labor %"}</p>
+                                        )}
+                                    </div>
+                                );
+                            })()}
                             {(()=>{
                                 const empHours = {};
                                 shifts.forEach(s=>{
