@@ -4631,6 +4631,16 @@
                 sendNotification(staffList.filter(s=>isAdmin(s.name)).map(s=>s.name),"🙋 Open Shift Claimed",staffName+" claimed an open shift",{type:"openshift"});
             };
 
+            const makeShiftOpen = async (shiftId) => {
+                const shift = shifts.find(s=>s.id===shiftId);
+                if (!shift || shift.employee === "__OPEN__") return;
+                const prevEmp = shift.employee;
+                const updated = shifts.map(s=>s.id===shiftId?{...s,employee:"__OPEN__"}:s);
+                setShifts(updated);
+                await writeDraft(updated);
+                window.showToast(language==="es"?`Turno de ${prevEmp} ahora es abierto`:`${prevEmp}'s shift is now open`, "success");
+            };
+
             const moveShift = async (shiftId, newDayKey) => {
                 const updated = shifts.map(s=>s.id===shiftId?{...s,day:newDayKey}:s);
                 setShifts(updated);
@@ -5149,8 +5159,8 @@
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {/* Open shifts row */}
-                                                    {openShifts.length > 0 && (
+                                                    {/* Open shifts row — always visible for drag targets */}
+                                                    {mgrAccess && (
                                                         <tr>
                                                             <td style={{position: "sticky", left: 0, background: "#dbeafe", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", zIndex: 1}}>
                                                                 <div style={{fontWeight: 700, fontSize: 13, color: "#1e40af"}}>🆕 {language==="es"?"Turnos Abiertos":"Open Shifts"}</div>
@@ -5162,7 +5172,7 @@
                                                                     <td key={dk}
                                                                         onDragOver={(e)=>{e.preventDefault();e.currentTarget.style.background="#dbeafe";}}
                                                                         onDragLeave={(e)=>{e.currentTarget.style.background="";}}
-                                                                        onDrop={(e)=>{e.preventDefault();e.currentTarget.style.background="";if(draggedShift)moveShift(draggedShift.id,dk);setDraggedShift(null);}}
+                                                                        onDrop={(e)=>{e.preventDefault();e.currentTarget.style.background="";if(draggedShift){const updated=shifts.map(s=>s.id===draggedShift.id?{...s,day:dk,employee:"__OPEN__"}:s);setShifts(updated);writeDraft(updated);}setDraggedShift(null);}}
                                                                         onClick={()=>setGridAddCell({employee:"__OPEN__", dayKey:dk})}
                                                                         style={{padding: 4, borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", verticalAlign: "top", minHeight: 60, background: "#eff6ff", cursor: "pointer"}}>
                                                                         {cellShifts.map(shift=>(
@@ -5366,7 +5376,7 @@
                                                 const isOT = empHours > 40;
                                                 return (
                                                     <div key={shift.id}
-                                                         draggable={mgrAccess&&!isOpen}
+                                                         draggable={mgrAccess}
                                                          onDragStart={mgrAccess?(e)=>{e.stopPropagation();setDraggedShift(shift);}:undefined}
                                                          onClick={mgrAccess?()=>openEditShift(shift):undefined}
                                                          className={"p-3 flex items-center justify-between "+(mgrAccess?"cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition-colors ":"")+(hasConflict?"bg-red-50 border-l-4 border-red-400 ":isOT?"bg-orange-50 border-l-4 border-orange-400 ":availStatus===false?"bg-yellow-50 border-l-4 border-yellow-400 ":isOpen?"bg-blue-50 border-l-4 border-blue-400 ":isMine?"bg-poke-50":"")}>
@@ -5598,6 +5608,11 @@
                                         <button onClick={()=>setEditingShift(null)} className="flex-1 py-3 rounded-xl font-bold text-sm" style={{background: "var(--bg-subtle)", color: "var(--text-secondary)"}}>{language==="es"?"Cancelar":"Cancel"}</button>
                                         <button onClick={saveEditShift} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold text-sm active:scale-95">💾 {language==="es"?"Guardar":"Save"}</button>
                                     </div>
+                                    {editingShift.employee !== "__OPEN__" && (
+                                        <button onClick={()=>{makeShiftOpen(editingShift.id);setEditingShift(null);}} className="w-full py-2.5 mt-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl font-bold text-sm active:scale-95">
+                                            🆕 {language==="es"?"Convertir en Turno Abierto":"Make Open Shift"}
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </div>
