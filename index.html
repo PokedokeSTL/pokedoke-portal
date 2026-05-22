@@ -1377,7 +1377,9 @@
             }
         ];
 
-        // Utility function to get translationey]?.[lang === "es" ? "es" : "en"] || key;
+        // Utility function to get translation
+        const t = (key, lang) => {
+            return T[key]?.[lang === "es" ? "es" : "en"] || key;
         };
 
         // Home Page Component
