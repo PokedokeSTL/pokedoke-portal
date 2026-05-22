@@ -1688,6 +1688,75 @@
             const [auditSaving, setAuditSaving] = useState(false);
             const [auditViewHistory, setAuditViewHistory] = useState(false);
 
+            // --- Search, Collapsible, Alerts, Order Reminders ---
+            const [invSearch, setInvSearch] = useState("");
+            const [collapsedCats, setCollapsedCats] = useState(new Set());
+            const toggleCat = (catId) => setCollapsedCats(prev => {
+                const next = new Set(prev);
+                next.has(catId) ? next.delete(catId) : next.add(catId);
+                return next;
+            });
+
+            const getInventoryAlerts = () => {
+                const out = [], critical = [], low = [];
+                customInventory.forEach(cat => {
+                    cat.items.forEach(item => {
+                        const count = inventory[item.id] || 0;
+                        const par = getParLevel(item);
+                        if (par === 0) return;
+                        const entry = { ...item, count, par, catName: language === "es" ? cat.nameEs : cat.name };
+                        if (count === 0) out.push(entry);
+                        else if (count <= par * 0.5) critical.push(entry);
+                        else if (count <= par) low.push(entry);
+                    });
+                });
+                return { out, critical, low, total: out.length + critical.length + low.length };
+            };
+
+            const getOrderReminders = () => {
+                const now = new Date();
+                const dayOfWeek = now.getDay(); // 0=Sun
+                const hour = now.getHours();
+                const reminders = [];
+                Object.values(VENDORS).forEach(v => {
+                    let cutoffDay = -1, cutoffHour = 23;
+                    const ct = v.cutoff.toLowerCase();
+                    if (ct.includes("friday")) { cutoffDay = 5; }
+                    else if (ct.includes("tuesday")) { cutoffDay = 2; }
+                    else if (ct.includes("monday")) { cutoffDay = 1; }
+                    if (ct.includes("12:00")) cutoffHour = 12;
+                    else if (ct.includes("3:00")) cutoffHour = 15;
+
+                    if (cutoffDay === -1) return; // skip "anytime" vendors
+
+                    // Remind day-before and day-of (before cutoff)
+                    const dayBefore = cutoffDay === 0 ? 6 : cutoffDay - 1;
+                    let urgency = null;
+                    if (dayOfWeek === cutoffDay && hour < cutoffHour) {
+                        urgency = "today";
+                    } else if (dayOfWeek === dayBefore) {
+                        urgency = "tomorrow";
+                    }
+                    if (urgency) {
+                        // Check if there are items to order from this vendor
+                        const vendorItems = getOrderList().filter(i => i.supplier === v.id);
+                        reminders.push({ vendor: v, urgency, itemCount: vendorItems.length, cutoffHour });
+                    }
+                });
+                return reminders;
+            };
+
+            const filterItemsBySearch = (items) => {
+                if (!invSearch.trim()) return items;
+                const q = invSearch.toLowerCase().trim();
+                return items.filter(item => {
+                    const name = (item.name || "").toLowerCase();
+                    const nameEs = (item.nameEs || "").toLowerCase();
+                    const supplier = item.supplier ? (VENDORS[item.supplier]?.name || "").toLowerCase() : "";
+                    return name.includes(q) || nameEs.includes(q) || supplier.includes(q) || (item.id || "").includes(q);
+                });
+            };
+
             // Load pending orders from Firebase
             useEffect(() => {
                 if (!passwordEntered) return;
@@ -3000,6 +3069,78 @@
                                 </div>
                             )}
 
+                            {/* Order Reminders */}
+                            {(()=>{
+                                const reminders = getOrderReminders();
+                                if (reminders.length === 0) return null;
+                                return (
+                                    <div className="space-y-2">
+                                        {reminders.map((r, i) => (
+                                            <div key={i} className={"rounded-2xl p-3 border flex items-center gap-3 " + (r.urgency === "today" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200")}
+                                                onClick={() => { setInvViewMode("order"); setInvVendorFilter(r.vendor.id); }}>
+                                                <span className="text-2xl">{r.urgency === "today" ? "🚨" : "⏰"}</span>
+                                                <div className="flex-1">
+                                                    <p className="font-bold text-sm" style={{color: r.vendor.color}}>
+                                                        {r.vendor.name} — {language === "es" ? "Corte" : "Cutoff"} {r.urgency === "today" ? (language === "es" ? "HOY" : "TODAY") : (language === "es" ? "MAÑANA" : "TOMORROW")}
+                                                    </p>
+                                                    <p className="text-xs text-gray-500">
+                                                        {language === "es" ? "Corte" : "Cutoff"}: {language === "es" ? r.vendor.cutoffEs : r.vendor.cutoff}
+                                                        {r.itemCount > 0 && <span className="font-bold text-red-600 ml-2">· {r.itemCount} {language === "es" ? "por pedir" : "to order"}</span>}
+                                                    </p>
+                                                </div>
+                                                <span className="text-xs text-gray-400">→</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Search Bar */}
+                            {(invViewMode==="count"||invViewMode==="quick"||invViewMode==="audit"||invViewMode==="order") && (
+                                <div className="relative">
+                                    <input type="text" value={invSearch} onChange={e=>setInvSearch(e.target.value)}
+                                        placeholder={language==="es"?"🔎 Buscar artículo, proveedor...":"🔎 Search item, vendor..."}
+                                        className="w-full px-4 py-3 pl-4 border border-gray-200 rounded-2xl text-sm bg-white focus:outline-none focus:border-poke-400 focus:ring-2 focus:ring-poke-100 transition"
+                                    />
+                                    {invSearch && (
+                                        <button onClick={()=>setInvSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg">✕</button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Alerts Dashboard */}
+                            {invViewMode==="count" && !invSearch && (()=>{
+                                const alerts = getInventoryAlerts();
+                                if (alerts.total === 0) return null;
+                                return (
+                                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                        <div className="p-3 bg-gradient-to-r from-red-50 to-amber-50 border-b">
+                                            <p className="font-bold text-gray-800 text-sm">⚠️ {language==="es"?"Alertas de Inventario":"Inventory Alerts"} ({alerts.total})</p>
+                                        </div>
+                                        <div className="p-3 space-y-2">
+                                            {alerts.out.length > 0 && (
+                                                <div className="flex items-center gap-2 p-2 bg-red-50 rounded-xl">
+                                                    <span className="text-red-600 font-bold text-sm flex items-center gap-1">❌ {language==="es"?"Agotado":"Out of Stock"} ({alerts.out.length})</span>
+                                                    <div className="flex-1 text-xs text-red-700 truncate">{alerts.out.map(i=>i.name).join(", ")}</div>
+                                                </div>
+                                            )}
+                                            {alerts.critical.length > 0 && (
+                                                <div className="flex items-center gap-2 p-2 bg-orange-50 rounded-xl">
+                                                    <span className="text-orange-600 font-bold text-sm flex items-center gap-1">🟠 {language==="es"?"Crítico":"Critical"} ({alerts.critical.length})</span>
+                                                    <div className="flex-1 text-xs text-orange-700 truncate">{alerts.critical.map(i=>i.name).join(", ")}</div>
+                                                </div>
+                                            )}
+                                            {alerts.low.length > 0 && (
+                                                <div className="flex items-center gap-2 p-2 bg-yellow-50 rounded-xl">
+                                                    <span className="text-yellow-600 font-bold text-sm flex items-center gap-1">⚠️ {language==="es"?"Bajo":"Low"} ({alerts.low.length})</span>
+                                                    <div className="flex-1 text-xs text-yellow-700 truncate">{alerts.low.map(i=>i.name).join(", ")}</div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
                             {invViewMode === "count" && (
                                 <div className="space-y-4">
                                     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
@@ -3016,15 +3157,23 @@
                                         )}
                                     </div>
                                     {customInventory.map((category,catIdx)=>{
-                                        const filteredItems = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                        const vendorFiltered = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                        const filteredItems = filterItemsBySearch(vendorFiltered);
                                         if (filteredItems.length === 0) return null;
+                                        const isCollapsed = collapsedCats.has(category.id);
                                         return (
                                         <div key={category.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                                            <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center">
-                                                <span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span>
-                                                <span className="text-xs text-gray-400">{filteredItems.length} items</span>
+                                            <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center cursor-pointer select-none active:bg-poke-50 transition" onClick={()=>toggleCat(category.id)}>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={"text-xs text-gray-400 transition-transform "+(isCollapsed?"":"")} style={{display:"inline-block",transform:isCollapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}}>▼</span>
+                                                    <span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    {(()=>{ const alertCount = filteredItems.filter(i => getStockStatus(i) !== "ok").length; return alertCount > 0 ? <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">{alertCount} ⚠️</span> : null; })()}
+                                                    <span className="text-xs text-gray-400">{filteredItems.length} items</span>
+                                                </div>
                                             </div>
-                                            <div className="divide-y divide-gray-50">
+                                            {!isCollapsed && <div className="divide-y divide-gray-50">
                                                 {filteredItems.map((item)=>{
                                                     const itemIdx = category.items.indexOf(item);
                                                     const isEditing=invEditMode&&invEditingIdx&&invEditingIdx.catIdx===catIdx&&invEditingIdx.itemIdx===itemIdx;
@@ -3101,7 +3250,7 @@
                                                 ):invEditMode&&(
                                                     <button onClick={()=>setInvShowAddForm(catIdx)} className="w-full py-3 text-green-600 font-bold text-sm hover:bg-green-50">+ Add Item</button>
                                                 )}
-                                            </div>
+                                            </div>}
                                         </div>
                                     );}).filter(Boolean)}
                                 </div>
@@ -3114,12 +3263,20 @@
                                         <p className="text-xs text-gray-400 mt-1">{language==="es"?"Usa esto todos los días. Solo toca ✅ Bien, ⚠️ Bajo, o ❌ Agotado para cada artículo. Toma 2 minutos. Steve recibe una notificación cuando lo guardes para saber qué pedir.":"Use this every day. Just tap ✅ Good, ⚠️ Low, or ❌ Out for each item. Takes 2 minutes. Steve gets notified when you save so he knows what to order."}</p>
                                     </div>
                                     {customInventory.map(category=>{
-                                        const filteredItems = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                        const vendorFiltered = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                        const filteredItems = filterItemsBySearch(vendorFiltered);
                                         if (filteredItems.length === 0) return null;
+                                        const isCollapsed = collapsedCats.has("q-"+category.id);
                                         return (
                                         <div key={category.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                                            <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b"><span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span></div>
-                                            <div className="divide-y divide-gray-50">
+                                            <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center cursor-pointer select-none active:bg-poke-50 transition" onClick={()=>toggleCat("q-"+category.id)}>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs text-gray-400" style={{display:"inline-block",transform:isCollapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}}>▼</span>
+                                                    <span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span>
+                                                </div>
+                                                <span className="text-xs text-gray-400">{filteredItems.length} items</span>
+                                            </div>
+                                            {!isCollapsed && <div className="divide-y divide-gray-50">
                                                 {filteredItems.map(item=>{
                                                     const qc=quickCounts[item.id]||"";
                                                     return (
@@ -3137,7 +3294,7 @@
                                                         </div>
                                                     );
                                                 })}
-                                            </div>
+                                            </div>}
                                         </div>
                                     );}).filter(Boolean)}
                                     <button onClick={async()=>{try{
@@ -3151,7 +3308,14 @@
                             )}
 
                             {invViewMode === "order" && (()=>{
-                                const bySupplier=getOrderBySupplier();const keys=Object.keys(bySupplier);const total=getOrderList().length;
+                                const bySupplierRaw=getOrderBySupplier();
+                                // Apply search filter to order items
+                                const bySupplier = {};
+                                Object.entries(bySupplierRaw).forEach(([k,v]) => {
+                                    const filtered = filterItemsBySearch(v.items);
+                                    if (filtered.length > 0) bySupplier[k] = { ...v, items: filtered };
+                                });
+                                const keys=Object.keys(bySupplier);const total=Object.values(bySupplier).reduce((s,g)=>s+g.items.length,0);
                                 const pending=pendingOrders.filter(o=>o.status==="pending");
                                 return (
                                     <div className="space-y-4">
@@ -3411,17 +3575,22 @@
                                             </div>
 
                                             {customInventory.map(category=>{
-                                                const filteredItems = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                                const vendorFiltered = invVendorFilter === "all" ? category.items : category.items.filter(i=>i.supplier===invVendorFilter);
+                                                const filteredItems = filterItemsBySearch(vendorFiltered);
                                                 if (filteredItems.length === 0) return null;
+                                                const isCollapsed = collapsedCats.has("a-"+category.id);
                                                 return (
                                                 <div key={category.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                                                    <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center">
-                                                        <span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span>
+                                                    <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center cursor-pointer select-none active:bg-poke-50 transition" onClick={()=>toggleCat("a-"+category.id)}>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-xs text-gray-400" style={{display:"inline-block",transform:isCollapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}}>▼</span>
+                                                            <span className="font-bold text-poke-700 text-sm">{language==="es"?category.nameEs:category.name}</span>
+                                                        </div>
                                                         <span className="text-xs text-gray-400">
                                                             {filteredItems.filter(i=>auditCounts[i.id]!==undefined&&auditCounts[i.id]!=="").length}/{filteredItems.length} {language==="es"?"contados":"counted"}
                                                         </span>
                                                     </div>
-                                                    <div className="divide-y divide-gray-50">
+                                                    {!isCollapsed && <div className="divide-y divide-gray-50">
                                                         {filteredItems.map(item=>{
                                                             const systemCount=inventory[item.id]||0;
                                                             const variance=getAuditVariance(item);
@@ -3457,7 +3626,7 @@
                                                                 </div>
                                                             );
                                                         })}
-                                                    </div>
+                                                    </div>}
                                                 </div>
                                             );}).filter(Boolean)}
 
