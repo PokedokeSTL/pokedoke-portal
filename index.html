@@ -624,7 +624,8 @@
             { id: 18, name: "Pius Sempumbu", role: "Line Server", pin: "8459", location: "kirkwood" },
             { id: 19, name: "Finn Jaeger", role: "Dishwasher", pin: "1975", location: "kirkwood" },
             { id: 20, name: "Kinley Miller", role: "Line Server", pin: "4510", location: "kirkwood" },
-            { id: 21, name: "William Shih", role: "Prep Cook", pin: "3747", location: "kirkwood" },
+            { id: 22, name: "Chasity Hardin", role: "Line Server", pin: "4065", location: "cwe" },
+            { id: 23, name: "Giada Staley", role: "Line Server", pin: "6214", location: "kirkwood" },
         ];
 
         // Training Modules
@@ -4265,6 +4266,10 @@
             const [timeClockEntries, setTimeClockEntries] = useState([]);
             const [laborBudgetPct, setLaborBudgetPct] = useState(30);
             const [weekSalesTotal, setWeekSalesTotal] = useState(0);
+            const [showCsvImport, setShowCsvImport] = useState(false);
+            const [csvParsedShifts, setCsvParsedShifts] = useState([]);
+            const [csvImporting, setCsvImporting] = useState(false);
+            const csvFileRef = React.useRef(null);
             const mgrAccess = isAdmin(staffName);
             const ownerAccess = isOwner(staffName);
             const DAYS = language==="es"?["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]:["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -4668,6 +4673,132 @@
                 setHasUnpublishedChanges(false);
             };
 
+            // ── 7Shifts CSV Import ──
+            const parse7ShiftsTime = (t) => {
+                t = t.trim();
+                if (t.toUpperCase() === "CL" || t.toUpperCase() === "BD") return t.toUpperCase();
+                const m = t.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+                if (!m) return t;
+                let hour = parseInt(m[1]);
+                const minute = parseInt(m[2] || 0);
+                const ampm = m[3].toLowerCase();
+                if (ampm === "pm" && hour !== 12) hour += 12;
+                if (ampm === "am" && hour === 12) hour = 0;
+                return `${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}`;
+            };
+
+            const parseCsvFile = (csvText) => {
+                // Parse CSV respecting quoted fields
+                const lines = [];
+                let current = "", inQuotes = false, row = [];
+                for (let i = 0; i < csvText.length; i++) {
+                    const ch = csvText[i];
+                    if (ch === '"') { inQuotes = !inQuotes; }
+                    else if (ch === ',' && !inQuotes) { row.push(current.trim()); current = ""; }
+                    else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+                        if (current || row.length) { row.push(current.trim()); lines.push(row); row = []; current = ""; }
+                    } else { current += ch; }
+                }
+                if (current || row.length) { row.push(current.trim()); lines.push(row); }
+
+                if (lines.length < 2) return [];
+                const header = lines[0].map(h => h.replace(/"/g,"").trim());
+                const dayColumns = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
+                const allShifts = [];
+                let idCounter = Date.now();
+
+                for (let r = 1; r < lines.length; r++) {
+                    const cells = lines[r];
+                    const name = (cells[0] || "").replace(/"/g,"").trim();
+                    if (!name || name === "Default Online Ordering") continue;
+
+                    for (let d = 0; d < dayColumns.length; d++) {
+                        const colIdx = header.indexOf(dayColumns[d]);
+                        if (colIdx < 0) continue;
+                        const cell = (cells[colIdx] || "").replace(/"/g,"").trim();
+                        if (!cell) continue;
+
+                        // Get date for this day
+                        const dateObj = new Date(weekStart + "T12:00:00");
+                        dateObj.setDate(dateObj.getDate() + d);
+                        const dayKey = fmtLocalDate(dateObj);
+
+                        // Split multiple shifts by |
+                        const parts = cell.split("|");
+                        for (const part of parts) {
+                            const p = part.trim();
+                            if (!p) continue;
+                            // Extract role from parentheses
+                            const roleMatch = p.match(/\(([^)]+)\)/);
+                            const role = roleMatch ? roleMatch[1] : "";
+                            // Remove role, parse times
+                            const timePart = p.replace(/\([^)]+\)/g, "").trim();
+                            const timeMatch = timePart.match(/(.+?)\s*-\s*(.+)/);
+                            if (timeMatch) {
+                                const startTime = parse7ShiftsTime(timeMatch[1]);
+                                const endTime = parse7ShiftsTime(timeMatch[2]);
+                                allShifts.push({
+                                    id: String(idCounter++),
+                                    day: dayKey,
+                                    employee: name,
+                                    startTime,
+                                    endTime,
+                                    role,
+                                    notes: "",
+                                    isBD: endTime === "BD",
+                                    location: schedLocation
+                                });
+                            }
+                        }
+                    }
+                }
+                return allShifts;
+            };
+
+            const handleCsvImport = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const parsed = parseCsvFile(evt.target.result);
+                    setCsvParsedShifts(parsed);
+                    setShowCsvImport(true);
+                };
+                reader.readAsText(file);
+                e.target.value = ""; // reset so same file can be re-selected
+            };
+
+            const confirmCsvImport = async (mode) => {
+                setCsvImporting(true);
+                try {
+                    const finalShifts = mode === "replace" ? csvParsedShifts : [...shifts, ...csvParsedShifts];
+                    setShifts(finalShifts);
+                    await db.collection("schedules").doc(weekKey).set({
+                        draftShifts: finalShifts,
+                        publishedShifts: finalShifts,
+                        hasUnpublishedChanges: false,
+                        status: "published",
+                        location: schedLocation,
+                        weekStart,
+                        updatedBy: staffName,
+                        updatedAt: new Date().toISOString(),
+                        publishedBy: staffName,
+                        publishedAt: new Date().toISOString()
+                    }, { merge: true });
+                    setPublishedShifts(finalShifts);
+                    setSchedStatus("published");
+                    setHasUnpublishedChanges(false);
+                    window.showToast(language === "es" ? `✅ ${csvParsedShifts.length} turnos importados` : `✅ ${csvParsedShifts.length} shifts imported`, "success");
+                    setShowCsvImport(false);
+                    setCsvParsedShifts([]);
+                } catch (err) {
+                    console.error("CSV import error:", err);
+                    alert("Error importing: " + err.message);
+                }
+                setCsvImporting(false);
+            };
+
             const copyWeek = async () => {
                 const nextWeekKey = schedLocation + "_" + getWeekStart(weekOffset + 1);
                 const copiedShifts = shifts.map(s=>({...s,id:Date.now().toString()+Math.random()}));
@@ -4886,7 +5017,90 @@
                                     <button onClick={copyWeek} className="py-2 bg-poke-600 text-white rounded-xl text-xs font-bold active:scale-95">📋 {language==="es"?"Copiar →":"Copy →"}</button>
                                     <button onClick={autoSchedule} className="py-2 bg-purple-600 text-white rounded-xl text-xs font-bold active:scale-95">✨ {language==="es"?"Auto-generar":"Auto-Generate"}</button>
                                     <button onClick={printSchedule} className="py-2 bg-gray-700 text-white rounded-xl text-xs font-bold active:scale-95">🖨️ {language==="es"?"Imprimir":"Print"}</button>
+                                    <input type="file" accept=".csv" ref={csvFileRef} onChange={handleCsvImport} className="hidden" />
+                                    <button onClick={()=>csvFileRef.current?.click()} className="py-2 bg-blue-600 text-white rounded-xl text-xs font-bold active:scale-95">📤 {language==="es"?"Importar 7Shifts":"Import 7Shifts CSV"}</button>
                                     <button onClick={()=>{setTempCloseTime(closeTime);setShowSettings(true);}} className="col-span-2 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold active:scale-95">⚙️ {language==="es"?"Ajustes — Hora de Cierre":"Settings — Close Time"}: {fmtTime(closeTime)}</button>
+                                </div>
+                            )}
+
+                            {/* ── 7Shifts CSV Import Modal ── */}
+                            {showCsvImport && (
+                                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={()=>{setShowCsvImport(false);setCsvParsedShifts([]);}}>
+                                    <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[85vh] overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
+                                        <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-white flex justify-between items-center flex-shrink-0">
+                                            <div>
+                                                <p className="font-bold text-gray-800">📤 {language==="es"?"Importar desde 7Shifts":"Import from 7Shifts"}</p>
+                                                <p className="text-xs text-gray-500 mt-0.5">
+                                                    {csvParsedShifts.length} {language==="es"?"turnos encontrados":"shifts found"} · {new Set(csvParsedShifts.map(s=>s.employee)).size} {language==="es"?"empleados":"employees"}
+                                                    {" · "}{language==="es"?"Semana del":"Week of"} {new Date(weekStart+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                                                    {" · "}{LOCATIONS.find(l=>l.id===schedLocation)?.name}
+                                                </p>
+                                            </div>
+                                            <button onClick={()=>{setShowCsvImport(false);setCsvParsedShifts([]);}} className="text-gray-400 text-xl leading-none">✕</button>
+                                        </div>
+
+                                        <div className="overflow-y-auto flex-1 p-4 space-y-3">
+                                            {csvParsedShifts.length === 0 ? (
+                                                <div className="text-center py-8 text-gray-400">
+                                                    <p className="text-4xl mb-2">📭</p>
+                                                    <p className="font-bold">{language==="es"?"No se encontraron turnos":"No shifts found in CSV"}</p>
+                                                    <p className="text-xs mt-1">{language==="es"?"Asegúrate de exportar desde 7Shifts con el formato correcto":"Make sure you're exporting from 7Shifts in the standard format"}</p>
+                                                </div>
+                                            ) : (()=>{
+                                                // Group by employee
+                                                const byEmp = {};
+                                                csvParsedShifts.forEach(s => {
+                                                    if (!byEmp[s.employee]) byEmp[s.employee] = [];
+                                                    byEmp[s.employee].push(s);
+                                                });
+                                                // Check for unrecognized names
+                                                const knownNames = new Set(staffList.map(s=>s.name));
+                                                return Object.entries(byEmp).map(([emp, empShifts]) => {
+                                                    const unknown = !knownNames.has(emp);
+                                                    return (
+                                                        <div key={emp} className={"rounded-xl border overflow-hidden "+(unknown?"border-orange-200":"border-gray-100")}>
+                                                            <div className={"px-3 py-2 flex justify-between items-center "+(unknown?"bg-orange-50":"bg-gray-50")}>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="font-bold text-sm text-gray-800">{emp}</span>
+                                                                    {unknown && <span className="text-[10px] bg-orange-200 text-orange-800 px-1.5 py-0.5 rounded-full font-bold">{language==="es"?"Nuevo":"New"}</span>}
+                                                                </div>
+                                                                <span className="text-xs text-gray-400">{empShifts.length} {language==="es"?"turnos":"shifts"}</span>
+                                                            </div>
+                                                            <div className="divide-y divide-gray-50">
+                                                                {empShifts.map(s => {
+                                                                    const dayDate = new Date(s.day + "T12:00:00");
+                                                                    const dayName = dayDate.toLocaleDateString(language==="es"?"es-US":"en-US",{weekday:"short",month:"short",day:"numeric"});
+                                                                    return (
+                                                                        <div key={s.id} className="px-3 py-1.5 flex justify-between items-center text-sm">
+                                                                            <span className="text-gray-600">{dayName}</span>
+                                                                            <div className="text-right">
+                                                                                <span className="font-semibold text-gray-800">{s.startTime} – {s.endTime}</span>
+                                                                                {s.role && <span className="text-xs text-gray-400 ml-2">({s.role})</span>}
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                });
+                                            })()}
+                                        </div>
+
+                                        {csvParsedShifts.length > 0 && (
+                                            <div className="p-4 border-t bg-gray-50 space-y-2 flex-shrink-0">
+                                                <button onClick={()=>confirmCsvImport("replace")} disabled={csvImporting}
+                                                    className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl active:scale-95 transition disabled:opacity-50">
+                                                    {csvImporting ? "⏳..." : ("🔄 " + (language==="es"?"Reemplazar horario completo":"Replace entire schedule"))}
+                                                </button>
+                                                <button onClick={()=>confirmCsvImport("merge")} disabled={csvImporting}
+                                                    className="w-full py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl text-sm active:scale-95 transition disabled:opacity-50">
+                                                    {language==="es"?"➕ Agregar a turnos existentes":"➕ Add to existing shifts"}
+                                                </button>
+                                                <p className="text-[11px] text-gray-400 text-center">{language==="es"?"\"Reemplazar\" borra los turnos actuales y publica los importados. \"Agregar\" mantiene ambos.":"\"Replace\" clears current shifts and publishes imported ones. \"Add\" keeps both."}</p>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
