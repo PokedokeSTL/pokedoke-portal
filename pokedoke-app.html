@@ -6372,6 +6372,42 @@
             const [passwordError, setPasswordError] = useState(false);
             const adminUser = isAdmin(staffName);
             const [screenBlurred, setScreenBlurred] = useState(false);
+            const [ndaAccepted, setNdaAccepted] = useState(null); // null=loading, true=accepted, false=needs acceptance
+            const [ndaChecked, setNdaChecked] = useState(false);
+            const [ndaSignature, setNdaSignature] = useState("");
+
+            // Check if user has signed the recipe NDA
+            useEffect(() => {
+                const checkNDA = async () => {
+                    try {
+                        const doc = await db.collection("recipeNDA").doc(staffName.replace(/\s+/g,"_")).get();
+                        setNdaAccepted(doc.exists && doc.data().accepted === true);
+                    } catch(e) {
+                        console.error("NDA check error:", e);
+                        setNdaAccepted(false);
+                    }
+                };
+                checkNDA();
+            }, [staffName]);
+
+            const signNDA = async () => {
+                if (!ndaChecked || ndaSignature.trim().toLowerCase() !== staffName.trim().toLowerCase()) return;
+                try {
+                    await db.collection("recipeNDA").doc(staffName.replace(/\s+/g,"_")).set({
+                        accepted: true,
+                        name: staffName,
+                        signedName: ndaSignature.trim(),
+                        signedAt: new Date().toISOString(),
+                        ip: "client-side",
+                        userAgent: navigator.userAgent
+                    });
+                    setNdaAccepted(true);
+                    window.showToast(language==="es"?"✅ Acuerdo firmado":"✅ Agreement signed","success");
+                } catch(e) {
+                    console.error("NDA sign error:", e);
+                    alert("Error saving: " + e.message);
+                }
+            };
 
             // Screenshot protection: detect visibility change, key combos, and context menu
             useEffect(() => {
@@ -6512,6 +6548,107 @@
                     await db.collection("config").doc("recipes").set({ list: updated, updatedAt: new Date().toISOString() });
                 } catch (err) { console.error("Error deleting recipe:", err); }
             };
+
+            // NDA loading state
+            if (ndaAccepted === null) {
+                return (
+                    <div className="p-4 pb-24 flex items-center justify-center" style={{minHeight: "50vh"}}>
+                        <div className="text-center">
+                            <div className="text-4xl mb-3 animate-pulse">🔒</div>
+                            <p className="text-gray-500 text-sm">{language==="es"?"Verificando acceso...":"Verifying access..."}</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            // NDA acknowledgment required
+            if (ndaAccepted === false) {
+                return (
+                    <div className="p-4 pb-24">
+                        <div className="max-w-lg mx-auto mt-4">
+                            <div className="text-center mb-6">
+                                <span className="text-5xl">📜</span>
+                                <h2 className="font-bold text-xl text-gray-800 mt-3">{language==="es"?"Acuerdo de Confidencialidad":"Confidentiality Agreement"}</h2>
+                                <p className="text-sm text-gray-500 mt-1">{language==="es"?"Requerido antes de acceder a las recetas":"Required before accessing recipes"}</p>
+                            </div>
+
+                            <div className="bg-white rounded-2xl border-2 border-amber-200 shadow-lg overflow-hidden">
+                                <div className="p-4 bg-gradient-to-r from-amber-50 to-red-50 border-b border-amber-200">
+                                    <p className="font-bold text-amber-800 text-sm flex items-center gap-2">🔒 {language==="es"?"ACUERDO DE NO DIVULGACIÓN — RECETAS":"NON-DISCLOSURE AGREEMENT — RECIPES"}</p>
+                                </div>
+
+                                <div className="p-5 space-y-3 text-sm text-gray-700 leading-relaxed" style={{WebkitUserSelect:"none",userSelect:"none"}}>
+                                    <p className="font-bold text-gray-800">{language==="es"?"Al acceder a esta sección, reconozco y acepto lo siguiente:":"By accessing this section, I acknowledge and agree to the following:"}</p>
+
+                                    <p>{language==="es"
+                                        ?"1. Todas las recetas, fórmulas, procedimientos de preparación e información propietaria contenida en esta sección son propiedad exclusiva y confidencial de PokeDoke Hawaiian Poke Bar."
+                                        :"1. All recipes, formulas, preparation procedures, and proprietary information contained in this section are the exclusive and confidential property of PokeDoke Hawaiian Poke Bar."}</p>
+
+                                    <p>{language==="es"
+                                        ?"2. No copiaré, fotografiaré, capturé la pantalla, grabaré, transcribiré, ni reproduciré de ninguna manera ninguna receta o información propietaria."
+                                        :"2. I will not copy, photograph, screenshot, record, transcribe, or otherwise reproduce any recipe or proprietary information in any form."}</p>
+
+                                    <p>{language==="es"
+                                        ?"3. No compartiré, distribuiré, ni divulgaré ninguna receta o información propietaria a terceros, incluyendo pero no limitado a otros restaurantes, competidores, familiares o amigos."
+                                        :"3. I will not share, distribute, or disclose any recipe or proprietary information to any third party, including but not limited to other restaurants, competitors, family members, or friends."}</p>
+
+                                    <p>{language==="es"
+                                        ?"4. Entiendo que la violación de este acuerdo puede resultar en terminación inmediata del empleo y posible acción legal."
+                                        :"4. I understand that violation of this agreement may result in immediate termination of employment and potential legal action."}</p>
+
+                                    <p>{language==="es"
+                                        ?"5. Esta obligación de confidencialidad continúa incluso después de la terminación de mi empleo con PokeDoke."
+                                        :"5. This confidentiality obligation continues even after the termination of my employment with PokeDoke."}</p>
+
+                                    <p className="font-bold text-gray-800">{language==="es"
+                                        ?"6. Entiendo que mis intentos de captura de pantalla son monitoreados y registrados."
+                                        :"6. I understand that my screenshot attempts are monitored and logged."}</p>
+                                </div>
+
+                                <div className="p-5 bg-gray-50 border-t space-y-4">
+                                    <label className="flex items-start gap-3 cursor-pointer">
+                                        <input type="checkbox" checked={ndaChecked} onChange={e=>setNdaChecked(e.target.checked)}
+                                            className="mt-1 w-5 h-5 rounded border-gray-300 text-poke-600 focus:ring-poke-500"/>
+                                        <span className="text-sm text-gray-700 leading-snug">
+                                            {language==="es"
+                                                ?"He leído, entiendo y acepto los términos de este Acuerdo de Confidencialidad."
+                                                :"I have read, understand, and agree to the terms of this Confidentiality Agreement."}
+                                        </span>
+                                    </label>
+
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-600 mb-1 block">
+                                            {language==="es"?"Escribe tu nombre completo para firmar:":"Type your full name to sign:"}
+                                        </label>
+                                        <input type="text" value={ndaSignature} onChange={e=>setNdaSignature(e.target.value)}
+                                            placeholder={staffName}
+                                            className={"w-full border-2 rounded-xl px-4 py-3 text-center text-lg "
+                                                +(ndaSignature.trim().toLowerCase()===staffName.trim().toLowerCase()?"border-green-400 bg-green-50":"border-gray-300")}
+                                            style={{fontFamily:"'Caveat','Dancing Script',cursive,serif", fontSize:"22px"}}
+                                        />
+                                        {ndaSignature && ndaSignature.trim().toLowerCase()!==staffName.trim().toLowerCase() && (
+                                            <p className="text-xs text-red-500 mt-1 text-center">{language==="es"?"Debe coincidir con tu nombre: ":"Must match your name: "}<b>{staffName}</b></p>
+                                        )}
+                                    </div>
+
+                                    <p className="text-xs text-gray-400 text-center">
+                                        {language==="es"?"Fecha":"Date"}: {new Date().toLocaleDateString(language==="es"?"es-US":"en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}
+                                    </p>
+
+                                    <button onClick={signNDA}
+                                        disabled={!ndaChecked || ndaSignature.trim().toLowerCase()!==staffName.trim().toLowerCase()}
+                                        className={"w-full py-4 rounded-xl font-bold text-lg transition active:scale-95 "
+                                            +(ndaChecked && ndaSignature.trim().toLowerCase()===staffName.trim().toLowerCase()
+                                                ?"bg-poke-700 text-white shadow-lg"
+                                                :"bg-gray-200 text-gray-400 cursor-not-allowed")}>
+                                        {language==="es"?"✍️ Firmar y Acceder a Recetas":"✍️ Sign & Access Recipes"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
 
             // Password prompt modal
             if (showPasswordPrompt) {
@@ -6660,6 +6797,52 @@
                             </div>
                         );
                     })}
+
+                    {/* Owner: NDA Acknowledgment Records */}
+                    {isOwner(staffName) && (()=>{
+                        const [ndaRecords, setNdaRecords] = React.useState([]);
+                        const [showNdaLog, setShowNdaLog] = React.useState(false);
+                        React.useEffect(()=>{
+                            if (!showNdaLog) return;
+                            db.collection("recipeNDA").get().then(snap=>{
+                                setNdaRecords(snap.docs.map(d=>({id:d.id,...d.data()})));
+                            });
+                        },[showNdaLog]);
+                        return (
+                            <div className="mt-6">
+                                <button onClick={()=>setShowNdaLog(!showNdaLog)}
+                                    className="w-full py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 active:scale-95">
+                                    📋 {showNdaLog?(language==="es"?"Ocultar Registro NDA":"Hide NDA Log"):(language==="es"?"Ver Registro de Firmas NDA":"View NDA Signatures")}
+                                </button>
+                                {showNdaLog && (
+                                    <div className="mt-3 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                        <div className="p-3 bg-gradient-to-r from-amber-50 to-white border-b">
+                                            <p className="font-bold text-sm text-gray-800">📋 {language==="es"?"Acuerdos de Confidencialidad Firmados":"Signed Confidentiality Agreements"}</p>
+                                            <p className="text-xs text-gray-400">{ndaRecords.length} {language==="es"?"registros":"records"}</p>
+                                        </div>
+                                        <div className="divide-y divide-gray-50">
+                                            {ndaRecords.length === 0 ? (
+                                                <p className="p-4 text-sm text-gray-400 text-center">{language==="es"?"Sin registros":"No records yet"}</p>
+                                            ) : ndaRecords.sort((a,b)=>(b.signedAt||"").localeCompare(a.signedAt||"")).map(r=>(
+                                                <div key={r.id} className="p-3 flex justify-between items-center">
+                                                    <div>
+                                                        <p className="font-bold text-sm text-gray-800">{r.name}</p>
+                                                        <p className="text-xs text-gray-400">
+                                                            {language==="es"?"Firmado como":"Signed as"}: <span style={{fontFamily:"'Caveat',cursive",fontSize:"14px"}}>{r.signedName}</span>
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-xs text-green-600 font-bold">✅ {language==="es"?"Firmado":"Signed"}</p>
+                                                        <p className="text-[10px] text-gray-400">{r.signedAt ? new Date(r.signedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}) : "—"}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
                 </div>
             );
         }
