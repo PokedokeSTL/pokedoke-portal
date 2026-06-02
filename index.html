@@ -5044,7 +5044,7 @@
                                     <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[85vh] overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
                                         <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-white flex justify-between items-center flex-shrink-0">
                                             <div>
-                                                <p className="font-bold text-gray-800">📤 {language==="es"?"Importar desde 7Shifts":"Import from 7Shifts"}</p>
+                                                <p className="font-bold text-gray-800">📤 {language==="es"?"Importar CSV":"Import CSV"}</p>
                                                 <p className="text-xs text-gray-500 mt-0.5">
                                                     {csvParsedShifts.length} {language==="es"?"turnos encontrados":"shifts found"} · {new Set(csvParsedShifts.map(s=>s.employee)).size} {language==="es"?"empleados":"employees"}
                                                     {" · "}{language==="es"?"Semana del":"Week of"} {new Date(weekStart+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
@@ -5083,8 +5083,8 @@
                                                             </div>
                                                             <div className="divide-y divide-gray-50">
                                                                 {empShifts.map(s => {
-                                                                    const dayDate = new Date(s.day + "T12:00:00");
-                                                                    const dayName = dayDate.toLocaleDateString(language==="es"?"es-US":"en-US",{weekday:"short",month:"short",day:"numeric"});
+                                                                    const dayIdx = DAY_KEYS.indexOf(s.day);
+                                                                    const dayName = dayIdx >= 0 ? DAYS[dayIdx] : s.day;
                                                                     return (
                                                                         <div key={s.id} className="px-3 py-1.5 flex justify-between items-center text-sm">
                                                                             <span className="text-gray-600">{dayName}</span>
