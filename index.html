@@ -9815,6 +9815,671 @@
             );
         }
 
+        // ===================== HR / HIRING MODULE =====================
+        const HIRE_ROLES = ["Line Server", "Shift Manager", "Manager", "Dishwasher", "Prep Cook"];
+        const HIRE_EMP_TYPES = ["Full-time", "Part-time", "Seasonal"];
+        const HIRE_PIPELINE = [
+            { id: "new",       en: "New",       es: "Nuevo",       color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
+            { id: "reviewing", en: "Reviewing", es: "Revisando",   color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+            { id: "interview", en: "Interview", es: "Entrevista",  color: "#9333ea", bg: "#faf5ff", border: "#e9d5ff" },
+            { id: "offer",     en: "Offer",     es: "Oferta",      color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
+            { id: "hired",     en: "Hired",     es: "Contratado",  color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+            { id: "rejected",  en: "Rejected",  es: "Rechazado",   color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+        ];
+        const hireStage = (id) => HIRE_PIPELINE.find(s => s.id === id) || HIRE_PIPELINE[0];
+        const hireLocLabel = (loc, lang) => loc === "both" ? (lang === "es" ? "Ambas" : "Both") : loc === "cwe" ? "CWE" : "Kirkwood";
+        const HIRE_DAYS = [
+            { k: "mon", en: "Mon", es: "Lun" }, { k: "tue", en: "Tue", es: "Mar" },
+            { k: "wed", en: "Wed", es: "Mié" }, { k: "thu", en: "Thu", es: "Jue" },
+            { k: "fri", en: "Fri", es: "Vie" }, { k: "sat", en: "Sat", es: "Sáb" }, { k: "sun", en: "Sun", es: "Dom" },
+        ];
+
+        // ---------- Public-facing application page (no PIN required) ----------
+        function PublicApply({ language, setLanguage }) {
+            const es = language === "es";
+            const [postings, setPostings] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [selected, setSelected] = useState(null); // selected posting to apply for
+            const [submitted, setSubmitted] = useState(false);
+            const blank = {
+                fullName: "", email: "", phone: "", over18: false, legalToWork: false,
+                avail: {}, availNote: "", earliestStart: "", experience: "", howHeard: ""
+            };
+            const [form, setForm] = useState(blank);
+            const [resumeFile, setResumeFile] = useState(null);
+            const [err, setErr] = useState("");
+            const [submitting, setSubmitting] = useState(false);
+
+            useEffect(() => {
+                const unsub = db.collection("jobPostings").onSnapshot(snap => {
+                    const open = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                        .filter(p => p.status === "open")
+                        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+                    setPostings(open);
+                    setLoading(false);
+                }, () => setLoading(false));
+                return () => unsub();
+            }, []);
+
+            const setF = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+            const toggleDay = (k) => setForm(prev => ({ ...prev, avail: { ...prev.avail, [k]: !prev.avail[k] } }));
+
+            const submit = async () => {
+                setErr("");
+                if (!form.fullName.trim()) { setErr(es ? "Ingresa tu nombre" : "Please enter your name"); return; }
+                if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) { setErr(es ? "Correo inválido" : "Enter a valid email"); return; }
+                if (form.phone.replace(/\D/g, "").length < 10) { setErr(es ? "Teléfono inválido" : "Enter a valid phone number"); return; }
+                if (!form.legalToWork) { setErr(es ? "Debes confirmar que puedes trabajar legalmente" : "You must confirm you're legally able to work"); return; }
+                if (resumeFile && resumeFile.size > 6 * 1024 * 1024) { setErr(es ? "El archivo debe ser menor a 6MB" : "File must be under 6MB"); return; }
+                setSubmitting(true);
+                try {
+                    let resumeUrl = null, resumeName = null;
+                    if (resumeFile) {
+                        const safe = resumeFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+                        const ref = storage.ref().child("applications/" + Date.now() + "_" + safe);
+                        await ref.put(resumeFile);
+                        resumeUrl = await ref.getDownloadURL();
+                        resumeName = resumeFile.name;
+                    }
+                    const now = new Date();
+                    await db.collection("applications").add({
+                        postingId: selected.id,
+                        postingTitle: selected.title || "",
+                        position: selected.role || "",
+                        location: selected.location || "cwe",
+                        fullName: form.fullName.trim(),
+                        email: form.email.trim(),
+                        phone: form.phone.trim(),
+                        over18: !!form.over18,
+                        legalToWork: !!form.legalToWork,
+                        availability: form.avail,
+                        availabilityNote: form.availNote.trim(),
+                        earliestStart: form.earliestStart,
+                        experience: form.experience.trim(),
+                        howHeard: form.howHeard.trim(),
+                        resumeUrl, resumeName,
+                        status: "new",
+                        rating: 0,
+                        notes: [],
+                        createdAt: now.toISOString(),
+                        updatedAt: now.toISOString(),
+                        date: now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0")
+                    });
+                    setSubmitted(true);
+                } catch (e) {
+                    console.error(e);
+                    setErr(es ? "Error al enviar. Inténtalo de nuevo." : "Something went wrong. Please try again.");
+                } finally { setSubmitting(false); }
+            };
+
+            const inputCls = "w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-poke-400 focus:ring-2 focus:ring-poke-100 transition";
+            const labelCls = "block text-xs font-bold text-gray-600 mb-1.5";
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-poke-900 via-poke-800 to-poke-700 py-8 px-4">
+                    <div className="max-w-lg mx-auto">
+                        {/* Header */}
+                        <div className="text-center mb-6">
+                            <div className="inline-flex items-center justify-center mb-2">
+                                <span className="text-3xl font-black text-white tracking-tight">Poke<span className="text-gold-400">Doke</span></span>
+                            </div>
+                            <p className="text-poke-100 text-sm font-semibold">{es ? "Únete a Nuestro Equipo 🌺" : "Join Our Team 🌺"}</p>
+                            <button onClick={() => setLanguage(es ? "en" : "es")} className="mt-3 text-poke-200 text-xs font-medium hover:text-white transition">
+                                🌐 {es ? "English" : "Español"}
+                            </button>
+                        </div>
+
+                        {submitted ? (
+                            <div className="bg-white rounded-3xl shadow-xl p-8 text-center animate-in">
+                                <div className="w-16 h-16 bg-green-50 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">✅</div>
+                                <h2 className="text-xl font-bold text-gray-800 mb-2">{es ? "¡Solicitud Enviada!" : "Application Received!"}</h2>
+                                <p className="text-sm text-gray-500 mb-1">{es ? "Gracias por tu interés en PokeDoke." : "Thanks for your interest in PokeDoke."}</p>
+                                <p className="text-sm text-gray-500">{es ? "Revisaremos tu solicitud y te contactaremos pronto." : "We'll review your application and reach out soon."}</p>
+                                <button onClick={() => { setSubmitted(false); setSelected(null); setForm(blank); setResumeFile(null); }}
+                                    className="mt-6 text-poke-600 font-bold text-sm hover:text-poke-700 transition">
+                                    {es ? "← Ver otras posiciones" : "← View other positions"}
+                                </button>
+                            </div>
+                        ) : selected ? (
+                            <div className="bg-white rounded-3xl shadow-xl p-6 animate-in">
+                                <button onClick={() => { setSelected(null); setErr(""); }} className="text-poke-600 text-sm font-bold mb-4 hover:text-poke-700">← {es ? "Atrás" : "Back"}</button>
+                                <h2 className="text-lg font-bold text-gray-800">{selected.title}</h2>
+                                <div className="flex flex-wrap gap-2 mt-1 mb-5">
+                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-poke-50 text-poke-700">{selected.role}</span>
+                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{hireLocLabel(selected.location, language)}</span>
+                                    {selected.employmentType && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{selected.employmentType}</span>}
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div><label className={labelCls}>{es ? "Nombre completo *" : "Full name *"}</label>
+                                        <input className={inputCls} value={form.fullName} onChange={e => setF("fullName", e.target.value)} /></div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div><label className={labelCls}>{es ? "Correo *" : "Email *"}</label>
+                                            <input type="email" className={inputCls} value={form.email} onChange={e => setF("email", e.target.value)} /></div>
+                                        <div><label className={labelCls}>{es ? "Teléfono *" : "Phone *"}</label>
+                                            <input type="tel" className={inputCls} value={form.phone} onChange={e => setF("phone", e.target.value)} /></div>
+                                    </div>
+
+                                    <div><label className={labelCls}>{es ? "Disponibilidad (días)" : "Availability (days)"}</label>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {HIRE_DAYS.map(d => (
+                                                <button key={d.k} onClick={() => toggleDay(d.k)}
+                                                    className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.avail[d.k] ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                    {es ? d.es : d.en}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div><label className={labelCls}>{es ? "Notas de disponibilidad (turnos, horas)" : "Availability notes (shifts, hours)"}</label>
+                                        <input className={inputCls} placeholder={es ? "ej. tardes y fines de semana" : "e.g. evenings & weekends"} value={form.availNote} onChange={e => setF("availNote", e.target.value)} /></div>
+                                    <div><label className={labelCls}>{es ? "Fecha más temprana para empezar" : "Earliest start date"}</label>
+                                        <input type="date" className={inputCls} value={form.earliestStart} onChange={e => setF("earliestStart", e.target.value)} /></div>
+                                    <div><label className={labelCls}>{es ? "Experiencia relevante" : "Relevant experience"}</label>
+                                        <textarea rows="3" className={inputCls} value={form.experience} onChange={e => setF("experience", e.target.value)} /></div>
+                                    <div><label className={labelCls}>{es ? "¿Cómo te enteraste de nosotros?" : "How did you hear about us?"}</label>
+                                        <input className={inputCls} value={form.howHeard} onChange={e => setF("howHeard", e.target.value)} /></div>
+
+                                    <div><label className={labelCls}>{es ? "Currículum (PDF/imagen, opcional)" : "Résumé (PDF/image, optional)"}</label>
+                                        <label className="w-full p-3 rounded-xl border-2 border-dashed border-gray-300 text-gray-500 text-sm font-bold hover:border-poke-300 hover:text-poke-600 hover:bg-poke-50 transition flex items-center justify-center gap-2 cursor-pointer">
+                                            📎 {resumeFile ? resumeFile.name : (es ? "Adjuntar archivo" : "Attach file")}
+                                            <input type="file" accept=".pdf,.doc,.docx,image/*" className="hidden" onChange={e => setResumeFile(e.target.files[0] || null)} />
+                                        </label>
+                                    </div>
+
+                                    <label className="flex items-start gap-2.5 cursor-pointer">
+                                        <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={form.over18} onChange={e => setF("over18", e.target.checked)} />
+                                        <span className="text-xs text-gray-600">{es ? "Tengo 18 años o más" : "I am 18 years of age or older"}</span>
+                                    </label>
+                                    <label className="flex items-start gap-2.5 cursor-pointer">
+                                        <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={form.legalToWork} onChange={e => setF("legalToWork", e.target.checked)} />
+                                        <span className="text-xs text-gray-600">{es ? "Estoy legalmente autorizado/a para trabajar en EE.UU. *" : "I am legally authorized to work in the U.S. *"}</span>
+                                    </label>
+
+                                    {err && <div className="text-red-600 text-sm font-medium bg-red-50 rounded-lg px-3 py-2">{err}</div>}
+                                    <button onClick={submit} disabled={submitting}
+                                        className={"w-full py-3 rounded-xl font-bold text-sm transition " + (submitting ? "bg-gray-300 text-gray-500" : "bg-gold-400 text-poke-900 hover:bg-gold-300 shadow-lg shadow-gold-400/30")}>
+                                        {submitting ? (es ? "Enviando..." : "Submitting...") : (es ? "Enviar Solicitud" : "Submit Application")}
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="bg-white rounded-3xl shadow-xl p-6 animate-in">
+                                <h2 className="text-base font-bold text-gray-800 mb-1">{es ? "Posiciones Abiertas" : "Open Positions"}</h2>
+                                <p className="text-xs text-gray-400 mb-4">{es ? "Toca una posición para postularte." : "Tap a position to apply."}</p>
+                                {loading ? (
+                                    <div className="text-center text-gray-400 text-sm py-8">{es ? "Cargando..." : "Loading..."}</div>
+                                ) : postings.length === 0 ? (
+                                    <div className="text-center py-10">
+                                        <div className="text-4xl mb-3">🍃</div>
+                                        <p className="text-sm text-gray-500 font-medium">{es ? "No hay posiciones abiertas ahora mismo." : "No open positions right now."}</p>
+                                        <p className="text-xs text-gray-400 mt-1">{es ? "¡Vuelve pronto!" : "Check back soon!"}</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {postings.map(p => (
+                                            <button key={p.id} onClick={() => { setSelected(p); setErr(""); }}
+                                                className="w-full text-left p-4 rounded-2xl border border-gray-100 hover:border-poke-300 hover:bg-poke-50 transition card-hover">
+                                                <div className="font-bold text-gray-800 text-sm">{p.title}</div>
+                                                <div className="flex flex-wrap gap-2 mt-1.5">
+                                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-poke-50 text-poke-700">{p.role}</span>
+                                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{hireLocLabel(p.location, language)}</span>
+                                                    {p.employmentType && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{p.employmentType}</span>}
+                                                    {p.payRange && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-green-50 text-green-700">{p.payRange}</span>}
+                                                </div>
+                                                {p.description && <p className="text-xs text-gray-500 mt-2 line-clamp-2">{p.description}</p>}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        <p className="text-center text-poke-200/60 text-[11px] mt-6">© PokeDoke Hawaiian Poke Bar</p>
+                    </div>
+                </div>
+            );
+        }
+
+        // ---------- Owner Hiring dashboard (postings + applicant pipeline) ----------
+        function Hiring({ language, staffName, staffList, setStaffList }) {
+            const es = language === "es";
+            const [sub, setSub] = useState("applicants"); // applicants | postings
+            const [applications, setApplications] = useState([]);
+            const [postings, setPostings] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [statusFilter, setStatusFilter] = useState("all");
+            const [search, setSearch] = useState("");
+            const [selectedApp, setSelectedApp] = useState(null);
+            const [showPostingForm, setShowPostingForm] = useState(false);
+            const [editingPosting, setEditingPosting] = useState(null);
+            const [noteText, setNoteText] = useState("");
+            const [hireForm, setHireForm] = useState(null); // { pin, role, location }
+            const [hireErr, setHireErr] = useState("");
+
+            useEffect(() => {
+                const u1 = db.collection("applications").onSnapshot(snap => {
+                    setApplications(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
+                    setLoading(false);
+                }, () => setLoading(false));
+                const u2 = db.collection("jobPostings").onSnapshot(snap => {
+                    setPostings(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
+                });
+                return () => { u1(); u2(); };
+            }, []);
+
+            // keep selectedApp in sync with live data
+            useEffect(() => {
+                if (selectedApp) {
+                    const fresh = applications.find(a => a.id === selectedApp.id);
+                    if (fresh && fresh !== selectedApp) setSelectedApp(fresh);
+                }
+            }, [applications]);
+
+            const counts = {};
+            HIRE_PIPELINE.forEach(s => counts[s.id] = applications.filter(a => a.status === s.id).length);
+
+            const filteredApps = applications.filter(a => {
+                if (statusFilter !== "all" && a.status !== statusFilter) return false;
+                if (search.trim()) {
+                    const q = search.toLowerCase();
+                    return (a.fullName || "").toLowerCase().includes(q) || (a.position || "").toLowerCase().includes(q) || (a.email || "").toLowerCase().includes(q);
+                }
+                return true;
+            });
+
+            const updateApp = async (id, patch, logNote) => {
+                try {
+                    const payload = { ...patch, updatedAt: new Date().toISOString() };
+                    if (logNote) {
+                        const app = applications.find(a => a.id === id);
+                        payload.notes = [...((app && app.notes) || []), { text: logNote, by: staffName, at: new Date().toISOString() }];
+                    }
+                    await db.collection("applications").doc(id).update(payload);
+                } catch (e) { console.error(e); window.showToast(es ? "Error al guardar" : "Error saving", "error"); }
+            };
+
+            const setStatus = (app, statusId) => {
+                const stage = hireStage(statusId);
+                updateApp(app.id, { status: statusId }, (es ? "Estado → " : "Status → ") + (es ? stage.es : stage.en));
+                window.showToast((es ? "Movido a " : "Moved to ") + (es ? stage.es : stage.en), "success");
+            };
+
+            const addNote = (app) => {
+                if (!noteText.trim()) return;
+                updateApp(app.id, {}, noteText.trim());
+                setNoteText("");
+            };
+
+            const deleteApp = async (app) => {
+                const ok = await window.askConfirm({
+                    title: es ? "¿Eliminar solicitud?" : "Delete application?",
+                    body: (es ? "Se eliminará la solicitud de " : "This will permanently delete the application from ") + app.fullName + ".",
+                    confirmLabel: es ? "Eliminar" : "Delete", danger: true
+                });
+                if (!ok) return;
+                try { await db.collection("applications").doc(app.id).delete(); setSelectedApp(null); window.showToast(es ? "Eliminada" : "Deleted", "success"); }
+                catch (e) { console.error(e); }
+            };
+
+            // Convert a hired applicant into a staff member (config/staff + employees collection)
+            const convertToEmployee = async (app) => {
+                setHireErr("");
+                const f = hireForm;
+                if (!/^\d{4}$/.test(f.pin)) { setHireErr(es ? "El PIN debe ser de 4 dígitos" : "PIN must be 4 digits"); return; }
+                if (staffList.some(s => s.pin === f.pin)) { setHireErr(es ? "Ese PIN ya está en uso" : "That PIN is already in use"); return; }
+                if (staffList.some(s => s.name.toLowerCase() === app.fullName.trim().toLowerCase())) { setHireErr(es ? "Ya existe un empleado con ese nombre" : "An employee with that name already exists"); return; }
+                try {
+                    const newId = Math.max(0, ...staffList.map(s => s.id || 0)) + 1;
+                    const entry = { id: newId, name: app.fullName.trim(), role: f.role, pin: f.pin, location: f.location };
+                    const updated = [...staffList, entry];
+                    await db.collection("config").doc("staff").set({ list: updated });
+                    if (setStaffList) setStaffList(updated);
+                    const docId = app.fullName.trim().replace(/\s/g, "_");
+                    await db.collection("employees").doc(docId).set({
+                        name: app.fullName.trim(), role: f.role, location: f.location, pin: f.pin,
+                        email: app.email || "", phone: app.phone || "", status: "active",
+                        hireDate: window.fmtLocalDate(new Date()), createdAt: new Date().toISOString(),
+                        fromApplicationId: app.id
+                    }, { merge: true });
+                    await updateApp(app.id, { status: "hired", convertedToEmployee: true }, (es ? "Convertido a empleado (PIN asignado)" : "Converted to employee (PIN assigned)"));
+                    setHireForm(null);
+                    window.showToast(es ? "¡Empleado agregado!" : "Employee added!", "success");
+                } catch (e) { console.error(e); setHireErr(es ? "Error al guardar" : "Error saving"); }
+            };
+
+            const inputCls = "w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-poke-400 transition";
+            const labelCls = "block text-xs font-bold text-gray-600 mb-1.5";
+            const publicUrl = (typeof window !== "undefined" ? window.location.origin : "") + "/apply";
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="text-xl font-bold text-gray-800 mb-1">{es ? "Contratación" : "Hiring"}</h2>
+                    <p className="text-sm text-gray-400 mb-4">{es ? "Publicaciones y seguimiento de candidatos" : "Job postings & applicant tracking"}</p>
+
+                    {/* Sub-tabs */}
+                    <div className="flex gap-2 mb-4">
+                        {[{ id: "applicants", en: "Applicants", es: "Candidatos" }, { id: "postings", en: "Postings", es: "Publicaciones" }].map(tb => (
+                            <button key={tb.id} onClick={() => setSub(tb.id)}
+                                className={"flex-1 py-2.5 rounded-xl text-sm font-bold transition " + (sub === tb.id ? "bg-poke-600 text-white shadow-sm" : "bg-white border border-gray-200 text-gray-500")}>
+                                {es ? tb.es : tb.en}{tb.id === "applicants" ? " (" + applications.length + ")" : " (" + postings.length + ")"}
+                            </button>
+                        ))}
+                    </div>
+
+                    {sub === "applicants" && (
+                        <div>
+                            <input className={inputCls + " mb-3"} placeholder={es ? "Buscar candidatos..." : "Search applicants..."} value={search} onChange={e => setSearch(e.target.value)} />
+                            <div className="flex gap-2 overflow-x-auto pb-2 mb-3 -mx-1 px-1">
+                                <button onClick={() => setStatusFilter("all")}
+                                    className={"whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition " + (statusFilter === "all" ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-500")}>
+                                    {es ? "Todos" : "All"} ({applications.length})
+                                </button>
+                                {HIRE_PIPELINE.map(s => (
+                                    <button key={s.id} onClick={() => setStatusFilter(s.id)}
+                                        className="whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition"
+                                        style={statusFilter === s.id ? { background: s.color, color: "#fff" } : { background: s.bg, color: s.color }}>
+                                        {(es ? s.es : s.en)} ({counts[s.id]})
+                                    </button>
+                                ))}
+                            </div>
+
+                            {loading ? <div className="text-center text-gray-400 text-sm py-8">{es ? "Cargando..." : "Loading..."}</div>
+                                : filteredApps.length === 0 ? (
+                                    <div className="text-center py-12">
+                                        <div className="text-4xl mb-3">📭</div>
+                                        <p className="text-sm text-gray-500 font-medium">{es ? "Sin candidatos aún." : "No applicants yet."}</p>
+                                        <p className="text-xs text-gray-400 mt-1">{es ? "Comparte el enlace público desde Publicaciones." : "Share the public link from Postings."}</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2.5">
+                                        {filteredApps.map(a => {
+                                            const st = hireStage(a.status);
+                                            return (
+                                                <button key={a.id} onClick={() => setSelectedApp(a)}
+                                                    className="w-full text-left p-4 bg-white border border-gray-100 rounded-2xl shadow-sm card-hover">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="min-w-0">
+                                                            <div className="font-bold text-gray-800 text-sm truncate">{a.fullName}</div>
+                                                            <div className="text-xs text-gray-400 mt-0.5 truncate">{a.position || a.postingTitle} · {hireLocLabel(a.location, language)}</div>
+                                                        </div>
+                                                        <span className="text-[11px] font-bold px-2 py-1 rounded-full whitespace-nowrap" style={{ background: st.bg, color: st.color }}>{es ? st.es : st.en}</span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between mt-2">
+                                                        <span className="text-[11px] text-gray-400">{a.date}</span>
+                                                        {a.rating > 0 && <span className="text-[11px] text-gold-500">{"★".repeat(a.rating)}<span className="text-gray-200">{"★".repeat(5 - a.rating)}</span></span>}
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                        </div>
+                    )}
+
+                    {sub === "postings" && (
+                        <div>
+                            {/* Public link banner */}
+                            <div className="bg-poke-50 border border-poke-200 rounded-2xl p-4 mb-4">
+                                <div className="text-xs font-bold text-poke-800 mb-1.5">{es ? "🔗 Enlace público de solicitud" : "🔗 Public application link"}</div>
+                                <div className="flex items-center gap-2">
+                                    <code className="flex-1 text-[11px] text-poke-700 bg-white rounded-lg px-2.5 py-2 truncate border border-poke-100">{publicUrl}</code>
+                                    <button onClick={() => { try { navigator.clipboard.writeText(publicUrl); window.showToast(es ? "¡Copiado!" : "Copied!", "success"); } catch (e) {} }}
+                                        className="bg-poke-600 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-poke-700 transition whitespace-nowrap">
+                                        {es ? "Copiar" : "Copy"}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-poke-600/70 mt-2">{es ? "Comparte este enlace en redes, Indeed, o tu sitio web." : "Share this link on social, Indeed, or your website."}</p>
+                            </div>
+
+                            <button onClick={() => { setEditingPosting(null); setShowPostingForm(true); }}
+                                className="w-full mb-4 py-3 rounded-xl bg-gold-400 text-poke-900 font-bold text-sm hover:bg-gold-300 transition shadow-sm">
+                                + {es ? "Nueva Publicación" : "New Posting"}
+                            </button>
+
+                            {postings.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <div className="text-4xl mb-3">📋</div>
+                                    <p className="text-sm text-gray-500 font-medium">{es ? "Sin publicaciones todavía." : "No postings yet."}</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2.5">
+                                    {postings.map(p => (
+                                        <div key={p.id} className="p-4 bg-white border border-gray-100 rounded-2xl shadow-sm">
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div className="min-w-0">
+                                                    <div className="font-bold text-gray-800 text-sm">{p.title}</div>
+                                                    <div className="text-xs text-gray-400 mt-0.5">{p.role} · {hireLocLabel(p.location, language)}{p.employmentType ? " · " + p.employmentType : ""}</div>
+                                                </div>
+                                                <span className={"text-[11px] font-bold px-2 py-1 rounded-full whitespace-nowrap " + (p.status === "open" ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500")}>
+                                                    {p.status === "open" ? (es ? "Abierta" : "Open") : (es ? "Cerrada" : "Closed")}
+                                                </span>
+                                            </div>
+                                            <div className="flex gap-2 mt-3">
+                                                <button onClick={() => db.collection("jobPostings").doc(p.id).update({ status: p.status === "open" ? "closed" : "open" })}
+                                                    className="flex-1 text-xs font-bold py-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
+                                                    {p.status === "open" ? (es ? "Cerrar" : "Close") : (es ? "Reabrir" : "Reopen")}
+                                                </button>
+                                                <button onClick={() => { setEditingPosting(p); setShowPostingForm(true); }}
+                                                    className="flex-1 text-xs font-bold py-2 rounded-lg bg-poke-50 text-poke-700 hover:bg-poke-100 transition">{es ? "Editar" : "Edit"}</button>
+                                                <button onClick={async () => {
+                                                    const ok = await window.askConfirm({ title: es ? "¿Eliminar publicación?" : "Delete posting?", body: p.title, confirmLabel: es ? "Eliminar" : "Delete", danger: true });
+                                                    if (ok) { await db.collection("jobPostings").doc(p.id).delete(); window.showToast(es ? "Eliminada" : "Deleted", "success"); }
+                                                }} className="px-3 text-xs font-bold py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition">🗑</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Posting create/edit modal */}
+                    {showPostingForm && <PostingForm language={language} staffName={staffName} posting={editingPosting} onClose={() => setShowPostingForm(false)} />}
+
+                    {/* Applicant detail modal */}
+                    {selectedApp && (() => {
+                        const a = selectedApp;
+                        const st = hireStage(a.status);
+                        const availDays = HIRE_DAYS.filter(d => a.availability && a.availability[d.k]).map(d => es ? d.es : d.en);
+                        return (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { setSelectedApp(null); setHireForm(null); }}>
+                                <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                                    <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between z-10">
+                                        <div className="min-w-0">
+                                            <div className="font-bold text-gray-800 truncate">{a.fullName}</div>
+                                            <div className="text-xs text-gray-400">{a.position || a.postingTitle} · {hireLocLabel(a.location, language)}</div>
+                                        </div>
+                                        <button onClick={() => { setSelectedApp(null); setHireForm(null); }} className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-1">×</button>
+                                    </div>
+
+                                    <div className="p-5 space-y-5">
+                                        {/* Pipeline status */}
+                                        <div>
+                                            <div className={labelCls}>{es ? "Etapa" : "Stage"}</div>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {HIRE_PIPELINE.map(s => (
+                                                    <button key={s.id} onClick={() => setStatus(a, s.id)}
+                                                        className="px-3 py-1.5 rounded-lg text-xs font-bold transition"
+                                                        style={a.status === s.id ? { background: s.color, color: "#fff" } : { background: s.bg, color: s.color }}>
+                                                        {es ? s.es : s.en}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Rating */}
+                                        <div>
+                                            <div className={labelCls}>{es ? "Calificación" : "Rating"}</div>
+                                            <div className="flex gap-1">
+                                                {[1, 2, 3, 4, 5].map(n => (
+                                                    <button key={n} onClick={() => updateApp(a.id, { rating: a.rating === n ? 0 : n })} className="text-2xl transition hover:scale-110">
+                                                        <span className={n <= (a.rating || 0) ? "text-gold-400" : "text-gray-200"}>★</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Contact + details */}
+                                        <div className="bg-gray-50 rounded-2xl p-4 space-y-2 text-sm">
+                                            <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Correo" : "Email"}</span><a href={"mailto:" + a.email} className="text-poke-600 font-semibold truncate">{a.email}</a></div>
+                                            <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Teléfono" : "Phone"}</span><a href={"tel:" + a.phone} className="text-poke-600 font-semibold">{a.phone}</a></div>
+                                            {a.earliestStart && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Inicio" : "Earliest start"}</span><span className="text-gray-700 font-semibold">{a.earliestStart}</span></div>}
+                                            <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Mayor de 18" : "18 or older"}</span><span className="text-gray-700 font-semibold">{a.over18 ? (es ? "Sí" : "Yes") : "—"}</span></div>
+                                            <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Autorizado a trabajar" : "Work authorized"}</span><span className="text-gray-700 font-semibold">{a.legalToWork ? (es ? "Sí" : "Yes") : "—"}</span></div>
+                                            {availDays.length > 0 && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Días" : "Days"}</span><span className="text-gray-700 font-semibold text-right">{availDays.join(", ")}</span></div>}
+                                            {a.availabilityNote && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Disponib." : "Availability"}</span><span className="text-gray-700 font-semibold text-right">{a.availabilityNote}</span></div>}
+                                            {a.howHeard && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Nos conoció por" : "Heard via"}</span><span className="text-gray-700 font-semibold text-right">{a.howHeard}</span></div>}
+                                        </div>
+
+                                        {a.experience && (
+                                            <div>
+                                                <div className={labelCls}>{es ? "Experiencia" : "Experience"}</div>
+                                                <p className="text-sm text-gray-600 whitespace-pre-wrap bg-gray-50 rounded-xl p-3">{a.experience}</p>
+                                            </div>
+                                        )}
+
+                                        {a.resumeUrl && (
+                                            <a href={a.resumeUrl} target="_blank" rel="noopener noreferrer"
+                                                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-poke-50 text-poke-700 font-bold text-sm hover:bg-poke-100 transition">
+                                                📄 {es ? "Ver currículum" : "View résumé"} {a.resumeName ? "(" + a.resumeName + ")" : ""}
+                                            </a>
+                                        )}
+
+                                        {/* Internal notes */}
+                                        <div>
+                                            <div className={labelCls}>{es ? "Notas internas" : "Internal notes"}</div>
+                                            {(a.notes || []).length > 0 && (
+                                                <div className="space-y-2 mb-2">
+                                                    {(a.notes || []).slice().reverse().map((n, i) => (
+                                                        <div key={i} className="bg-gray-50 rounded-xl p-3">
+                                                            <p className="text-sm text-gray-700">{n.text}</p>
+                                                            <p className="text-[11px] text-gray-400 mt-1">{n.by} · {new Date(n.at).toLocaleString()}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <div className="flex gap-2">
+                                                <input className={inputCls} placeholder={es ? "Agregar nota..." : "Add a note..."} value={noteText} onChange={e => setNoteText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addNote(a); }} />
+                                                <button onClick={() => addNote(a)} className="bg-poke-600 text-white text-sm font-bold px-4 rounded-xl hover:bg-poke-700 transition">{es ? "Añadir" : "Add"}</button>
+                                            </div>
+                                        </div>
+
+                                        {/* Convert to employee */}
+                                        {a.convertedToEmployee ? (
+                                            <div className="text-center text-sm font-bold text-green-700 bg-green-50 rounded-xl py-3">✅ {es ? "Agregado a empleados" : "Added to employees"}</div>
+                                        ) : !hireForm ? (
+                                            <button onClick={() => { setHireErr(""); setHireForm({ pin: "", role: a.position && HIRE_ROLES.includes(a.position) ? a.position : "Line Server", location: a.location === "both" ? "cwe" : a.location }); }}
+                                                className="w-full py-3 rounded-xl bg-green-600 text-white font-bold text-sm hover:bg-green-700 transition">
+                                                {es ? "✓ Contratar → Agregar a Empleados" : "✓ Hire → Add to Employees"}
+                                            </button>
+                                        ) : (
+                                            <div className="bg-green-50 border border-green-200 rounded-2xl p-4 space-y-3">
+                                                <div className="text-sm font-bold text-green-800">{es ? "Agregar como empleado" : "Add as employee"}</div>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div><label className={labelCls}>{es ? "PIN (4 dígitos)" : "PIN (4 digits)"}</label>
+                                                        <input className={inputCls} maxLength="4" inputMode="numeric" value={hireForm.pin} onChange={e => setHireForm({ ...hireForm, pin: e.target.value.replace(/\D/g, "") })} /></div>
+                                                    <div><label className={labelCls}>{es ? "Ubicación" : "Location"}</label>
+                                                        <select className={inputCls} value={hireForm.location} onChange={e => setHireForm({ ...hireForm, location: e.target.value })}>
+                                                            <option value="cwe">CWE</option><option value="kirkwood">Kirkwood</option><option value="all">{es ? "Ambas" : "Both"}</option>
+                                                        </select></div>
+                                                </div>
+                                                <div><label className={labelCls}>{es ? "Rol" : "Role"}</label>
+                                                    <select className={inputCls} value={hireForm.role} onChange={e => setHireForm({ ...hireForm, role: e.target.value })}>
+                                                        {HIRE_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                                                    </select></div>
+                                                {hireErr && <div className="text-red-600 text-xs font-medium">{hireErr}</div>}
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => setHireForm(null)} className="flex-1 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-500 font-bold text-sm">{es ? "Cancelar" : "Cancel"}</button>
+                                                    <button onClick={() => convertToEmployee(a)} className="flex-1 py-2.5 rounded-xl bg-green-600 text-white font-bold text-sm hover:bg-green-700 transition">{es ? "Confirmar" : "Confirm"}</button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <button onClick={() => deleteApp(a)} className="w-full text-center text-xs font-bold text-red-500 hover:text-red-600 py-2">{es ? "Eliminar solicitud" : "Delete application"}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+                </div>
+            );
+        }
+
+        // ---------- Posting create/edit form modal ----------
+        function PostingForm({ language, staffName, posting, onClose }) {
+            const es = language === "es";
+            const [f, setF] = useState(posting || { title: "", role: "Line Server", location: "cwe", employmentType: "Part-time", payRange: "", description: "", status: "open" });
+            const [err, setErr] = useState("");
+            const [saving, setSaving] = useState(false);
+            const inputCls = "w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-poke-400 transition";
+            const labelCls = "block text-xs font-bold text-gray-600 mb-1.5";
+            const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+
+            const save = async () => {
+                setErr("");
+                if (!f.title.trim()) { setErr(es ? "El título es obligatorio" : "Title is required"); return; }
+                setSaving(true);
+                try {
+                    const now = new Date().toISOString();
+                    const payload = {
+                        title: f.title.trim(), role: f.role, location: f.location, employmentType: f.employmentType,
+                        payRange: (f.payRange || "").trim(), description: (f.description || "").trim(), status: f.status || "open",
+                        updatedAt: now
+                    };
+                    if (posting && posting.id) {
+                        await db.collection("jobPostings").doc(posting.id).update(payload);
+                    } else {
+                        await db.collection("jobPostings").add({ ...payload, createdAt: now, createdBy: staffName });
+                    }
+                    window.showToast(es ? "Guardado" : "Saved", "success");
+                    onClose();
+                } catch (e) { console.error(e); setErr(es ? "Error al guardar" : "Error saving"); }
+                finally { setSaving(false); }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+                    <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                        <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between">
+                            <div className="font-bold text-gray-800">{posting ? (es ? "Editar Publicación" : "Edit Posting") : (es ? "Nueva Publicación" : "New Posting")}</div>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-1">×</button>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            <div><label className={labelCls}>{es ? "Título *" : "Title *"}</label>
+                                <input className={inputCls} placeholder={es ? "ej. Servidor de Línea - Kirkwood" : "e.g. Line Server - Kirkwood"} value={f.title} onChange={e => set("title", e.target.value)} /></div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div><label className={labelCls}>{es ? "Rol" : "Role"}</label>
+                                    <select className={inputCls} value={f.role} onChange={e => set("role", e.target.value)}>{HIRE_ROLES.map(r => <option key={r} value={r}>{r}</option>)}</select></div>
+                                <div><label className={labelCls}>{es ? "Ubicación" : "Location"}</label>
+                                    <select className={inputCls} value={f.location} onChange={e => set("location", e.target.value)}>
+                                        <option value="cwe">CWE</option><option value="kirkwood">Kirkwood</option><option value="both">{es ? "Ambas" : "Both"}</option>
+                                    </select></div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div><label className={labelCls}>{es ? "Tipo" : "Type"}</label>
+                                    <select className={inputCls} value={f.employmentType} onChange={e => set("employmentType", e.target.value)}>{HIRE_EMP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                                <div><label className={labelCls}>{es ? "Rango salarial" : "Pay range"}</label>
+                                    <input className={inputCls} placeholder="$15–$18/hr" value={f.payRange} onChange={e => set("payRange", e.target.value)} /></div>
+                            </div>
+                            <div><label className={labelCls}>{es ? "Descripción" : "Description"}</label>
+                                <textarea rows="4" className={inputCls} value={f.description} onChange={e => set("description", e.target.value)} /></div>
+                            <div><label className={labelCls}>{es ? "Estado" : "Status"}</label>
+                                <select className={inputCls} value={f.status} onChange={e => set("status", e.target.value)}>
+                                    <option value="open">{es ? "Abierta (visible al público)" : "Open (publicly visible)"}</option>
+                                    <option value="closed">{es ? "Cerrada (oculta)" : "Closed (hidden)"}</option>
+                                </select></div>
+                            {err && <div className="text-red-600 text-sm font-medium">{err}</div>}
+                            <button onClick={save} disabled={saving} className={"w-full py-3 rounded-xl font-bold text-sm transition " + (saving ? "bg-gray-300 text-gray-500" : "bg-poke-600 text-white hover:bg-poke-700")}>
+                                {saving ? (es ? "Guardando..." : "Saving...") : (es ? "Guardar" : "Save")}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        // =================== END HR / HIRING MODULE ===================
+
         function App() {
             const [staffName, setStaffName] = useState(null);
             const [language, setLanguage] = useState("en");
@@ -9927,6 +10592,18 @@
                     requestNotificationPermission(staffName);
                 }
             }, [staffName]);
+
+            // Public job application route — bypasses the PIN gate entirely.
+            // Triggers on the /apply path (apply/index.html on GitHub Pages) or ?apply query.
+            const isPublicApply = (() => {
+                try {
+                    const path = window.location.pathname.replace(/\/+$/, "");
+                    return path.endsWith("/apply") || new URLSearchParams(window.location.search).has("apply");
+                } catch (e) { return false; }
+            })();
+            if (isPublicApply) {
+                return <PublicApply language={language} setLanguage={setLanguage} />;
+            }
 
             if (!staffName) {
                 return <HomePage onSelectStaff={setStaffName} language={language} setLanguage={setLanguage} staffList={staffList} />;
@@ -10146,6 +10823,16 @@
                                             <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Info detallada" : "Detailed info"}</div>
                                         </button>
                                     )}
+                                    {staffIsOwner && (
+                                        <button
+                                            onClick={() => setActiveTab("hiring")}
+                                            className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                        >
+                                            <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center text-2xl mb-3">🧑‍💼</div>
+                                            <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Contratación" : "Hiring"}</div>
+                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Vacantes y candidatos" : "Postings & applicants"}</div>
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => setActiveTab("allergens")}
                                         className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
@@ -10224,6 +10911,7 @@
                         {activeTab === "allergens" && <Allergens language={language} />}
                         {activeTab === "sales" && staffIsAdmin && <SalesInput language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "activity" && staffIsOwner && <ActivityLog language={language} staffName={staffName} />}
+                        {activeTab === "hiring" && staffIsOwner && <Hiring language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} />}
                     </div>
 
                     {/* Bottom Navigation */}
