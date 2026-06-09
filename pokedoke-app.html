@@ -53,6 +53,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -332,6 +333,7 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
         const storage = firebase.storage();
+        const auth = firebase.auth();
 
         // --- Push Notification System ---
         let messaging = null;
@@ -7790,6 +7792,100 @@
         // Main App Component
 
         // ============ EMPLOYEE MANAGEMENT (Owner only) ============
+        // Flyer-style portal invite message (used for both the queue log and the share UI)
+        function buildInviteMessage(name, pin, lang) {
+            if (lang === "es") {
+                return [
+                    "¡Bienvenido/a al equipo de PokeDoke! 🐟",
+                    "",
+                    "Instala la app del personal en tu teléfono para ver tu horario, turnos y avisos del equipo.",
+                    "",
+                    "1) Abre este enlace en tu teléfono:",
+                    "https://staff.pokedoke.com",
+                    "",
+                    "2) Agrégala a tu pantalla de inicio para que funcione como una app:",
+                    "   • iPhone (usa Safari): toca el botón Compartir (el cuadrado con una flecha hacia arriba), baja y toca \"Agregar a inicio\", luego \"Agregar\".",
+                    "   • Android (usa Chrome): toca el menú (⋮) arriba a la derecha, toca \"Agregar a pantalla de inicio\" (o \"Instalar app\"), luego \"Agregar\".",
+                    "",
+                    "3) Abre la app de PokeDoke desde tu pantalla de inicio.",
+                    "",
+                    "4) Inicia sesión: elige tu nombre (" + name + ") e ingresa tu PIN de 4 dígitos: " + pin,
+                    "",
+                    "5) Permite las notificaciones cuando te lo pida para recibir recordatorios de turnos.",
+                    "",
+                    "¿Preguntas? Pregúntale a tu gerente. ¡Bienvenido/a al equipo!"
+                ].join("\n");
+            }
+            return [
+                "Welcome to the PokeDoke team! 🐟",
+                "",
+                "Get the staff app on your phone for your schedule, shifts, and team updates.",
+                "",
+                "1) Open this link on your phone:",
+                "https://staff.pokedoke.com",
+                "",
+                "2) Add it to your home screen so it works like a real app:",
+                "   • iPhone (use Safari): tap the Share button (the square with an up-arrow), scroll down, tap \"Add to Home Screen\", then \"Add\".",
+                "   • Android (use Chrome): tap the menu (⋮) in the top-right, tap \"Add to Home screen\" (or \"Install app\"), then \"Add\".",
+                "",
+                "3) Open the PokeDoke app from your home screen.",
+                "",
+                "4) Log in: pick your name (" + name + ") and enter your 4-digit PIN: " + pin,
+                "",
+                "5) Allow notifications when asked so you get shift reminders.",
+                "",
+                "Questions? Just ask your manager. Welcome aboard!"
+            ].join("\n");
+        }
+
+        // One-tap invite delivery (pre-filled text / email, plus copy + share fallbacks)
+        function InviteModal({ language, invite, onClose }) {
+            const es = language === "es";
+            if (!invite) return null;
+            const msg = buildInviteMessage(invite.name, invite.pin, language);
+            const subject = es ? "Tu invitación a la app de PokeDoke" : "Your PokeDoke Staff App invite";
+            const digits = (invite.phone || "").replace(/[^\d+]/g, "");
+            const smsHref = "sms:" + digits + "?&body=" + encodeURIComponent(msg);
+            const mailHref = "mailto:" + encodeURIComponent(invite.email || "") + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(msg);
+            const copy = async () => { try { await navigator.clipboard.writeText(msg); window.showToast(es ? "📋 Invitación copiada" : "📋 Invite copied", "success"); } catch (e) {} };
+            const share = async () => { try { await navigator.share({ title: "PokeDoke", text: msg }); } catch (e) {} };
+            const btn = "flex items-center justify-center gap-2 w-full py-3 rounded-xl font-bold text-sm transition active:scale-95";
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center animate-in" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
+                    <div className="card p-5 max-w-md w-full animate-scale" style={{ maxHeight: "90vh", overflowY: "auto", borderTopLeftRadius: 24, borderTopRightRadius: 24 }} onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center mb-1">
+                            <h2 className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>📲 {es ? "Enviar Invitación" : "Send Invite"}</h2>
+                            <button onClick={onClose} className="text-2xl" style={{ color: "var(--text-muted)" }}>×</button>
+                        </div>
+                        <p className="text-sm mb-3" style={{ color: "var(--text-muted)" }}>{invite.name} · {es ? "PIN" : "PIN"} {invite.pin}</p>
+
+                        <div className="rounded-xl p-3 mb-4 text-xs whitespace-pre-wrap" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", maxHeight: 180, overflowY: "auto" }}>{msg}</div>
+
+                        <div className="space-y-2">
+                            {digits ? (
+                                <a href={smsHref} className={btn + " bg-green-600 text-white"}>💬 {es ? "Enviar por Texto" : "Send by Text"}</a>
+                            ) : (
+                                <div className={btn} style={{ background: "var(--bg-subtle)", color: "var(--text-muted)" }}>💬 {es ? "Sin teléfono guardado" : "No phone on file"}</div>
+                            )}
+                            {invite.email ? (
+                                <a href={mailHref} className={btn + " bg-poke-600 text-white"}>✉️ {es ? "Enviar por Email" : "Send by Email"}</a>
+                            ) : (
+                                <div className={btn} style={{ background: "var(--bg-subtle)", color: "var(--text-muted)" }}>✉️ {es ? "Sin email guardado" : "No email on file"}</div>
+                            )}
+                            <div className="grid grid-cols-2 gap-2">
+                                <button onClick={copy} className={btn} style={{ background: "var(--bg-subtle)", color: "var(--text-primary)" }}>📋 {es ? "Copiar" : "Copy"}</button>
+                                {typeof navigator !== "undefined" && navigator.share
+                                    ? <button onClick={share} className={btn} style={{ background: "var(--bg-subtle)", color: "var(--text-primary)" }}>📤 {es ? "Compartir" : "Share"}</button>
+                                    : <button onClick={onClose} className={btn} style={{ background: "var(--bg-subtle)", color: "var(--text-primary)" }}>{es ? "Cerrar" : "Close"}</button>}
+                            </div>
+                        </div>
+                        <p className="text-[11px] mt-3 text-center" style={{ color: "var(--text-muted)" }}>{es ? "Se abrirá tu app de mensajes o correo con el texto listo — solo toca enviar." : "Opens your messages or mail app with the text ready — just tap send."}</p>
+                    </div>
+                </div>
+            );
+        }
+
         function Employees({ language, staffName, staffList }) {
             const [employees, setEmployees] = useState([]);
             const [selectedEmp, setSelectedEmp] = useState(null);
@@ -7806,6 +7902,7 @@
                 sendInvite: false
             });
             const [addEmpError, setAddEmpError] = useState("");
+            const [inviteEmp, setInviteEmp] = useState(null);
 
             useEffect(() => {
                 const unsub = db.collection("employees").onSnapshot(snap => {
@@ -7886,7 +7983,8 @@
 
                     // Send invite if requested
                     if (newEmp.sendInvite) {
-                        await sendInvite(nameTrimmed, newEmp.email.trim(), newEmp.phone.trim(), newEmp.pin);
+                        await logInvite(nameTrimmed, newEmp.email.trim(), newEmp.phone.trim(), newEmp.pin);
+                        setInviteEmp({ name: nameTrimmed, email: newEmp.email.trim(), phone: newEmp.phone.trim(), pin: newEmp.pin });
                     }
 
                     window.showToast(
@@ -7907,43 +8005,20 @@
                 }
             };
 
-            // Send invitation (logs to inviteQueue; admin can also share manually)
-            const sendInvite = async (empName, email, phone, pin) => {
-                const inviteData = {
-                    employee: empName,
-                    email: email || "",
-                    phone: phone || "",
-                    pin: pin,
-                    portalUrl: "https://staff.pokedoke.com",
-                    sentBy: staffName,
-                    sentAt: new Date().toISOString(),
-                    status: "queued"
-                };
-                await db.collection("inviteQueue").add(inviteData);
-
-                // Compose shareable message
-                const msg = `Welcome to PokeDoke! 🐟\n\nYou're invited to the PokeDoke staff portal where you'll find your schedule, training, and team chat.\n\n1. On your phone, open: https://staff.pokedoke.com\n2. Log in with your name: ${empName}\n3. Enter your 4-digit PIN: ${pin}\n4. Tap "Add to Home Screen" so you can launch like an app and get notifications.\n\nWelcome to the team!`;
-
-                // Try native share or clipboard fallback
-                if (navigator.share) {
-                    try {
-                        await navigator.share({
-                            title: "PokeDoke Staff Portal Invitation",
-                            text: msg,
-                        });
-                    } catch(e) {
-                        // User cancelled or share failed — fall back to clipboard
-                        try {
-                            await navigator.clipboard.writeText(msg);
-                            window.showToast(language==="es"?"📋 Invitación copiada":"📋 Invite copied to clipboard", "info", 4000);
-                        } catch(err) {}
-                    }
-                } else if (navigator.clipboard) {
-                    try {
-                        await navigator.clipboard.writeText(msg);
-                        window.showToast(language==="es"?"📋 Invitación copiada — pégala en mensaje/email":"📋 Invite copied — paste into text/email", "info", 5000);
-                    } catch(e) {}
-                }
+            // Log the invite to the queue (delivery is handled by the one-tap InviteModal)
+            const logInvite = async (empName, email, phone, pin) => {
+                try {
+                    await db.collection("inviteQueue").add({
+                        employee: empName,
+                        email: email || "",
+                        phone: phone || "",
+                        pin: pin,
+                        portalUrl: "https://staff.pokedoke.com",
+                        sentBy: staffName,
+                        sentAt: new Date().toISOString(),
+                        status: "queued"
+                    });
+                } catch (e) { console.error(e); }
             };
 
             const saveEmployee = async () => {
@@ -8072,6 +8147,7 @@
                                     <button onClick={()=>{setEditMode(true);setEditData({...selectedEmp});}} className="py-3 bg-poke-600 text-white rounded-xl font-bold text-sm">✏️ {language==="es"?"Editar":"Edit"}</button>
                                     <button onClick={toggleStatus} className={"py-3 rounded-xl font-bold text-sm "+(selectedEmp.status==="active"?"bg-red-500 text-white":"bg-green-600 text-white")}>{selectedEmp.status==="active"?"❌ "+(language==="es"?"Desactivar":"Deactivate"):"✅ "+(language==="es"?"Reactivar":"Reactivate")}</button>
                                 </div>
+                                <button onClick={()=>{ logInvite(selectedEmp.name, selectedEmp.email||"", selectedEmp.phone||"", selectedEmp.pin); setInviteEmp({name:selectedEmp.name, email:selectedEmp.email||"", phone:selectedEmp.phone||"", pin:selectedEmp.pin}); }} className="w-full py-3 rounded-xl font-bold text-sm" style={{background:"#dbeafe",color:"#1e40af"}}>📲 {language==="es"?"Enviar Invitación a la App":"Send App Invite"}</button>
                             </div>
                         ):(
                             <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
@@ -8090,6 +8166,7 @@
                             </div>
                         )}
                         </div>
+                        <InviteModal language={language} invite={inviteEmp} onClose={()=>setInviteEmp(null)} />
                     </div>
                 );
             }
@@ -8219,6 +8296,7 @@
                             </div>
                         </div>
                     )}
+                    <InviteModal language={language} invite={inviteEmp} onClose={()=>setInviteEmp(null)} />
                 </div>
             );
         }
@@ -9873,12 +9951,12 @@
                 if (resumeFile && resumeFile.size > 6 * 1024 * 1024) { setErr(es ? "El archivo debe ser menor a 6MB" : "File must be under 6MB"); return; }
                 setSubmitting(true);
                 try {
-                    let resumeUrl = null, resumeName = null;
+                    let resumePath = null, resumeName = null;
                     if (resumeFile) {
                         const safe = resumeFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
                         const ref = storage.ref().child("applications/" + Date.now() + "_" + safe);
                         await ref.put(resumeFile);
-                        resumeUrl = await ref.getDownloadURL();
+                        resumePath = ref.fullPath;
                         resumeName = resumeFile.name;
                     }
                     const now = new Date();
@@ -9897,7 +9975,7 @@
                         earliestStart: form.earliestStart,
                         experience: form.experience.trim(),
                         howHeard: form.howHeard.trim(),
-                        resumeUrl, resumeName,
+                        resumePath, resumeName,
                         status: "new",
                         rating: 0,
                         notes: [],
@@ -10055,7 +10133,32 @@
             const [hireForm, setHireForm] = useState(null); // { pin, role, location }
             const [hireErr, setHireErr] = useState("");
 
+            // Firebase owner sign-in gate (protects applicant PII via Firestore rules)
+            const [authUser, setAuthUser] = useState(auth.currentUser);
+            const [authReady, setAuthReady] = useState(false);
+            const [signin, setSignin] = useState({ email: "", pass: "", err: "", busy: false });
             useEffect(() => {
+                const unsub = auth.onAuthStateChanged(u => { setAuthUser(u); setAuthReady(true); });
+                return () => unsub();
+            }, []);
+            const doSignIn = async () => {
+                setSignin(s => ({ ...s, err: "", busy: true }));
+                try {
+                    await auth.signInWithEmailAndPassword(signin.email.trim(), signin.pass);
+                } catch (e) {
+                    let msg = es ? "No se pudo iniciar sesión" : "Could not sign in";
+                    if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential") msg = es ? "Correo o contraseña incorrectos" : "Wrong email or password";
+                    else if (e.code === "auth/user-not-found") msg = es ? "No existe esa cuenta" : "No account with that email";
+                    else if (e.code === "auth/too-many-requests") msg = es ? "Demasiados intentos, espera un momento" : "Too many attempts — wait a moment";
+                    setSignin(s => ({ ...s, err: msg, busy: false }));
+                    return;
+                }
+                setSignin({ email: "", pass: "", err: "", busy: false });
+            };
+
+            useEffect(() => {
+                if (!authUser) { setLoading(false); return; }
+                setLoading(true);
                 const u1 = db.collection("applications").onSnapshot(snap => {
                     setApplications(snap.docs.map(d => ({ id: d.id, ...d.data() }))
                         .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
@@ -10066,7 +10169,7 @@
                         .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
                 });
                 return () => { u1(); u2(); };
-            }, []);
+            }, [authUser]);
 
             // keep selectedApp in sync with live data
             useEffect(() => {
@@ -10152,11 +10255,50 @@
             const labelCls = "block text-xs font-bold text-gray-600 mb-1.5";
             const publicUrl = (typeof window !== "undefined" ? window.location.origin : "") + "/apply";
 
+            // Gate: require Firebase owner sign-in before showing any applicant data
+            if (!authReady) {
+                return <div className="p-8 text-center text-gray-400 text-sm animate-in">{es ? "Cargando..." : "Loading..."}</div>;
+            }
+            if (!authUser) {
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <h2 className="text-xl font-bold text-gray-800 mb-1">{es ? "Contratación" : "Hiring"}</h2>
+                        <p className="text-sm text-gray-400 mb-6">{es ? "Inicia sesión de propietario para ver candidatos" : "Owner sign-in required to view applicants"}</p>
+                        <div className="max-w-sm mx-auto bg-white border border-gray-100 rounded-2xl shadow-sm p-6">
+                            <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center text-2xl mb-4 mx-auto">🔒</div>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className={labelCls}>{es ? "Correo" : "Email"}</label>
+                                    <input type="email" autoComplete="username" className={inputCls} value={signin.email}
+                                        onChange={e => setSignin(s => ({ ...s, email: e.target.value }))} />
+                                </div>
+                                <div>
+                                    <label className={labelCls}>{es ? "Contraseña" : "Password"}</label>
+                                    <input type="password" autoComplete="current-password" className={inputCls} value={signin.pass}
+                                        onChange={e => setSignin(s => ({ ...s, pass: e.target.value }))}
+                                        onKeyDown={e => { if (e.key === "Enter") doSignIn(); }} />
+                                </div>
+                                {signin.err && <div className="text-red-600 text-sm font-medium bg-red-50 rounded-lg px-3 py-2">{signin.err}</div>}
+                                <button onClick={doSignIn} disabled={signin.busy}
+                                    className={"w-full py-3 rounded-xl font-bold text-sm transition " + (signin.busy ? "bg-gray-300 text-gray-500" : "bg-poke-600 text-white hover:bg-poke-700")}>
+                                    {signin.busy ? (es ? "Entrando..." : "Signing in...") : (es ? "Iniciar Sesión" : "Sign In")}
+                                </button>
+                            </div>
+                            <p className="text-[11px] text-gray-400 mt-4 text-center">{es ? "Esta cuenta es independiente de tu PIN y protege los datos de candidatos." : "This login is separate from your PIN and protects applicant data."}</p>
+                        </div>
+                    </div>
+                );
+            }
+
             return (
                 <div className="p-4 pb-24 animate-in">
-                    <h2 className="text-xl font-bold text-gray-800 mb-1">{es ? "Contratación" : "Hiring"}</h2>
-                    <p className="text-sm text-gray-400 mb-4">{es ? "Publicaciones y seguimiento de candidatos" : "Job postings & applicant tracking"}</p>
-
+                    <div className="flex items-start justify-between">
+                        <div>
+                            <h2 className="text-xl font-bold text-gray-800 mb-1">{es ? "Contratación" : "Hiring"}</h2>
+                            <p className="text-sm text-gray-400 mb-4">{es ? "Publicaciones y seguimiento de candidatos" : "Job postings & applicant tracking"}</p>
+                        </div>
+                        <button onClick={() => auth.signOut()} className="text-[11px] font-bold text-gray-400 hover:text-gray-600 whitespace-nowrap mt-1">🔓 {es ? "Bloquear" : "Lock"}</button>
+                    </div>
                     {/* Sub-tabs */}
                     <div className="flex gap-2 mb-4">
                         {[{ id: "applicants", en: "Applicants", es: "Candidatos" }, { id: "postings", en: "Postings", es: "Publicaciones" }].map(tb => (
@@ -10339,12 +10481,7 @@
                                             </div>
                                         )}
 
-                                        {a.resumeUrl && (
-                                            <a href={a.resumeUrl} target="_blank" rel="noopener noreferrer"
-                                                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-poke-50 text-poke-700 font-bold text-sm hover:bg-poke-100 transition">
-                                                📄 {es ? "Ver currículum" : "View résumé"} {a.resumeName ? "(" + a.resumeName + ")" : ""}
-                                            </a>
-                                        )}
+                                        <ResumeLink app={a} es={es} />
 
                                         {/* Internal notes */}
                                         <div>
@@ -10476,6 +10613,29 @@
                         </div>
                     </div>
                 </div>
+            );
+        }
+        // ---------- Résumé link (resolves storage path on demand; owner is authenticated) ----------
+        function ResumeLink({ app, es }) {
+            const [url, setUrl] = useState(app.resumeUrl || null);
+            const [failed, setFailed] = useState(false);
+            useEffect(() => {
+                let live = true;
+                if (!url && app.resumePath) {
+                    storage.ref().child(app.resumePath).getDownloadURL()
+                        .then(u => { if (live) setUrl(u); })
+                        .catch(() => { if (live) setFailed(true); });
+                }
+                return () => { live = false; };
+            }, [app.id]);
+            if (!app.resumeUrl && !app.resumePath) return null;
+            if (failed) return <div className="text-center text-xs text-gray-400 py-2">{es ? "No se pudo cargar el currículum" : "Couldn't load résumé"}</div>;
+            if (!url) return <div className="text-center text-xs text-gray-400 py-2.5 bg-gray-50 rounded-xl">{es ? "Cargando currículum..." : "Loading résumé..."}</div>;
+            return (
+                <a href={url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-poke-50 text-poke-700 font-bold text-sm hover:bg-poke-100 transition">
+                    📄 {es ? "Ver currículum" : "View résumé"} {app.resumeName ? "(" + app.resumeName + ")" : ""}
+                </a>
             );
         }
         // =================== END HR / HIRING MODULE ===================
