@@ -1393,6 +1393,25 @@
             const handlePinSubmit = () => {
                 const match = staffList.find(s => s.pin === pin);
                 if (match) {
+                    // Record activation + install status (best-effort, non-blocking)
+                    try {
+                        const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+                        const docId = match.name.replace(/\s/g, "_");
+                        const ref = db.collection("employees").doc(docId);
+                        const nowIso = new Date().toISOString();
+                        ref.get().then(snap => {
+                            const data = snap.exists ? snap.data() : {};
+                            const patch = { lastLogin: nowIso, loginCount: (data.loginCount || 0) + 1 };
+                            if (!data.activatedAt) patch.activatedAt = nowIso;
+                            if (isStandalone) { patch.installed = true; if (!data.installedAt) patch.installedAt = nowIso; }
+                            if (!snap.exists) {
+                                patch.name = match.name; patch.role = match.role;
+                                patch.location = match.location || "cwe"; patch.pin = match.pin;
+                                patch.status = "active"; patch.createdAt = nowIso;
+                            }
+                            ref.set(patch, { merge: true }).catch(() => {});
+                        }).catch(() => {});
+                    } catch (e) {}
                     onSelectStaff(match.name);
                 } else {
                     setError(language === "es" ? "PIN incorrecto" : "Incorrect PIN");
@@ -1836,7 +1855,7 @@
 
                     setAuditCounts({});
                     await db.collection("ops").doc("latestAlert").set({type:"audit",by:staffName,date:new Date().toISOString(),totalItems:results.length,itemsWithVariance:results.filter(r=>r.variance!==0).length,belowPar:results.filter(r=>r.physicalCount<(parLevels[r.id]||0)).length});
-                    alert(language === "es" ? "✅ Auditoría guardada. Inventario actualizado con conteos físicos." : "✅ Audit saved. Inventory updated to physical counts.");
+                    window.showToast(language === "es" ? "✅ Auditoría guardada. Inventario actualizado con conteos físicos." : "✅ Audit saved. Inventory updated to physical counts.", "success");
                 } catch(e) { console.error(e); }
                 setAuditSaving(false);
             };
@@ -1965,8 +1984,8 @@
                 setNewStationEmoji("📍");
             };
 
-            const removeStation = (stationId) => {
-                if (!confirm(language === "es" ? "¿Eliminar esta estación?" : "Remove this station?")) return;
+            const removeStation = async (stationId) => {
+                if (!(await window.askConfirm({ title: language === "es" ? "¿Eliminar esta estación?" : "Remove this station?", danger: true }))) return;
                 const updated = customStations.filter(s => s.id !== stationId);
                 setCustomStations(updated);
                 saveStations(updated);
@@ -1995,8 +2014,8 @@
                 saveStations(updated);
             };
 
-            const resetStationsToDefault = () => {
-                if (!confirm(language === "es" ? "¿Restaurar estaciones predeterminadas?" : "Reset stations to defaults?")) return;
+            const resetStationsToDefault = async () => {
+                if (!(await window.askConfirm({ title: language === "es" ? "¿Restaurar estaciones predeterminadas?" : "Reset stations to defaults?", danger: true }))) return;
                 const fresh = JSON.parse(JSON.stringify(DEFAULT_STATIONS));
                 setCustomStations(fresh);
                 saveStations(fresh);
@@ -2084,8 +2103,8 @@
                 saveBreakPlan(newPlan);
             };
 
-            const clearBreakPlan = () => {
-                if (!confirm(language === "es" ? "¿Borrar todo el plan de breaks?" : "Clear entire break plan?")) return;
+            const clearBreakPlan = async () => {
+                if (!(await window.askConfirm({ title: language === "es" ? "¿Borrar todo el plan de breaks?" : "Clear entire break plan?", danger: true }))) return;
                 setBreakPlan({ stations: {}, waves: {} });
                 saveBreakPlan({ stations: {}, waves: {} });
             };
@@ -2342,7 +2361,7 @@
             const handlePasswordSubmit = (e) => {
                 e.preventDefault();
                 if (password === "12345") { setPasswordEntered(true); setPassword(""); }
-                else { alert(language === "es" ? "Contraseña incorrecta" : "Incorrect password"); }
+                else { window.showToast(language === "es" ? "Contraseña incorrecta" : "Incorrect password", "error"); }
             };
 
             const toggleCheckItem = async (taskId) => {
@@ -2397,7 +2416,7 @@
                     const newChecks = { ...checksRef.current, [taskId + "_photo"]: url, [taskId + "_photoTime"]: new Date().toISOString() };
                     setChecks(newChecks);
                     await saveChecklistState(newChecks, customTasksRef.current);
-                } catch (err) { console.error("Error uploading photo:", err); alert(language === "es" ? "Error al subir foto" : "Error uploading photo"); }
+                } catch (err) { console.error("Error uploading photo:", err); window.showToast(language === "es" ? "Error al subir foto" : "Error uploading photo", "error"); }
                 setCapturingPhoto(null);
             };
 
@@ -2409,7 +2428,7 @@
             };
 
             const resetAllChecklists = async () => {
-                if (!confirm(language === "es" ? "¿Guardar y reiniciar todas las tareas?" : "Save & reset all checklists?")) return;
+                if (!(await window.askConfirm({ title: language === "es" ? "¿Guardar y reiniciar todas las tareas?" : "Save & reset all checklists?", danger: true }))) return;
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
                 try {
@@ -3304,7 +3323,7 @@
                                         await db.collection("quickCounts").doc(window.fmtLocalDate()).set({counts:quickCounts,countedBy:staffName,date:new Date().toISOString()});
                                         const lowItems=Object.entries(quickCounts).filter(([k,v])=>v==="low"||v==="out");
                                         await db.collection("ops").doc("latestAlert").set({type:"quickcheck",by:staffName,date:new Date().toISOString(),lowCount:lowItems.length,outCount:Object.values(quickCounts).filter(v=>v==="out").length});
-                                        alert(language==="es"?"¡Guardado!":"Saved!");
+                                        window.showToast(language==="es"?"¡Guardado!":"Saved!", "success");
                                     }catch(e){console.error(e);}}}
                                         className="w-full py-4 bg-poke-600 text-white font-bold rounded-2xl shadow-lg active:scale-95 transition">💾 {language==="es"?"Guardar Revisión":"Save Quick Check"}</button>
                                 </div>
@@ -3376,7 +3395,7 @@
                                                 </div>
                                                 <button onClick={async()=>{
                                                     await placeOrder(supplier,items);
-                                                    alert(language==="es"?"✅ Pedido registrado para "+supplier:"✅ Order placed for "+supplier);
+                                                    window.showToast(language==="es"?"✅ Pedido registrado para "+supplier:"✅ Order placed for "+supplier, "success");
                                                 }} className="w-full py-3 bg-poke-600 text-white font-bold text-sm border-t border-gray-100 active:bg-poke-700 transition">
                                                     📋 {language==="es"?"Marcar como Pedido":"Mark as Ordered"}
                                                 </button>
@@ -3545,7 +3564,7 @@
                                                         <button onClick={async()=>{
                                                             const orderId=scanError||"manual_"+Date.now();
                                                             await receiveOrder(orderId,scanResults,scanImage);
-                                                            alert(language==="es"?"✅ ¡Entrega confirmada! Inventario actualizado.":"✅ Delivery confirmed! Inventory updated.");
+                                                            window.showToast(language==="es"?"✅ ¡Entrega confirmada! Inventario actualizado.":"✅ Delivery confirmed! Inventory updated.", "success");
                                                             setScanResults(null);setScanImage(null);setScanError("");
                                                         }} className="flex-1 py-4 bg-green-600 text-white font-bold rounded-2xl shadow-lg active:scale-95 transition text-sm">
                                                             ✅ {language==="es"?"Confirmar Entrega":"Confirm Delivery"}
@@ -3767,7 +3786,7 @@
                                         setBreakWaveTimes(times);
                                         saveBreakPlan(plan, times);
                                     } else {
-                                        alert(language === "es" ? "No hay plan para hoy" : "No plan for today to copy");
+                                        window.showToast(language === "es" ? "No hay plan para hoy" : "No plan for today to copy", "error");
                                     }
                                 }}
                                     className="w-full py-2.5 rounded-xl font-bold text-sm bg-blue-50 text-blue-600 border-2 border-blue-200 hover:bg-blue-100 transition">
@@ -4611,7 +4630,7 @@
 
             const deleteEditShift = async () => {
                 if (!editingShift) return;
-                if (!confirm(language==="es"?"¿Eliminar este turno?":"Delete this shift?")) return;
+                if (!(await window.askConfirm({ title: language==="es"?"¿Eliminar este turno?":"Delete this shift?", danger: true }))) return;
                 await deleteShift(editingShift.id);
                 setEditingShift(null);
             };
@@ -4681,7 +4700,7 @@
 
             // Revert draft changes back to published
             const revertChanges = async () => {
-                if (!confirm(language==="es"?"¿Descartar cambios y volver a la versión publicada?":"Discard changes and revert to published version?")) return;
+                if (!(await window.askConfirm({ title: language==="es"?"¿Descartar cambios y volver a la versión publicada?":"Discard changes and revert to published version?", danger: true }))) return;
                 setShifts(publishedShifts);
                 await db.collection("schedules").doc(weekKey).set({
                     draftShifts: publishedShifts,
@@ -4811,7 +4830,7 @@
                     setCsvParsedShifts([]);
                 } catch (err) {
                     console.error("CSV import error:", err);
-                    alert("Error importing: " + err.message);
+                    window.showToast("Error importing: " + err.message, "error");
                 }
                 setCsvImporting(false);
             };
@@ -4842,23 +4861,23 @@
                     createdAt: new Date().toISOString()
                 });
                 setShowTemplateSave(false); setTemplateName("");
-                alert(language==="es"?"Plantilla guardada":"Template saved");
+                window.showToast(language==="es"?"Plantilla guardada":"Template saved", "success");
             };
 
             const applyTemplate = async (template) => {
-                if(!confirm(language==="es"?"¿Aplicar plantilla? Reemplazará los turnos del borrador.":"Apply template? This will replace draft shifts."))return;
+                if (!(await window.askConfirm({ title: language==="es"?"¿Aplicar plantilla? Reemplazará los turnos del borrador.":"Apply template? This will replace draft shifts.", danger: false }))) return;
                 const newShifts = template.shifts.map(s=>({...s,id:Date.now().toString()+Math.random(),location:schedLocation}));
                 setShifts(newShifts);
                 await writeDraft(newShifts);
             };
 
             const deleteTemplate = async (id) => {
-                if(!confirm(language==="es"?"¿Eliminar plantilla?":"Delete template?"))return;
+                if (!(await window.askConfirm({ title: language==="es"?"¿Eliminar plantilla?":"Delete template?", danger: true }))) return;
                 await db.collection("scheduleTemplates").doc(id).delete();
             };
 
             const autoSchedule = async () => {
-                if(!confirm(language==="es"?"¿Generar sugerencia de horario basada en disponibilidad? Reemplazará el borrador actual.":"Generate schedule based on availability? Will replace draft."))return;
+                if (!(await window.askConfirm({ title: language==="es"?"¿Generar sugerencia de horario basada en disponibilidad? Reemplazará el borrador actual.":"Generate schedule based on availability? Will replace draft.", danger: false }))) return;
                 const newShifts = [];
                 const locationStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all");
                 DAY_KEYS.forEach((dayKey,dayIdx)=>{
@@ -4875,7 +4894,7 @@
                 });
                 setShifts(newShifts);
                 await writeDraft(newShifts);
-                alert((language==="es"?"Generados ":"Generated ")+newShifts.length+(language==="es"?" turnos basados en disponibilidad":" shifts based on availability"));
+                window.showToast((language==="es"?"Generados ":"Generated ")+newShifts.length+(language==="es"?" turnos basados en disponibilidad":" shifts based on availability"), "success");
             };
 
             const saveAvailability = async (days) => {
@@ -4902,7 +4921,7 @@
                 const ackMsg = language === "es"
                     ? "⚠️ IMPORTANTE: Este turno sigue siendo tu responsabilidad hasta que otro empleado lo tome Y un gerente lo apruebe. Si nadie lo toma, tú sigues obligado a trabajarlo.\n\n¿Deseas continuar?"
                     : "⚠️ IMPORTANT: This shift remains YOUR responsibility until another employee picks it up AND a manager approves the swap. If no one claims it, you are still required to work this shift.\n\nDo you want to continue?";
-                if (!confirm(ackMsg)) return;
+                if (!(await window.askConfirm({ title: ackMsg, danger: false }))) return;
                 await db.collection("shiftSwaps").add({offeredBy:staffName, shift, status:"open", createdAt:new Date().toISOString(), weekKey, acknowledgedResponsibility: true});
                 window.showToast(language==="es"?"Turno ofrecido — sigue siendo tu responsabilidad hasta que sea tomado":"Shift offered — still your responsibility until claimed","info",5000);
             };
@@ -6253,7 +6272,7 @@
             };
 
             const handleSave = () => {
-                if (!form.titleEn.trim()) { alert(language === "es" ? "Se requiere título en inglés" : "English title is required"); return; }
+                if (!form.titleEn.trim()) { window.showToast(language === "es" ? "Se requiere título en inglés" : "English title is required", "error"); return; }
                 const cleaned = {
                     ...form,
                     ingredientsEn: form.ingredientsEn.filter(s => s.trim()),
@@ -6407,7 +6426,7 @@
                     window.showToast(language==="es"?"✅ Acuerdo firmado":"✅ Agreement signed","success");
                 } catch(e) {
                     console.error("NDA sign error:", e);
-                    alert("Error saving: " + e.message);
+                    window.showToast("Error saving: " + e.message, "error");
                 }
             };
 
@@ -6543,7 +6562,7 @@
             };
 
             const deleteRecipe = async (recipeId) => {
-                if (!confirm(language === "es" ? "¿Eliminar esta receta?" : "Delete this recipe?")) return;
+                if (!(await window.askConfirm({ title: language === "es" ? "¿Eliminar esta receta?" : "Delete this recipe?", danger: true }))) return;
                 const updated = recipes.filter(r => r.id !== recipeId);
                 setRecipes(updated);
                 try {
@@ -6774,7 +6793,7 @@
                                         <div className="mb-4">
                                             <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">📝 {t("ingredients", language)}</h4>
                                             <ul className="space-y-1">
-                                                {(language === "es" ? (recipe.ingredientsEs || recipe.ingredientsEn) : recipe.ingredientsEn).map((item, i) => (
+                                                {((language === "es" ? (recipe.ingredientsEs || recipe.ingredientsEn) : recipe.ingredientsEn) || []).map((item, i) => (
                                                     <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
                                                         <span className="text-poke-400 mt-1">•</span>
                                                         <span>{item}</span>
@@ -6786,7 +6805,7 @@
                                         <div>
                                             <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">👨‍🍳 {t("instructions", language)}</h4>
                                             <ol className="space-y-2">
-                                                {(language === "es" ? (recipe.instructionsEs || recipe.instructionsEn) : recipe.instructionsEn).map((step, i) => (
+                                                {((language === "es" ? (recipe.instructionsEs || recipe.instructionsEn) : recipe.instructionsEn) || []).map((step, i) => (
                                                     <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
                                                         <span className="bg-poke-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">{i + 1}</span>
                                                         <span>{step}</span>
@@ -6800,51 +6819,53 @@
                         );
                     })}
 
-                    {/* Owner: NDA Acknowledgment Records */}
-                    {isOwner(staffName) && (()=>{
-                        const [ndaRecords, setNdaRecords] = React.useState([]);
-                        const [showNdaLog, setShowNdaLog] = React.useState(false);
-                        React.useEffect(()=>{
-                            if (!showNdaLog) return;
-                            db.collection("recipeNDA").get().then(snap=>{
-                                setNdaRecords(snap.docs.map(d=>({id:d.id,...d.data()})));
-                            });
-                        },[showNdaLog]);
-                        return (
-                            <div className="mt-6">
-                                <button onClick={()=>setShowNdaLog(!showNdaLog)}
-                                    className="w-full py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 active:scale-95">
-                                    📋 {showNdaLog?(language==="es"?"Ocultar Registro NDA":"Hide NDA Log"):(language==="es"?"Ver Registro de Firmas NDA":"View NDA Signatures")}
-                                </button>
-                                {showNdaLog && (
-                                    <div className="mt-3 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                                        <div className="p-3 bg-gradient-to-r from-amber-50 to-white border-b">
-                                            <p className="font-bold text-sm text-gray-800">📋 {language==="es"?"Acuerdos de Confidencialidad Firmados":"Signed Confidentiality Agreements"}</p>
-                                            <p className="text-xs text-gray-400">{ndaRecords.length} {language==="es"?"registros":"records"}</p>
+                    {isOwner(staffName) && <NdaLog language={language} />}
+                </div>
+            );
+        }
+
+        // Owner-only NDA signatures log (extracted to its own component so hooks aren't called conditionally)
+        function NdaLog({ language }) {
+            const [ndaRecords, setNdaRecords] = useState([]);
+            const [showNdaLog, setShowNdaLog] = useState(false);
+            useEffect(() => {
+                if (!showNdaLog) return;
+                db.collection("recipeNDA").get().then(snap => {
+                    setNdaRecords(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                }).catch(() => {});
+            }, [showNdaLog]);
+            return (
+                <div className="mt-6">
+                    <button onClick={()=>setShowNdaLog(!showNdaLog)}
+                        className="w-full py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 active:scale-95">
+                        📋 {showNdaLog?(language==="es"?"Ocultar Registro NDA":"Hide NDA Log"):(language==="es"?"Ver Registro de Firmas NDA":"View NDA Signatures")}
+                    </button>
+                    {showNdaLog && (
+                        <div className="mt-3 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                            <div className="p-3 bg-gradient-to-r from-amber-50 to-white border-b">
+                                <p className="font-bold text-sm text-gray-800">📋 {language==="es"?"Acuerdos de Confidencialidad Firmados":"Signed Confidentiality Agreements"}</p>
+                                <p className="text-xs text-gray-400">{ndaRecords.length} {language==="es"?"registros":"records"}</p>
+                            </div>
+                            <div className="divide-y divide-gray-50">
+                                {ndaRecords.length === 0 ? (
+                                    <p className="p-4 text-sm text-gray-400 text-center">{language==="es"?"Sin registros":"No records yet"}</p>
+                                ) : ndaRecords.sort((a,b)=>(b.signedAt||"").localeCompare(a.signedAt||"")).map(r=>(
+                                    <div key={r.id} className="p-3 flex justify-between items-center">
+                                        <div>
+                                            <p className="font-bold text-sm text-gray-800">{r.name}</p>
+                                            <p className="text-xs text-gray-400">
+                                                {language==="es"?"Firmado como":"Signed as"}: <span style={{fontFamily:"'Caveat',cursive",fontSize:"14px"}}>{r.signedName}</span>
+                                            </p>
                                         </div>
-                                        <div className="divide-y divide-gray-50">
-                                            {ndaRecords.length === 0 ? (
-                                                <p className="p-4 text-sm text-gray-400 text-center">{language==="es"?"Sin registros":"No records yet"}</p>
-                                            ) : ndaRecords.sort((a,b)=>(b.signedAt||"").localeCompare(a.signedAt||"")).map(r=>(
-                                                <div key={r.id} className="p-3 flex justify-between items-center">
-                                                    <div>
-                                                        <p className="font-bold text-sm text-gray-800">{r.name}</p>
-                                                        <p className="text-xs text-gray-400">
-                                                            {language==="es"?"Firmado como":"Signed as"}: <span style={{fontFamily:"'Caveat',cursive",fontSize:"14px"}}>{r.signedName}</span>
-                                                        </p>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <p className="text-xs text-green-600 font-bold">✅ {language==="es"?"Firmado":"Signed"}</p>
-                                                        <p className="text-[10px] text-gray-400">{r.signedAt ? new Date(r.signedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}) : "—"}</p>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                        <div className="text-right">
+                                            <p className="text-xs text-green-600 font-bold">✅ {language==="es"?"Firmado":"Signed"}</p>
+                                            <p className="text-[10px] text-gray-400">{r.signedAt ? new Date(r.signedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}) : "—"}</p>
                                         </div>
                                     </div>
-                                )}
+                                ))}
                             </div>
-                        );
-                    })()}
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -7305,7 +7326,7 @@
                     setTimeout(() => setSubmitted(false), 3000);
                 } catch (err) {
                     console.error("Error submitting request:", err);
-                    alert(language === "es" ? "Error al enviar solicitud" : "Error submitting request");
+                    window.showToast(language === "es" ? "Error al enviar solicitud" : "Error submitting request", "error");
                 }
                 setSubmitting(false);
             };
@@ -7432,7 +7453,7 @@
         }
 
         // Admin Panel Component
-        function AdminPanel({ language, staffList, setStaffList }) {
+        function AdminPanel({ language, staffList, setStaffList, goAddEmployee }) {
             const [editingId, setEditingId] = useState(null);
             const [editPin, setEditPin] = useState("");
             const [editRole, setEditRole] = useState("");
@@ -7759,10 +7780,13 @@
                                         </div>
                                     </div>
                                 ) : (
-                                    <button onClick={() => setShowAdd(true)}
-                                        className="w-full py-3 bg-green-700 text-white font-bold rounded-lg hover:bg-green-800 transition text-lg">
-                                        + {t("addStaff", language)}
-                                    </button>
+                                    <div>
+                                        <button onClick={() => goAddEmployee && goAddEmployee()}
+                                            className="w-full py-3 bg-green-700 text-white font-bold rounded-lg hover:bg-green-800 transition text-lg">
+                                            + {t("addStaff", language)}
+                                        </button>
+                                        <p className="text-xs text-gray-500 mt-2 text-center">{language === "es" ? "Abre el formulario completo en Empleados (contacto + invitación a la app)." : "Opens the full form in Employees (contact info + app invite)."}</p>
+                                    </div>
                                 )}
                             </div>
                         )}
@@ -7792,6 +7816,35 @@
         // Main App Component
 
         // ============ EMPLOYEE MANAGEMENT (Owner only) ============
+        // Deactivation reasons for archiving employees
+        const DEACT_REASONS = [
+            { key: "quit",        en: "Quit / Resigned",            es: "Renunció" },
+            { key: "seasonal",    en: "Seasonal / Moved away",      es: "Temporal / Se mudó" },
+            { key: "performance", en: "Let go — Performance",        es: "Despido — Desempeño" },
+            { key: "attendance",  en: "Let go — Attendance / No-show", es: "Despido — Asistencia / Faltas" },
+            { key: "conduct",     en: "Let go — Conduct / Policy",   es: "Despido — Conducta / Política" },
+            { key: "laidoff",     en: "Laid off / Position cut",     es: "Recorte de puesto" },
+            { key: "nolonger",    en: "No longer scheduled",         es: "Ya no programado" },
+            { key: "other",       en: "Other",                       es: "Otro" },
+        ];
+        const reasonLabel = (key, lang) => {
+            const r = DEACT_REASONS.find(x => x.key === key);
+            return r ? (lang === "es" ? r.es : r.en) : (key || "—");
+        };
+
+        // Relative time for activation tracking (e.g. "2d ago")
+        function pdTimeAgo(iso, lang) {
+            if (!iso) return "";
+            const es = lang === "es";
+            const d = new Date(iso);
+            const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+            if (diff < 60) return es ? "ahora" : "just now";
+            const m = Math.floor(diff / 60); if (m < 60) return m + "m " + (es ? "atrás" : "ago");
+            const h = Math.floor(m / 60); if (h < 24) return h + "h " + (es ? "atrás" : "ago");
+            const days = Math.floor(h / 24); if (days < 30) return days + "d " + (es ? "atrás" : "ago");
+            return d.toLocaleDateString();
+        }
+
         // Flyer-style portal invite message (used for both the queue log and the share UI)
         function buildInviteMessage(name, pin, lang) {
             if (lang === "es") {
@@ -7886,7 +7939,7 @@
             );
         }
 
-        function Employees({ language, staffName, staffList }) {
+        function Employees({ language, staffName, staffList, autoAdd, onAutoAddHandled }) {
             const [employees, setEmployees] = useState([]);
             const [selectedEmp, setSelectedEmp] = useState(null);
             const [editMode, setEditMode] = useState(false);
@@ -7903,6 +7956,14 @@
             });
             const [addEmpError, setAddEmpError] = useState("");
             const [inviteEmp, setInviteEmp] = useState(null);
+            const [deactivating, setDeactivating] = useState(null); // emp being deactivated
+            const [deactForm, setDeactForm] = useState({ reason: "quit", rehirable: true, note: "" });
+            const [viewArchived, setViewArchived] = useState(false);
+
+            // Opened from the Admin Panel "Add Staff Member" button
+            useEffect(() => {
+                if (autoAdd) { setShowAddEmployee(true); onAutoAddHandled && onAutoAddHandled(); }
+            }, [autoAdd]);
 
             useEffect(() => {
                 const unsub = db.collection("employees").onSnapshot(snap => {
@@ -8018,6 +8079,9 @@
                         sentAt: new Date().toISOString(),
                         status: "queued"
                     });
+                    // Stamp invite time on the employee record (for activation tracking)
+                    const docId = empName.replace(/\s/g, "_");
+                    await db.collection("employees").doc(docId).set({ invitedAt: new Date().toISOString() }, { merge: true });
                 } catch (e) { console.error(e); }
             };
 
@@ -8039,23 +8103,43 @@
                 setNoteText(""); setShowAddNote(false);
             };
 
+            // Deactivate opens a reason modal; reactivate is a simple confirm
             const toggleStatus = async () => {
-                if(!confirm(language==="es"?"¿Cambiar estado de "+selectedEmp.name+"?":"Change status for "+selectedEmp.name+"?"))return;
-                const docId = selectedEmp.name.replace(/\s/g,"_");
-                const newStatus = selectedEmp.status === "active" ? "inactive" : "active";
-                const event = {
-                    id: Date.now().toString(),
-                    type: newStatus === "active" ? "reactivated" : "deactivated",
-                    date: new Date().toISOString(),
-                    by: staffName
-                };
-                const history = [...(selectedEmp.history||[]), event];
-                await db.collection("employees").doc(docId).update({status:newStatus, history, updatedAt:new Date().toISOString()});
-                setSelectedEmp({...selectedEmp,status:newStatus,history});
+                if (selectedEmp.status === "active") {
+                    setDeactForm({ reason: "quit", rehirable: true, note: "" });
+                    setDeactivating(selectedEmp);
+                    return;
+                }
+                const ok = await window.askConfirm({
+                    title: language === "es" ? "¿Reactivar empleado?" : "Reactivate employee?",
+                    body: (language === "es" ? "Se reactivará a " : "This will reactivate ") + selectedEmp.name + ".",
+                    confirmLabel: language === "es" ? "Reactivar" : "Reactivate"
+                });
+                if (!ok) return;
+                const docId = selectedEmp.name.replace(/\s/g, "_");
+                const event = { id: Date.now().toString(), type: "reactivated", date: new Date().toISOString(), by: staffName };
+                const history = [...(selectedEmp.history || []), event];
+                await db.collection("employees").doc(docId).update({ status: "active", history, updatedAt: new Date().toISOString() });
+                setSelectedEmp({ ...selectedEmp, status: "active", history });
             };
 
+            const confirmDeactivate = async () => {
+                const emp = deactivating;
+                const docId = emp.name.replace(/\s/g, "_");
+                const now = new Date().toISOString();
+                const deactivation = { reason: deactForm.reason, rehirable: !!deactForm.rehirable, note: deactForm.note.trim(), date: now, by: staffName };
+                const event = { id: Date.now().toString(), type: "deactivated", reason: deactForm.reason, rehirable: !!deactForm.rehirable, date: now, by: staffName };
+                const history = [...(emp.history || []), event];
+                await db.collection("employees").doc(docId).update({ status: "inactive", deactivation, history, updatedAt: now });
+                setSelectedEmp(s => s && s.id === emp.id ? { ...s, status: "inactive", deactivation, history } : s);
+                setDeactivating(null);
+                window.showToast(emp.name + (language === "es" ? " archivado" : " archived"), "success");
+            };
+
+            const archivedCount = employees.filter(e => e.status === "inactive").length;
             const visibleEmps = employees.filter(e=>{
-                if(!showInactive && e.status==="inactive") return false;
+                const isInactive = e.status === "inactive";
+                if (viewArchived ? !isInactive : isInactive) return false;
                 if(searchQuery && !e.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
                 return true;
             }).sort((a,b)=>a.name.localeCompare(b.name));
@@ -8094,6 +8178,29 @@
                                         <p><span className="text-gray-400">Email:</span> {selectedEmp.email || "—"}</p>
                                         <p><span className="text-gray-400">{language==="es"?"Dirección":"Address"}:</span> {selectedEmp.address || "—"}</p>
                                         <p><span className="text-gray-400">{language==="es"?"Contacto de Emergencia":"Emergency Contact"}:</span> {selectedEmp.emergencyContact || "—"} {selectedEmp.emergencyPhone && "("+selectedEmp.emergencyPhone+")"}</p>
+                                    </div>
+                                </div>
+
+                                {selectedEmp.status==="inactive" && selectedEmp.deactivation && (
+                                    <div className="rounded-2xl border p-4" style={{background: selectedEmp.deactivation.rehirable?"#f0fdf4":"#fef2f2", borderColor: selectedEmp.deactivation.rehirable?"#bbf7d0":"#fecaca"}}>
+                                        <p className="font-bold text-sm mb-2" style={{color: selectedEmp.deactivation.rehirable?"#166534":"#991b1b"}}>📦 {language==="es"?"Archivado":"Archived"}</p>
+                                        <div className="space-y-1 text-sm" style={{color:"#374151"}}>
+                                            <p><span className="text-gray-400">{language==="es"?"Motivo":"Reason"}:</span> {reasonLabel(selectedEmp.deactivation.reason, language)}</p>
+                                            <p><span className="text-gray-400">{language==="es"?"Recontratable":"Rehirable"}:</span> <span className={"font-bold "+(selectedEmp.deactivation.rehirable?"text-green-700":"text-red-600")}>{selectedEmp.deactivation.rehirable?(language==="es"?"Sí ✅":"Yes ✅"):(language==="es"?"No ❌":"No ❌")}</span></p>
+                                            {selectedEmp.deactivation.note && <p><span className="text-gray-400">{language==="es"?"Nota":"Note"}:</span> {selectedEmp.deactivation.note}</p>}
+                                            <p><span className="text-gray-400">{language==="es"?"Fecha":"Date"}:</span> {new Date(selectedEmp.deactivation.date).toLocaleDateString()} · {selectedEmp.deactivation.by}</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* App / Activation Status */}
+                                <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                                    <p className="font-bold text-gray-800 text-sm mb-2">📱 {language==="es"?"Estado de la App":"App Status"}</p>
+                                    <div className="space-y-1 text-sm">
+                                        <p><span className="text-gray-400">{language==="es"?"Invitado":"Invited"}:</span> {selectedEmp.invitedAt ? new Date(selectedEmp.invitedAt).toLocaleDateString() : "—"}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Primer inicio de sesión":"First login"}:</span> {selectedEmp.activatedAt ? new Date(selectedEmp.activatedAt).toLocaleDateString() : (language==="es"?"Aún no":"Not yet")}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Último inicio":"Last login"}:</span> {selectedEmp.lastLogin ? pdTimeAgo(selectedEmp.lastLogin, language) + " (" + new Date(selectedEmp.lastLogin).toLocaleDateString() + ")" : "—"}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"App instalada":"App installed"}:</span> {selectedEmp.installed ? (language==="es"?"Sí":"Yes") + (selectedEmp.installedAt ? " (" + new Date(selectedEmp.installedAt).toLocaleDateString() + ")" : "") : (language==="es"?"No":"No")}</p>
                                     </div>
                                 </div>
 
@@ -8167,6 +8274,37 @@
                         )}
                         </div>
                         <InviteModal language={language} invite={inviteEmp} onClose={()=>setInviteEmp(null)} />
+                        {deactivating && (
+                            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center animate-in" style={{background:"rgba(0,0,0,0.5)"}} onClick={()=>setDeactivating(null)}>
+                                <div className="card p-5 max-w-md w-full animate-scale" style={{maxHeight:"90vh",overflowY:"auto",borderTopLeftRadius:24,borderTopRightRadius:24}} onClick={e=>e.stopPropagation()}>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <h2 className="font-display text-xl font-bold" style={{color:"var(--text-primary)"}}>📦 {language==="es"?"Archivar Empleado":"Archive Employee"}</h2>
+                                        <button onClick={()=>setDeactivating(null)} className="text-2xl" style={{color:"var(--text-muted)"}}>×</button>
+                                    </div>
+                                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{deactivating.name}</p>
+                                    <div className="space-y-3">
+                                        <div>
+                                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Motivo de baja":"Reason for leaving"}</label>
+                                            <select value={deactForm.reason} onChange={e=>setDeactForm({...deactForm,reason:e.target.value})} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                                                {DEACT_REASONS.map(r=><option key={r.key} value={r.key}>{language==="es"?r.es:r.en}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Nota (opcional)":"Note (optional)"}</label>
+                                            <textarea rows="2" value={deactForm.note} onChange={e=>setDeactForm({...deactForm,note:e.target.value})} placeholder={language==="es"?"Detalles...":"Details..."} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                                        </div>
+                                        <label className="flex items-center gap-2 cursor-pointer p-3 rounded-xl" style={{background:deactForm.rehirable?"#dcfce7":"#fee2e2",border:"1px solid "+(deactForm.rehirable?"#86efac":"#fca5a5")}}>
+                                            <input type="checkbox" checked={deactForm.rehirable} onChange={e=>setDeactForm({...deactForm,rehirable:e.target.checked})} className="w-5 h-5 flex-shrink-0"/>
+                                            <span className="font-bold text-sm" style={{color:deactForm.rehirable?"#166534":"#991b1b"}}>{deactForm.rehirable?(language==="es"?"✅ Elegible para recontratación":"✅ Eligible for rehire"):(language==="es"?"❌ No elegible para recontratación":"❌ Not eligible for rehire")}</span>
+                                        </label>
+                                        <div className="flex gap-2 pt-1">
+                                            <button onClick={()=>setDeactivating(null)} className="flex-1 py-3 rounded-xl font-bold text-sm" style={{background:"var(--bg-subtle)",color:"var(--text-secondary)"}}>{language==="es"?"Cancelar":"Cancel"}</button>
+                                            <button onClick={confirmDeactivate} className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold text-sm active:scale-95">📦 {language==="es"?"Archivar":"Archive"}</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 );
             }
@@ -8176,17 +8314,37 @@
                     <h2 className="text-2xl font-bold text-gray-800 mb-1">👥 {language==="es"?"Empleados":"Employees"}</h2>
                     <p className="text-sm text-gray-400 mb-4">{language==="es"?"Información detallada de cada miembro del personal":"Detailed info on each staff member"}</p>
 
-                    <button onClick={()=>setShowAddEmployee(true)} className="w-full mb-3 py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-md active:scale-95 transition flex items-center justify-center gap-2">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-                        {language==="es"?"Agregar Empleado":"Add New Employee"}
-                    </button>
+                    {!viewArchived && (
+                        <button onClick={()=>setShowAddEmployee(true)} className="w-full mb-3 py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-md active:scale-95 transition flex items-center justify-center gap-2">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                            {language==="es"?"Agregar Empleado":"Add New Employee"}
+                        </button>
+                    )}
 
                     <input type="search" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder={language==="es"?"Buscar...":"Search..."} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm mb-3"/>
 
                     <div className="flex items-center justify-between mb-3">
-                        <p className="text-xs text-gray-500">{visibleEmps.length} {language==="es"?"empleados":"employees"}</p>
-                        <button onClick={()=>setShowInactive(!showInactive)} className="text-xs text-poke-600 font-bold">{showInactive?(language==="es"?"Ocultar inactivos":"Hide inactive"):(language==="es"?"Mostrar inactivos":"Show inactive")}</button>
+                        <p className="text-xs text-gray-500">{visibleEmps.length} {viewArchived ? (language==="es"?"archivados":"archived") : (language==="es"?"empleados":"employees")}</p>
+                        <button onClick={()=>setViewArchived(!viewArchived)} className="text-xs text-poke-600 font-bold">{viewArchived?("← "+(language==="es"?"Personal activo":"Active staff")):("📦 "+(language==="es"?"Archivados":"Archived")+" ("+archivedCount+")")}</button>
                     </div>
+
+                    {!viewArchived && (() => {
+                        const act = employees.filter(e => e.status !== "inactive");
+                        const loggedIn = act.filter(e => e.lastLogin || e.activatedAt).length;
+                        const installed = act.filter(e => e.installed).length;
+                        return (
+                            <div className="grid grid-cols-2 gap-2 mb-3">
+                                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 text-center">
+                                    <p className="text-xl font-bold text-green-600">{loggedIn}<span className="text-sm text-gray-300">/{act.length}</span></p>
+                                    <p className="text-[11px] text-gray-400 font-semibold">{language==="es"?"Han iniciado sesión":"Logged in"}</p>
+                                </div>
+                                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 text-center">
+                                    <p className="text-xl font-bold text-poke-600">{installed}<span className="text-sm text-gray-300">/{act.length}</span></p>
+                                    <p className="text-[11px] text-gray-400 font-semibold">{language==="es"?"Instalaron la app":"Installed the app"}</p>
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     <div className="space-y-2">
                         {visibleEmps.map(emp=>(
@@ -8195,6 +8353,17 @@
                                     <div>
                                         <p className={"font-bold text-sm "+(emp.status==="inactive"?"text-gray-400 line-through":"text-gray-800")}>{emp.name}</p>
                                         <p className="text-xs text-gray-400">{emp.role} · {emp.location==="all"?"All":emp.location==="cwe"?"CWE":"Kirkwood"}{emp.hireDate&&" · Hired "+emp.hireDate}</p>
+                                        {emp.status==="inactive"
+                                            ? <p className="text-[11px] mt-0.5 font-semibold text-gray-500">{reasonLabel(emp.deactivation?.reason, language)}{emp.deactivation && <span className={emp.deactivation.rehirable?"text-green-600":"text-red-500"}> · {emp.deactivation.rehirable?(language==="es"?"Recontratable ✅":"Rehirable ✅"):(language==="es"?"No recontratable ❌":"Not rehirable ❌")}</span>}</p>
+                                            : <p className="text-[11px] mt-0.5 font-semibold">
+                                                {emp.installed
+                                                    ? <span className="text-poke-600">📱 {language==="es"?"App instalada":"App installed"}</span>
+                                                    : (emp.lastLogin || emp.activatedAt)
+                                                        ? <span className="text-green-600">🟢 {language==="es"?"Activo":"Active"}{emp.lastLogin?" · "+pdTimeAgo(emp.lastLogin,language):""}</span>
+                                                        : emp.invitedAt
+                                                            ? <span className="text-amber-500">🟡 {language==="es"?"Invitado · sin iniciar sesión":"Invited · not logged in"}</span>
+                                                            : <span className="text-gray-400">⚪ {language==="es"?"Sin iniciar sesión":"Not logged in"}</span>}
+                                            </p>}
                                     </div>
                                     <span className={"text-xs font-bold "+(emp.status==="active"?"text-green-600":"text-red-500")}>{emp.status==="active"?"✅":"❌"}</span>
                                 </div>
@@ -8303,175 +8472,317 @@
 
         // ============ TEAM MESSAGING ============
         function Messages({ language, staffName, staffList }) {
-            const [channels, setChannels] = useState(["general"]);
-            const [activeChannel, setActiveChannel] = useState("general");
+            const es = language === "es";
+            const myLoc = staffList.find(s => s.name === staffName)?.location || "cwe";
+            const canSeeEveryone = isAdmin(staffName);
+
+            // Staff this user is allowed to see (location separation)
+            const visibleStaff = staffList.filter(s => {
+                if (s.name === staffName) return false;
+                if (canSeeEveryone) return true;
+                return s.location === myLoc || s.location === "all" || myLoc === "all";
+            });
+
+            // Location-scoped channels (no company-wide general)
+            const CHANNELS = [];
+            if (canSeeEveryone) {
+                CHANNELS.push({ id: "cwe", name: "📍 " + (es ? "Equipo CWE" : "CWE Team") });
+                CHANNELS.push({ id: "kirkwood", name: "📍 " + (es ? "Equipo Kirkwood" : "Kirkwood Team") });
+                CHANNELS.push({ id: "managers", name: "👔 " + (es ? "Gerentes" : "Managers") });
+            } else {
+                if (myLoc === "cwe" || myLoc === "all") CHANNELS.push({ id: "cwe", name: "📍 " + (es ? "Equipo CWE" : "CWE Team") });
+                if (myLoc === "kirkwood" || myLoc === "all") CHANNELS.push({ id: "kirkwood", name: "📍 " + (es ? "Equipo Kirkwood" : "Kirkwood Team") });
+            }
+
+            const [activeChannel, setActiveChannel] = useState(CHANNELS[0]?.id || "cwe");
+            const [showDM, setShowDM] = useState(null);
+            const [showGroup, setShowGroup] = useState(null);
             const [messages, setMessages] = useState([]);
             const [newMessage, setNewMessage] = useState("");
-            const [showDM, setShowDM] = useState(null);
+            const [groups, setGroups] = useState([]);
+            const [reads, setReads] = useState({});
+            const [replyTo, setReplyTo] = useState(null);
+            const [reactBar, setReactBar] = useState(null);
+            const [showNewGroup, setShowNewGroup] = useState(false);
+            const [groupName, setGroupName] = useState("");
+            const [groupMembers, setGroupMembers] = useState([]);
             const messagesEndRef = useRef(null);
-            const mgrAccess = isAdmin(staffName);
-            const myLoc = staffList.find(s=>s.name===staffName)?.location || "cwe";
 
-            // Determine channel ID (location-based or direct message)
-            const getChannelId = () => {
-                if (showDM) {
-                    const ids = [staffName, showDM].sort();
-                    return "dm_" + ids.join("_").replace(/\s/g,"_");
-                }
-                if (activeChannel === "general") return "channel_general";
-                if (activeChannel === "managers") return "channel_managers";
-                return "channel_" + activeChannel;
-            };
+            const conv = showGroup
+                ? { type: "group", id: showGroup.id, title: showGroup.name, members: showGroup.members }
+                : showDM
+                    ? { type: "dm", id: "dm_" + [staffName, showDM].sort().join("_").replace(/\s/g, "_"), title: showDM, members: [staffName, showDM] }
+                    : { type: "channel", id: "channel_" + activeChannel, title: null, members: null };
+            const channelId = conv.id;
+            const receiptsOn = conv.type === "dm" || conv.type === "group";
 
-            const channelId = getChannelId();
+            // My group chats
+            useEffect(() => {
+                const unsub = db.collection("messages").where("members", "array-contains", staffName)
+                    .onSnapshot(snap => {
+                        setGroups(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(g => g.type === "group"));
+                    }, () => {});
+                return () => unsub();
+            }, [staffName]);
 
+            // Messages for current conversation
             useEffect(() => {
                 const unsub = db.collection("messages").doc(channelId).collection("msgs")
-                    .orderBy("timestamp", "asc").limit(100).onSnapshot(snap => {
-                        setMessages(snap.docs.map(d=>({id:d.id,...d.data()})));
-                        setTimeout(()=>messagesEndRef.current?.scrollIntoView({behavior:"smooth"}),100);
+                    .orderBy("timestamp", "asc").limit(200).onSnapshot(snap => {
+                        setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
                     });
                 return () => unsub();
             }, [channelId]);
 
-            const sendMessage = async () => {
-                if(!newMessage.trim())return;
-                const msgText = newMessage;
-                await db.collection("messages").doc(channelId).collection("msgs").add({
-                    text: msgText, from: staffName, timestamp: new Date().toISOString()
-                });
-                setNewMessage("");
+            // Read receipts (DMs + groups only): subscribe to parent doc reads map
+            useEffect(() => {
+                if (!receiptsOn) { setReads({}); return; }
+                const unsub = db.collection("messages").doc(channelId)
+                    .onSnapshot(d => { setReads((d.data() && d.data().reads) || {}); }, () => {});
+                return () => unsub();
+            }, [channelId, receiptsOn]);
 
-                // Notify recipients
-                const preview = msgText.length > 120 ? msgText.slice(0,120) + "..." : msgText;
-                if (showDM) {
-                    // DM: notify just that person
-                    sendNotification([showDM], staffName, preview, {type:"dm", sender:staffName});
-                } else {
-                    // Channel: notify everyone in that channel except sender
-                    let recipients = [];
-                    if (activeChannel === "general") {
-                        recipients = staffList.filter(s => s.name !== staffName).map(s => s.name);
-                    } else if (activeChannel === "managers") {
-                        recipients = staffList.filter(s => s.name !== staffName && isAdmin(s.name)).map(s => s.name);
-                    } else if (activeChannel === "cwe") {
-                        recipients = staffList.filter(s => s.name !== staffName && (s.location === "cwe" || s.location === "all")).map(s => s.name);
-                    } else if (activeChannel === "kirkwood") {
-                        recipients = staffList.filter(s => s.name !== staffName && (s.location === "kirkwood" || s.location === "all")).map(s => s.name);
-                    }
-                    if (recipients.length > 0) {
-                        const channelLabel = activeChannel === "general" ? "#general" : activeChannel === "managers" ? "#managers" : "#" + activeChannel;
-                        sendNotification(recipients, staffName + " in " + channelLabel, preview, {type:"channel", channel:activeChannel, sender:staffName});
-                    }
-                }
+            // Mark my read time when viewing incoming messages
+            useEffect(() => {
+                if (!receiptsOn || messages.length === 0) return;
+                const last = messages[messages.length - 1];
+                if (last.from === staffName) return;
+                db.collection("messages").doc(channelId).set({ reads: { [staffName]: new Date().toISOString() } }, { merge: true }).catch(() => {});
+            }, [channelId, messages.length, receiptsOn]);
+
+            const recipientsFor = () => {
+                if (conv.type === "dm") return [showDM];
+                if (conv.type === "group") return (conv.members || []).filter(n => n !== staffName);
+                if (activeChannel === "cwe") return staffList.filter(s => s.name !== staffName && (s.location === "cwe" || s.location === "all")).map(s => s.name);
+                if (activeChannel === "kirkwood") return staffList.filter(s => s.name !== staffName && (s.location === "kirkwood" || s.location === "all")).map(s => s.name);
+                if (activeChannel === "managers") return staffList.filter(s => s.name !== staffName && isAdmin(s.name)).map(s => s.name);
+                return [];
             };
 
-            const CHANNELS = [
-                {id:"general", name:"💬 General", access:"all"},
-                {id:"cwe", name:"📍 CWE", access:"cwe"},
-                {id:"kirkwood", name:"📍 Kirkwood", access:"kirkwood"},
-                {id:"managers", name:"👔 Managers", access:"managers"}
-            ];
+            const sendMessage = async () => {
+                if (!newMessage.trim()) return;
+                const msgText = newMessage;
+                const payload = { text: msgText, from: staffName, timestamp: new Date().toISOString() };
+                if (replyTo) payload.replyTo = { from: replyTo.from, text: replyTo.text.slice(0, 120) };
+                await db.collection("messages").doc(channelId).collection("msgs").add(payload);
+                setNewMessage("");
+                setReplyTo(null);
+                if (receiptsOn) db.collection("messages").doc(channelId).set({ reads: { [staffName]: new Date().toISOString() } }, { merge: true }).catch(() => {});
+                const preview = msgText.length > 120 ? msgText.slice(0, 120) + "..." : msgText;
+                const recipients = recipientsFor();
+                let title, data;
+                if (conv.type === "dm") { title = staffName; data = { type: "dm", sender: staffName }; }
+                else if (conv.type === "group") { title = staffName + " · " + conv.title; data = { type: "group", group: channelId, sender: staffName }; }
+                else { title = staffName + " in #" + activeChannel; data = { type: "channel", channel: activeChannel, sender: staffName }; }
+                if (recipients.length > 0) sendNotification(recipients, title, preview, data);
+            };
 
-            const visibleChannels = CHANNELS.filter(c=>{
-                if(c.access==="all") return true;
-                if(c.access==="managers") return mgrAccess;
-                return myLoc===c.access || myLoc==="all" || mgrAccess;
+            const REACTIONS = ["👍", "❤️", "😂", "🎉", "👀", "❓"];
+            const toggleReaction = async (msg, emoji) => {
+                const reactions = { ...(msg.reactions || {}) };
+                const arr = reactions[emoji] ? [...reactions[emoji]] : [];
+                const i = arr.indexOf(staffName);
+                if (i >= 0) arr.splice(i, 1); else arr.push(staffName);
+                if (arr.length) reactions[emoji] = arr; else delete reactions[emoji];
+                setReactBar(null);
+                await db.collection("messages").doc(channelId).collection("msgs").doc(msg.id).update({ reactions }).catch(() => {});
+            };
+
+            const createGroup = async () => {
+                if (!groupName.trim() || groupMembers.length === 0) return;
+                const members = Array.from(new Set([staffName, ...groupMembers]));
+                const id = "group_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+                await db.collection("messages").doc(id).set({
+                    type: "group", name: groupName.trim(), members,
+                    createdBy: staffName, createdAt: new Date().toISOString()
+                });
+                setShowNewGroup(false); setGroupName(""); setGroupMembers([]);
+                setShowGroup({ id, name: groupName.trim(), members });
+            };
+
+            const lastMineIdx = messages.map(m => m.from === staffName).lastIndexOf(true);
+            const seenLabel = (msg) => {
+                const others = (conv.members || []).filter(n => n !== staffName);
+                const seenBy = others.filter(n => reads[n] && reads[n] >= msg.timestamp);
+                if (seenBy.length === 0) return null;
+                if (conv.type === "dm") return es ? "Visto" : "Seen";
+                return (es ? "Visto por " : "Seen by ") + seenBy.length;
+            };
+
+            const renderBubbles = () => messages.map((m, idx) => {
+                const isMe = m.from === staffName;
+                const seen = (receiptsOn && isMe && idx === lastMineIdx) ? seenLabel(m) : null;
+                return (
+                    <div key={m.id} className={"flex flex-col " + (isMe ? "items-end" : "items-start")}>
+                        <div className="max-w-[80%]" onClick={(e) => { e.stopPropagation(); setReactBar(reactBar === m.id ? null : m.id); }}>
+                            {!isMe && conv.type !== "dm" && <p className="text-xs font-bold mb-0.5 ml-1" style={{ color: "#0891b2" }}>{m.from}</p>}
+                            {m.replyTo && (
+                                <div className="text-[11px] px-2 py-1 mb-0.5 rounded-lg" style={{ background: "var(--bg-subtle)", color: "var(--text-muted)", borderLeft: "2px solid #0891b2" }}>
+                                    <span className="font-bold">{m.replyTo.from}:</span> {m.replyTo.text}
+                                </div>
+                            )}
+                            <div className="px-3 py-2 rounded-2xl" style={isMe ? { background: "#0891b2", color: "white" } : { background: "var(--bg-card)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }}>
+                                <p className="text-sm whitespace-pre-wrap">{m.text}</p>
+                                <p className="text-[10px] mt-1" style={isMe ? { color: "#a5f3fc" } : { color: "var(--text-muted)" }}>{new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                            </div>
+                            {m.reactions && Object.keys(m.reactions).length > 0 && (
+                                <div className={"flex gap-1 mt-0.5 flex-wrap " + (isMe ? "justify-end" : "")}>
+                                    {Object.entries(m.reactions).map(([emo, names]) => (
+                                        <button key={emo} onClick={(e) => { e.stopPropagation(); toggleReaction(m, emo); }} className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ background: names.includes(staffName) ? "#cffafe" : "var(--bg-subtle)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>{emo} {names.length}</button>
+                                    ))}
+                                </div>
+                            )}
+                            {reactBar === m.id && (
+                                <div className={"flex gap-1 mt-1 p-1 rounded-full " + (isMe ? "justify-end" : "")} style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
+                                    {REACTIONS.map(emo => <button key={emo} onClick={(e) => { e.stopPropagation(); toggleReaction(m, emo); }} className="text-base px-1 active:scale-125 transition">{emo}</button>)}
+                                    <button onClick={(e) => { e.stopPropagation(); setReplyTo({ from: m.from, text: m.text }); setReactBar(null); }} className="text-sm font-bold px-2" style={{ color: "#0891b2" }}>↩︎</button>
+                                </div>
+                            )}
+                        </div>
+                        {seen && <p className="text-[10px] mt-0.5 mr-1" style={{ color: "var(--text-muted)" }}>{seen}</p>}
+                    </div>
+                );
             });
 
-            if (showDM) {
+            const composer = () => (
+                <div>
+                    {replyTo && (
+                        <div className="flex items-center justify-between px-3 py-1.5 text-xs" style={{ background: "var(--bg-subtle)", color: "var(--text-muted)" }}>
+                            <span><span className="font-bold">{(es ? "Respondiendo a " : "Replying to ") + replyTo.from}:</span> {replyTo.text.slice(0, 40)}</span>
+                            <button onClick={() => setReplyTo(null)} className="font-bold ml-2 text-base">×</button>
+                        </div>
+                    )}
+                    <div className="p-2 flex gap-2" style={{ background: "var(--bg-card)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+                        <input value={newMessage} onChange={e => setNewMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendMessage())} placeholder={es ? "Mensaje..." : "Message..."} className="flex-1 px-3 py-2 rounded-full text-sm" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }} />
+                        <button onClick={sendMessage} disabled={!newMessage.trim()} className="px-4 py-2 rounded-full font-bold text-sm" style={newMessage.trim() ? { background: "#0891b2", color: "white" } : { background: "var(--bg-subtle)", color: "var(--text-muted)" }}>↑</button>
+                    </div>
+                </div>
+            );
+
+            // Full-screen conversation (DM or group)
+            if (showDM || showGroup) {
+                const subtitle = conv.type === "dm"
+                    ? (es ? "Mensaje directo" : "Direct message")
+                    : (conv.members || []).length + " " + (es ? "miembros" : "members");
                 return (
-                    <div className="fixed inset-0 z-50 flex flex-col" style={{background: "var(--bg-primary)"}}>
-                        <div className="p-4 bg-gradient-to-r from-poke-700 to-poke-600 text-white shadow-lg" style={{paddingTop: "max(16px, env(safe-area-inset-top))"}}>
-                            <button onClick={()=>setShowDM(null)} className="text-sm font-bold mb-1 flex items-center gap-1 active:opacity-70">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M19 12H5"/>
-                                    <path d="M12 19l-7-7 7-7"/>
-                                </svg>
-                                {language==="es"?"Volver":"Back"}
+                    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "var(--bg-primary)" }}>
+                        <div className="p-4 bg-gradient-to-r from-poke-700 to-poke-600 text-white shadow-lg" style={{ paddingTop: "max(16px, env(safe-area-inset-top))" }}>
+                            <button onClick={() => { setShowDM(null); setShowGroup(null); setReplyTo(null); setReactBar(null); }} className="text-sm font-bold mb-1 flex items-center gap-1 active:opacity-70">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>
+                                {es ? "Volver" : "Back"}
                             </button>
                             <div className="flex items-center gap-3 mt-1">
-                                <Avatar name={showDM} prefs={{}} size={36} />
+                                {conv.type === "dm"
+                                    ? <Avatar name={showDM} prefs={{}} size={36} />
+                                    : <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg" style={{ background: "#cffafe" }}>👥</div>}
                                 <div>
-                                    <h2 className="text-lg font-bold leading-tight">{showDM}</h2>
-                                    <p className="text-xs text-poke-200">{language==="es"?"Mensaje directo":"Direct message"}</p>
+                                    <h2 className="text-lg font-bold leading-tight">{conv.title}</h2>
+                                    <p className="text-xs text-poke-200">{subtitle}</p>
                                 </div>
                             </div>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-2" style={{background:"var(--bg-subtle)"}}>
-                            {messages.length===0&&<p className="text-center text-sm py-8" style={{color:"var(--text-muted)"}}>{language==="es"?"Empieza la conversación":"Start the conversation"}</p>}
-                            {messages.map(m=>{
-                                const isMe = m.from===staffName;
-                                return (
-                                    <div key={m.id} className={"flex "+(isMe?"justify-end":"justify-start")}>
-                                        <div className="max-w-xs px-3 py-2 rounded-2xl" style={isMe?{background:"#0891b2",color:"white"}:{background:"var(--bg-card)",border:"1px solid var(--border-subtle)",color:"var(--text-primary)"}}>
-                                            <p className="text-sm whitespace-pre-wrap">{m.text}</p>
-                                            <p className="text-[10px] mt-1" style={isMe?{color:"#a5f3fc"}:{color:"var(--text-muted)"}}>{new Date(m.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                            <div ref={messagesEndRef}/>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ background: "var(--bg-subtle)" }} onClick={() => setReactBar(null)}>
+                            {messages.length === 0 && <p className="text-center text-sm py-8" style={{ color: "var(--text-muted)" }}>{es ? "Empieza la conversación" : "Start the conversation"}</p>}
+                            {renderBubbles()}
+                            <div ref={messagesEndRef} />
                         </div>
-                        <div className="p-3 flex gap-2" style={{background:"var(--bg-card)",borderTop:"1px solid var(--border-subtle)", paddingBottom: "max(12px, env(safe-area-inset-bottom))"}}>
-                            <input value={newMessage} onChange={e=>setNewMessage(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),sendMessage())} placeholder={language==="es"?"Mensaje...":"Message..."} className="flex-1 px-4 py-2 rounded-full text-sm" style={{background:"var(--bg-card)",border:"1px solid var(--border-subtle)",color:"var(--text-primary)"}}/>
-                            <button onClick={sendMessage} disabled={!newMessage.trim()} className="px-4 py-2 rounded-full font-bold text-sm" style={newMessage.trim()?{background:"#0891b2",color:"white"}:{background:"var(--bg-subtle)",color:"var(--text-muted)"}}>↑</button>
-                        </div>
+                        {composer()}
                     </div>
                 );
             }
 
+            // Hub: channels + group chats + direct messages
             return (
                 <div className="p-4 pb-24 animate-in">
-                    <div className="sticky z-20 -mx-4 px-4 py-2 mb-4" style={{top: "0px", background: "var(--bg-primary)"}}>
-                        <h2 className="text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>💬 {language==="es"?"Mensajes":"Messages"}</h2>
-
-                        {/* Channels */}
-                        <div className="flex gap-2 overflow-x-auto pb-1" style={{scrollbarWidth: "none"}}>
-                            {visibleChannels.map(c=>(
-                                <button key={c.id} onClick={()=>setActiveChannel(c.id)} className={"px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition "+(activeChannel===c.id?"bg-poke-600 text-white":"")} style={activeChannel===c.id?{}:{background:"var(--bg-subtle)",color:"var(--text-secondary)"}}>{c.name}</button>
+                    <div className="sticky z-20 -mx-4 px-4 py-2 mb-4" style={{ top: "0px", background: "var(--bg-primary)" }}>
+                        <h2 className="text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>💬 {es ? "Mensajes" : "Messages"}</h2>
+                        <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+                            {CHANNELS.map(c => (
+                                <button key={c.id} onClick={() => setActiveChannel(c.id)} className={"px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition " + (activeChannel === c.id ? "bg-poke-600 text-white" : "")} style={activeChannel === c.id ? {} : { background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>{c.name}</button>
                             ))}
                         </div>
                     </div>
 
-                    {/* Channel Messages */}
-                    <div className="rounded-2xl shadow-sm mb-4 overflow-hidden" style={{background:"var(--bg-card)",border:"1px solid var(--border-subtle)"}}>
-                        <div className="max-h-96 overflow-y-auto p-3 space-y-2" style={{background:"var(--bg-subtle)"}}>
-                            {messages.length===0&&<p className="text-center text-sm py-8" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin mensajes":"No messages yet"}</p>}
-                            {messages.map(m=>{
-                                const isMe = m.from===staffName;
-                                return (
-                                    <div key={m.id} className={"flex "+(isMe?"justify-end":"justify-start")}>
-                                        <div className="max-w-xs px-3 py-2 rounded-2xl" style={isMe?{background:"#0891b2",color:"white"}:{background:"var(--bg-card)",border:"1px solid var(--border-subtle)",color:"var(--text-primary)"}}>
-                                            {!isMe&&<p className="text-xs font-bold mb-0.5" style={{color:"#0891b2"}}>{m.from}</p>}
-                                            <p className="text-sm whitespace-pre-wrap">{m.text}</p>
-                                            <p className="text-[10px] mt-1" style={isMe?{color:"#a5f3fc"}:{color:"var(--text-muted)"}}>{new Date(m.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                            <div ref={messagesEndRef}/>
+                    <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>📣 {es ? "Los mensajes aquí llegan a todo el equipo de esta ubicación." : "Messages here reach everyone on this location's team."}</p>
+
+                    {/* Channel messages */}
+                    <div className="rounded-2xl shadow-sm mb-4 overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
+                        <div className="max-h-96 overflow-y-auto p-3 space-y-3" style={{ background: "var(--bg-subtle)" }} onClick={() => setReactBar(null)}>
+                            {messages.length === 0 && <p className="text-center text-sm py-8" style={{ color: "var(--text-muted)" }}>{es ? "Sin mensajes" : "No messages yet"}</p>}
+                            {renderBubbles()}
+                            <div ref={messagesEndRef} />
                         </div>
-                        <div className="p-2 flex gap-2" style={{background:"var(--bg-card)",borderTop:"1px solid var(--border-subtle)"}}>
-                            <input value={newMessage} onChange={e=>setNewMessage(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),sendMessage())} placeholder={language==="es"?"Mensaje...":"Message..."} className="flex-1 px-3 py-2 rounded-full text-sm" style={{background:"var(--bg-card)",border:"1px solid var(--border-subtle)",color:"var(--text-primary)"}}/>
-                            <button onClick={sendMessage} disabled={!newMessage.trim()} className="px-3 py-2 rounded-full font-bold text-sm" style={newMessage.trim()?{background:"#0891b2",color:"white"}:{background:"var(--bg-subtle)",color:"var(--text-muted)"}}>↑</button>
-                        </div>
+                        {composer()}
                     </div>
 
-                    {/* Direct Message Staff */}
-                    <p className="font-bold text-sm mb-2" style={{color:"var(--text-primary)"}}>📩 {language==="es"?"Mensajes Directos":"Direct Messages"}</p>
-                    <div className="space-y-1">
-                        {staffList.filter(s=>s.name!==staffName).map(s=>(
-                            <button key={s.id} onClick={()=>setShowDM(s.name)} className="w-full flex items-center gap-3 p-3 rounded-xl active:opacity-70 transition" style={{background:"var(--bg-card)",border:"1px solid var(--border-subtle)"}}>
-                                <div className="w-10 h-10 rounded-full font-bold flex items-center justify-center" style={{background:"#cffafe",color:"#155e75"}}>{s.name.split(" ").map(n=>n[0]).join("")}</div>
+                    {/* Group chats */}
+                    <div className="flex items-center justify-between mb-2">
+                        <p className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>👥 {es ? "Chats de Grupo" : "Group Chats"}</p>
+                        <button onClick={() => { setGroupName(""); setGroupMembers([]); setShowNewGroup(true); }} className="text-xs font-bold px-2.5 py-1 rounded-full bg-poke-600 text-white">+ {es ? "Nuevo" : "New"}</button>
+                    </div>
+                    <div className="space-y-1 mb-4">
+                        {groups.length === 0 && <p className="text-xs italic" style={{ color: "var(--text-muted)" }}>{es ? "Aún no hay grupos. Crea uno." : "No groups yet. Create one."}</p>}
+                        {groups.map(g => (
+                            <button key={g.id} onClick={() => setShowGroup(g)} className="w-full flex items-center gap-3 p-3 rounded-xl active:opacity-70 transition" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
+                                <div className="w-10 h-10 rounded-full font-bold flex items-center justify-center text-lg" style={{ background: "#cffafe", color: "#155e75" }}>👥</div>
                                 <div className="flex-1 text-left">
-                                    <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>{s.name}</p>
-                                    <p className="text-xs" style={{color:"var(--text-muted)"}}>{s.role}</p>
+                                    <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{g.name}</p>
+                                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{(g.members || []).length} {es ? "miembros" : "members"}</p>
                                 </div>
                                 <span className="text-gray-300">→</span>
                             </button>
                         ))}
                     </div>
+
+                    {/* Direct messages */}
+                    <p className="font-bold text-sm mb-2" style={{ color: "var(--text-primary)" }}>📩 {es ? "Mensajes Directos" : "Direct Messages"}</p>
+                    <div className="space-y-1">
+                        {visibleStaff.map(s => (
+                            <button key={s.id} onClick={() => setShowDM(s.name)} className="w-full flex items-center gap-3 p-3 rounded-xl active:opacity-70 transition" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
+                                <div className="w-10 h-10 rounded-full font-bold flex items-center justify-center" style={{ background: "#cffafe", color: "#155e75" }}>{s.name.split(" ").map(n => n[0]).join("")}</div>
+                                <div className="flex-1 text-left">
+                                    <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{s.name}</p>
+                                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{s.role}</p>
+                                </div>
+                                <span className="text-gray-300">→</span>
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* New group modal */}
+                    {showNewGroup && (
+                        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center animate-in" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => setShowNewGroup(false)}>
+                            <div className="card p-5 max-w-md w-full animate-scale" style={{ maxHeight: "90vh", overflowY: "auto", borderTopLeftRadius: 24, borderTopRightRadius: 24 }} onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>👥 {es ? "Nuevo Grupo" : "New Group Chat"}</h2>
+                                    <button onClick={() => setShowNewGroup(false)} className="text-2xl" style={{ color: "var(--text-muted)" }}>×</button>
+                                </div>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{es ? "Nombre del grupo" : "Group name"}</label>
+                                        <input value={groupName} onChange={e => setGroupName(e.target.value)} placeholder={es ? "Ej. Turno de cierre" : "e.g. Closing crew"} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)" }} />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{es ? "Miembros" : "Members"} ({groupMembers.length})</label>
+                                        <div className="mt-1 space-y-1 max-h-60 overflow-y-auto">
+                                            {visibleStaff.map(s => {
+                                                const on = groupMembers.includes(s.name);
+                                                return (
+                                                    <label key={s.id} className="flex items-center gap-2 p-2 rounded-lg cursor-pointer" style={{ background: on ? "#cffafe" : "var(--bg-subtle)" }}>
+                                                        <input type="checkbox" checked={on} onChange={() => setGroupMembers(on ? groupMembers.filter(n => n !== s.name) : [...groupMembers, s.name])} className="w-4 h-4" />
+                                                        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{s.name}</span>
+                                                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>{s.role}</span>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <button onClick={createGroup} disabled={!groupName.trim() || groupMembers.length === 0} className={"w-full py-3 rounded-xl font-bold text-sm " + (groupName.trim() && groupMembers.length ? "bg-poke-600 text-white" : "bg-gray-200 text-gray-400")}>{es ? "Crear Grupo" : "Create Group"}</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -9221,7 +9532,7 @@
             };
 
             const deleteExpense = async (id) => {
-                if (!confirm(language==="es"?"¿Eliminar este gasto?":"Delete this expense?")) return;
+                if (!(await window.askConfirm({ title: language==="es"?"¿Eliminar este gasto?":"Delete this expense?", danger: true }))) return;
                 await db.collection("expenses").doc(id).delete();
                 window.showToast(language==="es"?"Eliminado":"Deleted","success");
             };
@@ -10682,6 +10993,7 @@
                     return t || "home";
                 } catch(e) { return "home"; }
             });
+            const [empAutoAdd, setEmpAutoAdd] = useState(false);
 
             // Listen for service worker messages (notification clicks while app is open)
             useEffect(() => {
@@ -11061,11 +11373,11 @@
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} staffList={staffList} />}
                         {activeTab === "dashboard" && staffIsOwner && <Dashboard language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "bookkeeping" && staffIsOwner && <Bookkeeping language={language} staffName={staffName} />}
-                        {activeTab === "employees" && staffIsOwner && <Employees language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "employees" && staffIsOwner && <Employees language={language} staffName={staffName} staffList={staffList} autoAdd={empAutoAdd} onAutoAddHandled={()=>setEmpAutoAdd(false)} />}
                         {activeTab === "messages" && <Messages language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "recipes" && canViewRecipes && <Recipes language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
-                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} />}
+                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} goAddEmployee={()=>{ setEmpAutoAdd(true); setActiveTab("employees"); }} />}
                         {activeTab === "timeclock" && <TimeClock language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "checklists" && <Checklists language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "allergens" && <Allergens language={language} />}
