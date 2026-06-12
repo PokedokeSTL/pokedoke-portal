@@ -8633,107 +8633,144 @@
             const es = language === "es";
             const myLoc = staffList.find(s => s.name === staffName)?.location || "cwe";
             const canSeeEveryone = isAdmin(staffName);
+            const admin = isAdmin(staffName);
 
-            // Staff this user is allowed to see (location separation)
             const visibleStaff = staffList.filter(s => {
                 if (s.name === staffName) return false;
                 if (canSeeEveryone) return true;
                 return s.location === myLoc || s.location === "all" || myLoc === "all";
             });
 
-            // Location-scoped channels (no company-wide general)
             const CHANNELS = [];
             if (canSeeEveryone) {
-                CHANNELS.push({ id: "cwe", name: "📍 " + (es ? "Equipo CWE" : "CWE Team") });
-                CHANNELS.push({ id: "kirkwood", name: "📍 " + (es ? "Equipo Kirkwood" : "Kirkwood Team") });
-                CHANNELS.push({ id: "managers", name: "👔 " + (es ? "Gerentes" : "Managers") });
+                CHANNELS.push({ id: "cwe", label: es ? "Equipo CWE" : "CWE Team", emoji: "📍" });
+                CHANNELS.push({ id: "kirkwood", label: es ? "Equipo Kirkwood" : "Kirkwood Team", emoji: "📍" });
+                CHANNELS.push({ id: "managers", label: es ? "Gerentes" : "Managers", emoji: "👔" });
             } else {
-                if (myLoc === "cwe" || myLoc === "all") CHANNELS.push({ id: "cwe", name: "📍 " + (es ? "Equipo CWE" : "CWE Team") });
-                if (myLoc === "kirkwood" || myLoc === "all") CHANNELS.push({ id: "kirkwood", name: "📍 " + (es ? "Equipo Kirkwood" : "Kirkwood Team") });
+                if (myLoc === "cwe" || myLoc === "all") CHANNELS.push({ id: "cwe", label: es ? "Equipo CWE" : "CWE Team", emoji: "📍" });
+                if (myLoc === "kirkwood" || myLoc === "all") CHANNELS.push({ id: "kirkwood", label: es ? "Equipo Kirkwood" : "Kirkwood Team", emoji: "📍" });
             }
 
-            const [activeChannel, setActiveChannel] = useState(CHANNELS[0]?.id || "cwe");
-            const [showDM, setShowDM] = useState(null);
-            const [showGroup, setShowGroup] = useState(null);
+            const [openConv, setOpenConv] = useState(null);
             const [messages, setMessages] = useState([]);
             const [newMessage, setNewMessage] = useState("");
-            const [groups, setGroups] = useState([]);
+            const [convDocs, setConvDocs] = useState([]);
+            const [channelDocs, setChannelDocs] = useState({});
             const [reads, setReads] = useState({});
+            const [pinned, setPinned] = useState(null);
             const [replyTo, setReplyTo] = useState(null);
             const [reactBar, setReactBar] = useState(null);
+            const [search, setSearch] = useState("");
+            const [showCompose, setShowCompose] = useState(false);
             const [showNewGroup, setShowNewGroup] = useState(false);
             const [groupName, setGroupName] = useState("");
             const [groupMembers, setGroupMembers] = useState([]);
+            const [urgent, setUrgent] = useState(false);
+            const [uploading, setUploading] = useState(false);
+            const [seenByMsg, setSeenByMsg] = useState(null);
+            const fileRef = useRef(null);
             const messagesEndRef = useRef(null);
 
-            const conv = showGroup
-                ? { type: "group", id: showGroup.id, title: showGroup.name, members: showGroup.members }
-                : showDM
-                    ? { type: "dm", id: "dm_" + [staffName, showDM].sort().join("_").replace(/\s/g, "_"), title: showDM, members: [staffName, showDM] }
-                    : { type: "channel", id: "channel_" + activeChannel, title: null, members: null };
-            const channelId = conv.id;
-            const receiptsOn = conv.type === "dm" || conv.type === "group";
+            const channelId = openConv ? openConv.id : null;
+            const isChannel = openConv && openConv.kind === "channel";
+            const isDM = openConv && openConv.kind === "dm";
+            const isGroup = openConv && openConv.kind === "group";
 
-            // My group chats
+            // Subscribe: my groups + DMs (members array-contains me)
             useEffect(() => {
                 const unsub = db.collection("messages").where("members", "array-contains", staffName)
-                    .onSnapshot(snap => {
-                        setGroups(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(g => g.type === "group"));
-                    }, () => {});
+                    .onSnapshot(snap => setConvDocs(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
                 return () => unsub();
             }, [staffName]);
 
-            // Messages for current conversation
+            // Subscribe: channel parent docs (last message, reads, pinned)
             useEffect(() => {
+                const unsubs = CHANNELS.map(c => db.collection("messages").doc("channel_" + c.id)
+                    .onSnapshot(d => setChannelDocs(prev => ({ ...prev, [c.id]: d.exists ? d.data() : {} })), () => {}));
+                return () => unsubs.forEach(u => u());
+            }, [staffName]);
+
+            // Messages for the open conversation
+            useEffect(() => {
+                if (!channelId) { setMessages([]); return; }
                 const unsub = db.collection("messages").doc(channelId).collection("msgs")
-                    .orderBy("timestamp", "asc").limit(200).onSnapshot(snap => {
+                    .orderBy("timestamp", "asc").limit(300).onSnapshot(snap => {
                         setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
                     });
                 return () => unsub();
             }, [channelId]);
 
-            // Read receipts (DMs + groups only): subscribe to parent doc reads map
+            // Parent doc (reads + pinned) for the open conversation
             useEffect(() => {
-                if (!receiptsOn) { setReads({}); return; }
+                if (!channelId) { setReads({}); setPinned(null); return; }
                 const unsub = db.collection("messages").doc(channelId)
-                    .onSnapshot(d => { setReads((d.data() && d.data().reads) || {}); }, () => {});
+                    .onSnapshot(d => { const x = d.data() || {}; setReads(x.reads || {}); setPinned(x.pinned || null); }, () => {});
                 return () => unsub();
-            }, [channelId, receiptsOn]);
+            }, [channelId]);
 
-            // Mark my read time when viewing incoming messages
+            const markRead = () => {
+                if (!channelId) return;
+                db.collection("messages").doc(channelId).set({ reads: { [staffName]: new Date().toISOString() } }, { merge: true }).catch(() => {});
+            };
             useEffect(() => {
-                if (!receiptsOn || messages.length === 0) return;
+                if (!channelId || messages.length === 0) return;
                 const last = messages[messages.length - 1];
                 if (last.from === staffName) return;
-                db.collection("messages").doc(channelId).set({ reads: { [staffName]: new Date().toISOString() } }, { merge: true }).catch(() => {});
-            }, [channelId, messages.length, receiptsOn]);
+                markRead();
+            }, [channelId, messages.length]);
 
-            const recipientsFor = () => {
-                if (conv.type === "dm") return [showDM];
-                if (conv.type === "group") return (conv.members || []).filter(n => n !== staffName);
-                if (activeChannel === "cwe") return staffList.filter(s => s.name !== staffName && (s.location === "cwe" || s.location === "all")).map(s => s.name);
-                if (activeChannel === "kirkwood") return staffList.filter(s => s.name !== staffName && (s.location === "kirkwood" || s.location === "all")).map(s => s.name);
-                if (activeChannel === "managers") return staffList.filter(s => s.name !== staffName && isAdmin(s.name)).map(s => s.name);
+            const recipientsFor = (conv) => {
+                if (conv.kind === "dm") return (conv.members || []).filter(n => n !== staffName);
+                if (conv.kind === "group") return (conv.members || []).filter(n => n !== staffName);
+                if (conv.channelKey === "cwe") return staffList.filter(s => s.name !== staffName && (s.location === "cwe" || s.location === "all")).map(s => s.name);
+                if (conv.channelKey === "kirkwood") return staffList.filter(s => s.name !== staffName && (s.location === "kirkwood" || s.location === "all")).map(s => s.name);
+                if (conv.channelKey === "managers") return staffList.filter(s => s.name !== staffName && isAdmin(s.name)).map(s => s.name);
                 return [];
             };
 
-            const sendMessage = async () => {
-                if (!newMessage.trim()) return;
-                const msgText = newMessage;
-                const payload = { text: msgText, from: staffName, timestamp: new Date().toISOString() };
-                if (replyTo) payload.replyTo = { from: replyTo.from, text: replyTo.text.slice(0, 120) };
-                await db.collection("messages").doc(channelId).collection("msgs").add(payload);
-                setNewMessage("");
-                setReplyTo(null);
-                if (receiptsOn) db.collection("messages").doc(channelId).set({ reads: { [staffName]: new Date().toISOString() } }, { merge: true }).catch(() => {});
-                const preview = msgText.length > 120 ? msgText.slice(0, 120) + "..." : msgText;
-                const recipients = recipientsFor();
+            const sendMessage = async (opts) => {
+                opts = opts || {};
+                const text = (opts.text !== undefined ? opts.text : newMessage);
+                const imageUrl = opts.imageUrl || null;
+                if ((!text || !text.trim()) && !imageUrl) return;
+                const conv = openConv;
+                if (!conv) return;
+                const ts = new Date().toISOString();
+                const wasUrgent = urgent;
+                const payload = { from: staffName, timestamp: ts };
+                if (text && text.trim()) payload.text = text.trim();
+                if (imageUrl) payload.imageUrl = imageUrl;
+                if (replyTo) payload.replyTo = { from: replyTo.from, text: (replyTo.text || "").slice(0, 120) };
+                if (wasUrgent) payload.urgent = true;
+                await db.collection("messages").doc(conv.id).collection("msgs").add(payload);
+                if (opts.text === undefined) setNewMessage("");
+                setReplyTo(null); setUrgent(false);
+                const previewText = (imageUrl && !(text && text.trim())) ? (es ? "📷 Foto" : "📷 Photo") : (text || "").trim();
+                const meta = { lastMessage: { text: previewText, from: staffName, at: ts, urgent: !!wasUrgent }, updatedAt: ts, reads: { [staffName]: ts } };
+                if (conv.kind === "dm") { meta.type = "dm"; meta.members = conv.members; }
+                await db.collection("messages").doc(conv.id).set(meta, { merge: true }).catch(() => {});
+                const preview = (wasUrgent ? "🚨 " : "") + (previewText.length > 120 ? previewText.slice(0, 120) + "..." : previewText);
+                const recipients = recipientsFor(conv);
                 let title, data;
-                if (conv.type === "dm") { title = staffName; data = { type: "dm", sender: staffName }; }
-                else if (conv.type === "group") { title = staffName + " · " + conv.title; data = { type: "group", group: channelId, sender: staffName }; }
-                else { title = staffName + " in #" + activeChannel; data = { type: "channel", channel: activeChannel, sender: staffName }; }
-                if (recipients.length > 0) sendNotification(recipients, title, preview, data);
+                if (conv.kind === "dm") { title = (wasUrgent ? "🚨 " : "") + staffName; data = { type: "dm", sender: staffName }; }
+                else if (conv.kind === "group") { title = (wasUrgent ? "🚨 " : "") + staffName + " · " + conv.title; data = { type: "group", group: conv.id, sender: staffName }; }
+                else { title = (wasUrgent ? "🚨 " : "") + staffName + " · " + conv.title; data = { type: "channel", channel: conv.channelKey, sender: staffName }; }
+                if (recipients.length) sendNotification(recipients, title, preview, data);
+            };
+
+            const onPickPhoto = async (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file || !openConv) return;
+                setUploading(true);
+                try {
+                    const ref = storage.ref().child("chat-photos/" + openConv.id + "/" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) + ".jpg");
+                    await ref.put(file);
+                    const url = await ref.getDownloadURL();
+                    await sendMessage({ text: "", imageUrl: url });
+                } catch (err) { window.showToast(es ? "Error al subir la foto" : "Photo upload failed", "error"); }
+                setUploading(false);
+                if (fileRef.current) fileRef.current.value = "";
             };
 
             const REACTIONS = ["👍", "❤️", "😂", "🎉", "👀", "❓"];
@@ -8744,45 +8781,135 @@
                 if (i >= 0) arr.splice(i, 1); else arr.push(staffName);
                 if (arr.length) reactions[emoji] = arr; else delete reactions[emoji];
                 setReactBar(null);
-                await db.collection("messages").doc(channelId).collection("msgs").doc(msg.id).update({ reactions }).catch(() => {});
+                await db.collection("messages").doc(openConv.id).collection("msgs").doc(msg.id).update({ reactions }).catch(() => {});
             };
 
-            const createGroup = async () => {
-                if (!groupName.trim() || groupMembers.length === 0) return;
-                const members = Array.from(new Set([staffName, ...groupMembers]));
+            const pinMessage = async (m) => {
+                if (!openConv) return;
+                await db.collection("messages").doc(openConv.id).set({ pinned: { text: m.text || (es ? "📷 Foto" : "📷 Photo"), from: m.from, at: m.timestamp, by: staffName } }, { merge: true }).catch(() => {});
+                setReactBar(null);
+                window.showToast(es ? "Mensaje fijado" : "Message pinned", "success");
+            };
+            const unpin = async () => {
+                await db.collection("messages").doc(openConv.id).set({ pinned: firebase.firestore.FieldValue.delete() }, { merge: true }).catch(() => {});
+                window.showToast(es ? "Desfijado" : "Unpinned", "info");
+            };
+
+            const createGroup = async (presetName, presetMembers) => {
+                const nm = (presetName !== undefined ? presetName : groupName).trim();
+                const mem = presetMembers || groupMembers;
+                if (!nm || mem.length === 0) return;
+                const members = Array.from(new Set([staffName, ...mem]));
                 const id = "group_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-                await db.collection("messages").doc(id).set({
-                    type: "group", name: groupName.trim(), members,
-                    createdBy: staffName, createdAt: new Date().toISOString()
-                });
-                setShowNewGroup(false); setGroupName(""); setGroupMembers([]);
-                setShowGroup({ id, name: groupName.trim(), members });
+                await db.collection("messages").doc(id).set({ type: "group", name: nm, members, createdBy: staffName, createdAt: new Date().toISOString() });
+                setShowNewGroup(false); setShowCompose(false); setGroupName(""); setGroupMembers([]);
+                setOpenConv({ kind: "group", id, title: nm, members });
             };
 
+            const messageTodaysCrew = async () => {
+                try {
+                    const t = new Date();
+                    const monday = new Date(t); monday.setDate(t.getDate() - ((t.getDay() + 6) % 7));
+                    const weekStartStr = fmtLocalDate(monday);
+                    const dayKey = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][(t.getDay() + 6) % 7];
+                    const locs = myLoc === "all" ? ["cwe", "kirkwood"] : [myLoc];
+                    let names = [];
+                    for (const loc of locs) {
+                        const doc = await db.collection("schedules").doc(loc + "_" + weekStartStr).get();
+                        if (doc.exists) {
+                            const data = doc.data();
+                            const pub = data.publishedShifts || (data.status === "published" ? (data.shifts || []) : []);
+                            pub.forEach(s => { if (s.day === dayKey && s.employee && s.employee !== "__OPEN__") names.push(s.employee); });
+                        }
+                    }
+                    names = Array.from(new Set(names)).filter(n => n !== staffName);
+                    if (names.length === 0) { window.showToast(es ? "Nadie está programado hoy" : "No one is scheduled today", "info"); return; }
+                    const label = (es ? "Equipo de hoy " : "Today's crew ") + t.toLocaleDateString(es ? "es-ES" : "en-US", { month: "short", day: "numeric" });
+                    await createGroup(label, names);
+                } catch (err) { window.showToast(es ? "No se pudo cargar el horario" : "Couldn't load the schedule", "error"); }
+            };
+
+            // ===== Build inbox =====
+            const fmtWhen = (iso) => {
+                if (!iso) return "";
+                const d = new Date(iso), now = new Date();
+                const sameDay = d.toDateString() === now.toDateString();
+                const yest = new Date(now); yest.setDate(now.getDate() - 1);
+                if (sameDay) return d.toLocaleTimeString(es ? "es-ES" : "en-US", { hour: "numeric", minute: "2-digit" });
+                if (d.toDateString() === yest.toDateString()) return es ? "Ayer" : "Yest";
+                return d.toLocaleDateString(es ? "es-ES" : "en-US", { month: "numeric", day: "numeric" });
+            };
+            const isUnread = (c) => c.lastMessage && c.lastMessage.from !== staffName && (!c.readAt || c.readAt < c.lastMessage.at);
+
+            const channelConvs = CHANNELS.map(c => {
+                const d = channelDocs[c.id] || {};
+                return { kind: "channel", id: "channel_" + c.id, channelKey: c.id, title: c.label, emoji: c.emoji, lastMessage: d.lastMessage, readAt: d.reads && d.reads[staffName], pinned: d.pinned };
+            });
+            const groupConvs = convDocs.filter(d => d.type === "group").map(d => ({ kind: "group", id: d.id, title: d.name, members: d.members, lastMessage: d.lastMessage, readAt: d.reads && d.reads[staffName] }))
+                .sort((a, b) => ((b.lastMessage && b.lastMessage.at) || "").localeCompare((a.lastMessage && a.lastMessage.at) || ""));
+            const dmConvs = convDocs.filter(d => d.type === "dm").map(d => { const other = (d.members || []).find(n => n !== staffName); return { kind: "dm", id: d.id, title: other, members: d.members, lastMessage: d.lastMessage, readAt: d.reads && d.reads[staffName] }; })
+                .sort((a, b) => ((b.lastMessage && b.lastMessage.at) || "").localeCompare((a.lastMessage && a.lastMessage.at) || ""));
+
+            const query = search.trim().toLowerCase();
+            const matchSearch = (c) => !query || (c.title || "").toLowerCase().includes(query) || (c.lastMessage && (c.lastMessage.text || "").toLowerCase().includes(query));
+
+            const previewOf = (c) => {
+                if (!c.lastMessage) return es ? "Sin mensajes aún" : "No messages yet";
+                const lm = c.lastMessage;
+                const who = lm.from === staffName ? (es ? "Tú: " : "You: ") : (c.kind === "dm" ? "" : (lm.from || "").split(" ")[0] + ": ");
+                return (lm.urgent ? "🚨 " : "") + who + (lm.text || "");
+            };
+
+            const ConvRow = (c) => {
+                const unread = isUnread(c);
+                return (
+                    <button key={c.id} onClick={() => { setOpenConv(c); setReactBar(null); setSearch(""); }} className="w-full flex items-center gap-3 px-1 py-2.5 active:opacity-70 transition text-left">
+                        {c.kind === "dm"
+                            ? <Avatar name={c.title} prefs={{}} size={44} />
+                            : <div className="rounded-full flex items-center justify-center text-xl flex-none" style={{ width: 44, height: 44, background: unread ? "#cffafe" : "var(--bg-subtle)" }}>{c.kind === "channel" ? c.emoji : "👥"}</div>}
+                        <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-center gap-2">
+                                <span className="text-sm truncate" style={{ fontWeight: unread ? 700 : 500, color: "var(--text-primary)" }}>{c.title}</span>
+                                <span className="text-[11px] flex-none" style={{ color: unread ? "#0891b2" : "var(--text-muted)" }}>{c.lastMessage ? fmtWhen(c.lastMessage.at) : ""}</span>
+                            </div>
+                            <div className="flex justify-between items-center gap-2">
+                                <span className="text-xs truncate" style={{ color: unread ? "var(--text-primary)" : "var(--text-muted)", fontWeight: unread ? 600 : 400 }}>{previewOf(c)}</span>
+                                {unread && <span className="flex-none rounded-full" style={{ width: 9, height: 9, background: "#0891b2" }}></span>}
+                            </div>
+                        </div>
+                    </button>
+                );
+            };
+
+            // ===== Message bubbles =====
             const lastMineIdx = messages.map(m => m.from === staffName).lastIndexOf(true);
             const seenLabel = (msg) => {
-                const others = (conv.members || []).filter(n => n !== staffName);
+                const others = (openConv && openConv.members ? openConv.members : []).filter(n => n !== staffName);
                 const seenBy = others.filter(n => reads[n] && reads[n] >= msg.timestamp);
                 if (seenBy.length === 0) return null;
-                if (conv.type === "dm") return es ? "Visto" : "Seen";
+                if (isDM) return es ? "Visto" : "Seen";
                 return (es ? "Visto por " : "Seen by ") + seenBy.length;
             };
+            const channelSeenNames = (msg) => Object.keys(reads).filter(n => n !== msg.from && reads[n] >= msg.timestamp);
 
             const renderBubbles = () => messages.map((m, idx) => {
                 const isMe = m.from === staffName;
-                const seen = (receiptsOn && isMe && idx === lastMineIdx) ? seenLabel(m) : null;
+                const seen = (!isChannel && isMe && idx === lastMineIdx) ? seenLabel(m) : null;
+                const urgentMsg = !!m.urgent;
                 return (
                     <div key={m.id} className={"flex flex-col " + (isMe ? "items-end" : "items-start")}>
                         <div className="max-w-[80%]" onClick={(e) => { e.stopPropagation(); setReactBar(reactBar === m.id ? null : m.id); }}>
-                            {!isMe && conv.type !== "dm" && <p className="text-xs font-bold mb-0.5 ml-1" style={{ color: "#0891b2" }}>{m.from}</p>}
+                            {!isMe && !isDM && <p className="text-xs font-bold mb-0.5 ml-1" style={{ color: "#0891b2" }}>{m.from}</p>}
                             {m.replyTo && (
                                 <div className="text-[11px] px-2 py-1 mb-0.5 rounded-lg" style={{ background: "var(--bg-subtle)", color: "var(--text-muted)", borderLeft: "2px solid #0891b2" }}>
                                     <span className="font-bold">{m.replyTo.from}:</span> {m.replyTo.text}
                                 </div>
                             )}
-                            <div className="px-3 py-2 rounded-2xl" style={isMe ? { background: "#0891b2", color: "white" } : { background: "var(--bg-card)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }}>
-                                <p className="text-sm whitespace-pre-wrap">{m.text}</p>
-                                <p className="text-[10px] mt-1" style={isMe ? { color: "#a5f3fc" } : { color: "var(--text-muted)" }}>{new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                            <div className="px-3 py-2 rounded-2xl" style={urgentMsg ? { background: isMe ? "#dc2626" : "#fef2f2", border: "1px solid #dc2626", color: isMe ? "white" : "#991b1b" } : (isMe ? { background: "#0891b2", color: "white" } : { background: "var(--bg-card)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" })}>
+                                {urgentMsg && <p className="text-[10px] font-bold mb-0.5" style={{ color: isMe ? "#fecaca" : "#dc2626" }}>🚨 {es ? "URGENTE" : "URGENT"}</p>}
+                                {m.imageUrl && <img src={m.imageUrl} alt="" className="rounded-xl mb-1" style={{ maxWidth: "100%", maxHeight: 240, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); window.open(m.imageUrl, "_blank"); }} />}
+                                {m.text && <p className="text-sm whitespace-pre-wrap">{m.text}</p>}
+                                <p className="text-[10px] mt-1" style={{ color: isMe ? (urgentMsg ? "#fecaca" : "#a5f3fc") : "var(--text-muted)" }}>{new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
                             </div>
                             {m.reactions && Object.keys(m.reactions).length > 0 && (
                                 <div className={"flex gap-1 mt-0.5 flex-wrap " + (isMe ? "justify-end" : "")}>
@@ -8791,10 +8918,19 @@
                                     ))}
                                 </div>
                             )}
+                            {isChannel && admin && (
+                                <button onClick={(e) => { e.stopPropagation(); setSeenByMsg(seenByMsg === m.id ? null : m.id); }} className="text-[10px] mt-0.5 ml-1" style={{ color: "var(--text-muted)" }}>👁 {es ? "Visto por " : "Seen by "}{channelSeenNames(m).length}</button>
+                            )}
+                            {isChannel && admin && seenByMsg === m.id && (
+                                <div className="text-[10px] mt-0.5 ml-1 p-2 rounded-lg max-w-[240px]" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>
+                                    {channelSeenNames(m).length ? channelSeenNames(m).join(", ") : (es ? "Nadie todavía" : "No one yet")}
+                                </div>
+                            )}
                             {reactBar === m.id && (
-                                <div className={"flex gap-1 mt-1 p-1 rounded-full " + (isMe ? "justify-end" : "")} style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
+                                <div className={"flex gap-1 mt-1 p-1 rounded-full items-center " + (isMe ? "justify-end" : "")} style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
                                     {REACTIONS.map(emo => <button key={emo} onClick={(e) => { e.stopPropagation(); toggleReaction(m, emo); }} className="text-base px-1 active:scale-125 transition">{emo}</button>)}
-                                    <button onClick={(e) => { e.stopPropagation(); setReplyTo({ from: m.from, text: m.text }); setReactBar(null); }} className="text-sm font-bold px-2" style={{ color: "#0891b2" }}>↩︎</button>
+                                    <button onClick={(e) => { e.stopPropagation(); setReplyTo({ from: m.from, text: m.text || (es ? "📷 Foto" : "📷 Photo") }); setReactBar(null); }} className="text-sm font-bold px-2" style={{ color: "#0891b2" }}>↩︎</button>
+                                    {admin && (isChannel || isGroup) && <button onClick={(e) => { e.stopPropagation(); pinMessage(m); }} className="text-sm px-1" title="Pin">📌</button>}
                                 </div>
                             )}
                         </div>
@@ -8807,40 +8943,56 @@
                 <div>
                     {replyTo && (
                         <div className="flex items-center justify-between px-3 py-1.5 text-xs" style={{ background: "var(--bg-subtle)", color: "var(--text-muted)" }}>
-                            <span><span className="font-bold">{(es ? "Respondiendo a " : "Replying to ") + replyTo.from}:</span> {replyTo.text.slice(0, 40)}</span>
+                            <span><span className="font-bold">{(es ? "Respondiendo a " : "Replying to ") + replyTo.from}:</span> {(replyTo.text || "").slice(0, 40)}</span>
                             <button onClick={() => setReplyTo(null)} className="font-bold ml-2 text-base">×</button>
                         </div>
                     )}
-                    <div className="p-2 flex gap-2" style={{ background: "var(--bg-card)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+                    {urgent && (
+                        <div className="px-3 py-1.5 text-xs font-bold flex items-center justify-between" style={{ background: "#fef2f2", color: "#dc2626" }}>
+                            <span>🚨 {es ? "Marcado como urgente" : "Marked urgent"}</span>
+                            <button onClick={() => setUrgent(false)} className="text-base">×</button>
+                        </div>
+                    )}
+                    <div className="p-2 flex gap-2 items-center" style={{ background: "var(--bg-card)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+                        <input ref={fileRef} type="file" accept="image/*" onChange={onPickPhoto} style={{ display: "none" }} />
+                        <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} className="text-xl flex-none px-1" style={{ color: "var(--text-muted)" }} title="Photo">{uploading ? "⏳" : "📷"}</button>
+                        <button onClick={() => setUrgent(!urgent)} className="text-lg flex-none px-1" style={{ opacity: urgent ? 1 : 0.5 }} title="Urgent">🚨</button>
                         <input value={newMessage} onChange={e => setNewMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendMessage())} placeholder={es ? "Mensaje..." : "Message..."} className="flex-1 px-3 py-2 rounded-full text-sm" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }} />
-                        <button onClick={sendMessage} disabled={!newMessage.trim()} className="px-4 py-2 rounded-full font-bold text-sm" style={newMessage.trim() ? { background: "#0891b2", color: "white" } : { background: "var(--bg-subtle)", color: "var(--text-muted)" }}>↑</button>
+                        <button onClick={() => sendMessage()} disabled={!newMessage.trim()} className="px-4 py-2 rounded-full font-bold text-sm flex-none" style={newMessage.trim() ? { background: "#0891b2", color: "white" } : { background: "var(--bg-subtle)", color: "var(--text-muted)" }}>↑</button>
                     </div>
                 </div>
             );
 
-            // Full-screen conversation (DM or group)
-            if (showDM || showGroup) {
-                const subtitle = conv.type === "dm"
-                    ? (es ? "Mensaje directo" : "Direct message")
-                    : (conv.members || []).length + " " + (es ? "miembros" : "members");
+            // ===== Conversation view =====
+            if (openConv) {
+                const subtitle = isDM ? (es ? "Mensaje directo" : "Direct message")
+                    : isGroup ? ((openConv.members || []).length + " " + (es ? "miembros" : "members"))
+                    : (es ? "Todo el equipo de esta ubicación" : "Everyone on this location's team");
                 return (
                     <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "var(--bg-primary)" }}>
                         <div className="p-4 bg-gradient-to-r from-poke-700 to-poke-600 text-white shadow-lg" style={{ paddingTop: "max(16px, env(safe-area-inset-top))" }}>
-                            <button onClick={() => { setShowDM(null); setShowGroup(null); setReplyTo(null); setReactBar(null); }} className="text-sm font-bold mb-1 flex items-center gap-1 active:opacity-70">
+                            <button onClick={() => { setOpenConv(null); setReplyTo(null); setReactBar(null); setUrgent(false); setSeenByMsg(null); }} className="text-sm font-bold mb-1 flex items-center gap-1 active:opacity-70">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>
-                                {es ? "Volver" : "Back"}
+                                {es ? "Mensajes" : "Messages"}
                             </button>
                             <div className="flex items-center gap-3 mt-1">
-                                {conv.type === "dm"
-                                    ? <Avatar name={showDM} prefs={{}} size={36} />
-                                    : <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg" style={{ background: "#cffafe" }}>👥</div>}
+                                {isDM
+                                    ? <Avatar name={openConv.title} prefs={{}} size={36} />
+                                    : <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg" style={{ background: "#cffafe" }}>{isChannel ? openConv.emoji : "👥"}</div>}
                                 <div>
-                                    <h2 className="text-lg font-bold leading-tight">{conv.title}</h2>
+                                    <h2 className="text-lg font-bold leading-tight">{openConv.title}</h2>
                                     <p className="text-xs text-poke-200">{subtitle}</p>
                                 </div>
                             </div>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ background: "var(--bg-subtle)" }} onClick={() => setReactBar(null)}>
+                        {pinned && (
+                            <div className="flex items-start gap-2 px-3 py-2 text-xs" style={{ background: "#fffbeb", borderBottom: "1px solid #fde68a", color: "#92400e" }}>
+                                <span className="flex-none">📌</span>
+                                <div className="flex-1 min-w-0"><span className="font-bold">{pinned.from}: </span>{pinned.text}</div>
+                                {admin && <button onClick={unpin} className="flex-none font-bold text-base leading-none" style={{ color: "#b45309" }}>×</button>}
+                            </div>
+                        )}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ background: "var(--bg-subtle)" }} onClick={() => { setReactBar(null); setSeenByMsg(null); }}>
                             {messages.length === 0 && <p className="text-center text-sm py-8" style={{ color: "var(--text-muted)" }}>{es ? "Empieza la conversación" : "Start the conversation"}</p>}
                             {renderBubbles()}
                             <div ref={messagesEndRef} />
@@ -8850,63 +9002,66 @@
                 );
             }
 
-            // Hub: channels + group chats + direct messages
+            // ===== Inbox =====
+            const visibleChannels = channelConvs.filter(matchSearch);
+            const visibleGroups = groupConvs.filter(matchSearch);
+            const visibleDMs = dmConvs.filter(matchSearch);
+            const nothing = visibleChannels.length === 0 && visibleGroups.length === 0 && visibleDMs.length === 0;
+
             return (
                 <div className="p-4 pb-24 animate-in">
-                    <div className="sticky z-20 -mx-4 px-4 py-2 mb-4" style={{ top: "0px", background: "var(--bg-primary)" }}>
-                        <h2 className="text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>💬 {es ? "Mensajes" : "Messages"}</h2>
-                        <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-                            {CHANNELS.map(c => (
-                                <button key={c.id} onClick={() => setActiveChannel(c.id)} className={"px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition " + (activeChannel === c.id ? "bg-poke-600 text-white" : "")} style={activeChannel === c.id ? {} : { background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>{c.name}</button>
-                            ))}
+                    <div className="sticky z-20 -mx-4 px-4 pt-2 pb-2 mb-1" style={{ top: "0px", background: "var(--bg-primary)" }}>
+                        <div className="flex items-center justify-between mb-2">
+                            <h2 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>💬 {es ? "Mensajes" : "Messages"}</h2>
+                            <button onClick={() => setShowCompose(true)} className="w-9 h-9 rounded-full flex items-center justify-center text-lg" style={{ background: "#0891b2", color: "white" }} title={es ? "Nuevo" : "New"}>✎</button>
+                        </div>
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-full" style={{ background: "var(--bg-subtle)" }}>
+                            <span style={{ color: "var(--text-muted)" }}>🔍</span>
+                            <input value={search} onChange={e => setSearch(e.target.value)} placeholder={es ? "Buscar conversaciones" : "Search conversations"} className="flex-1 bg-transparent text-sm outline-none" style={{ color: "var(--text-primary)" }} />
+                            {search && <button onClick={() => setSearch("")} style={{ color: "var(--text-muted)" }}>×</button>}
                         </div>
                     </div>
 
-                    <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>📣 {es ? "Los mensajes aquí llegan a todo el equipo de esta ubicación." : "Messages here reach everyone on this location's team."}</p>
+                    {visibleChannels.length > 0 && <p className="text-[11px] font-bold tracking-wide mt-3 mb-1" style={{ color: "var(--text-muted)" }}>{es ? "CANALES" : "CHANNELS"}</p>}
+                    <div className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>{visibleChannels.map(ConvRow)}</div>
 
-                    {/* Channel messages */}
-                    <div className="rounded-2xl shadow-sm mb-4 overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
-                        <div className="max-h-96 overflow-y-auto p-3 space-y-3" style={{ background: "var(--bg-subtle)" }} onClick={() => setReactBar(null)}>
-                            {messages.length === 0 && <p className="text-center text-sm py-8" style={{ color: "var(--text-muted)" }}>{es ? "Sin mensajes" : "No messages yet"}</p>}
-                            {renderBubbles()}
-                            <div ref={messagesEndRef} />
+                    {visibleGroups.length > 0 && <p className="text-[11px] font-bold tracking-wide mt-4 mb-1" style={{ color: "var(--text-muted)" }}>{es ? "GRUPOS" : "GROUPS"}</p>}
+                    <div className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>{visibleGroups.map(ConvRow)}</div>
+
+                    {visibleDMs.length > 0 && <p className="text-[11px] font-bold tracking-wide mt-4 mb-1" style={{ color: "var(--text-muted)" }}>{es ? "DIRECTOS" : "DIRECT"}</p>}
+                    <div className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>{visibleDMs.map(ConvRow)}</div>
+
+                    {nothing && (
+                        <div className="text-center py-12" style={{ color: "var(--text-muted)" }}>
+                            <p className="text-4xl mb-2">💬</p>
+                            <p className="text-sm">{query ? (es ? "Sin resultados" : "No matches") : (es ? "No hay conversaciones aún. Toca ✎ para empezar." : "No conversations yet. Tap ✎ to start one.")}</p>
                         </div>
-                        {composer()}
-                    </div>
+                    )}
 
-                    {/* Group chats */}
-                    <div className="flex items-center justify-between mb-2">
-                        <p className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>👥 {es ? "Chats de Grupo" : "Group Chats"}</p>
-                        <button onClick={() => { setGroupName(""); setGroupMembers([]); setShowNewGroup(true); }} className="text-xs font-bold px-2.5 py-1 rounded-full bg-poke-600 text-white">+ {es ? "Nuevo" : "New"}</button>
-                    </div>
-                    <div className="space-y-1 mb-4">
-                        {groups.length === 0 && <p className="text-xs italic" style={{ color: "var(--text-muted)" }}>{es ? "Aún no hay grupos. Crea uno." : "No groups yet. Create one."}</p>}
-                        {groups.map(g => (
-                            <button key={g.id} onClick={() => setShowGroup(g)} className="w-full flex items-center gap-3 p-3 rounded-xl active:opacity-70 transition" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
-                                <div className="w-10 h-10 rounded-full font-bold flex items-center justify-center text-lg" style={{ background: "#cffafe", color: "#155e75" }}>👥</div>
-                                <div className="flex-1 text-left">
-                                    <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{g.name}</p>
-                                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{(g.members || []).length} {es ? "miembros" : "members"}</p>
+                    {/* Compose sheet */}
+                    {showCompose && (
+                        <div className="fixed inset-0 z-50 flex items-end justify-center animate-in" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => setShowCompose(false)}>
+                            <div className="card w-full max-w-md p-5 animate-scale" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-3">
+                                    <h2 className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>{es ? "Nuevo mensaje" : "New message"}</h2>
+                                    <button onClick={() => setShowCompose(false)} className="text-2xl" style={{ color: "var(--text-muted)" }}>×</button>
                                 </div>
-                                <span className="text-gray-300">→</span>
-                            </button>
-                        ))}
-                    </div>
-
-                    {/* Direct messages */}
-                    <p className="font-bold text-sm mb-2" style={{ color: "var(--text-primary)" }}>📩 {es ? "Mensajes Directos" : "Direct Messages"}</p>
-                    <div className="space-y-1">
-                        {visibleStaff.map(s => (
-                            <button key={s.id} onClick={() => setShowDM(s.name)} className="w-full flex items-center gap-3 p-3 rounded-xl active:opacity-70 transition" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
-                                <div className="w-10 h-10 rounded-full font-bold flex items-center justify-center" style={{ background: "#cffafe", color: "#155e75" }}>{s.name.split(" ").map(n => n[0]).join("")}</div>
-                                <div className="flex-1 text-left">
-                                    <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{s.name}</p>
-                                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{s.role}</p>
+                                <div className="flex gap-2 mb-3">
+                                    <button onClick={() => { setShowCompose(false); setGroupName(""); setGroupMembers([]); setShowNewGroup(true); }} className="flex-1 py-2.5 rounded-xl text-sm font-bold" style={{ background: "var(--bg-subtle)", color: "var(--text-primary)" }}>👥 {es ? "Nuevo grupo" : "New group"}</button>
+                                    <button onClick={messageTodaysCrew} className="flex-1 py-2.5 rounded-xl text-sm font-bold" style={{ background: "#cffafe", color: "#155e75" }}>📅 {es ? "Equipo de hoy" : "Today's crew"}</button>
                                 </div>
-                                <span className="text-gray-300">→</span>
-                            </button>
-                        ))}
-                    </div>
+                                <p className="text-xs font-bold mb-1" style={{ color: "var(--text-muted)" }}>{es ? "MENSAJE DIRECTO" : "DIRECT MESSAGE"}</p>
+                                <div className="space-y-1">
+                                    {visibleStaff.map(s => (
+                                        <button key={s.id} onClick={() => { const id = "dm_" + [staffName, s.name].sort().join("_").replace(/\s/g, "_"); setOpenConv({ kind: "dm", id, title: s.name, members: [staffName, s.name] }); setShowCompose(false); }} className="w-full flex items-center gap-3 p-2 rounded-xl active:opacity-70" style={{ background: "var(--bg-card)" }}>
+                                            <Avatar name={s.name} prefs={{}} size={36} />
+                                            <div className="flex-1 text-left"><p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{s.name}</p><p className="text-xs" style={{ color: "var(--text-muted)" }}>{s.role}</p></div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* New group modal */}
                     {showNewGroup && (
@@ -8936,7 +9091,7 @@
                                             })}
                                         </div>
                                     </div>
-                                    <button onClick={createGroup} disabled={!groupName.trim() || groupMembers.length === 0} className={"w-full py-3 rounded-xl font-bold text-sm " + (groupName.trim() && groupMembers.length ? "bg-poke-600 text-white" : "bg-gray-200 text-gray-400")}>{es ? "Crear Grupo" : "Create Group"}</button>
+                                    <button onClick={() => createGroup()} disabled={!groupName.trim() || groupMembers.length === 0} className={"w-full py-3 rounded-xl font-bold text-sm " + (groupName.trim() && groupMembers.length ? "bg-poke-600 text-white" : "bg-gray-200 text-gray-400")}>{es ? "Crear Grupo" : "Create Group"}</button>
                                 </div>
                             </div>
                         </div>
@@ -11121,6 +11276,7 @@
             });
             const [userPrefs, setUserPrefs] = useState({});
             const [showProfile, setShowProfile] = useState(false);
+            const [msgUnread, setMsgUnread] = useState(0);
 
             useEffect(() => {
                 if (darkMode) document.documentElement.classList.add("dark");
@@ -11136,6 +11292,27 @@
                 });
                 return () => unsub();
             }, [staffName]);
+
+            // Unread conversation count for nav/menu badges
+            useEffect(() => {
+                if (!staffName) { setMsgUnread(0); return; }
+                const myLoc = (staffList.find(s => s.name === staffName) || {}).location || "cwe";
+                const admin = isAdmin(staffName);
+                const channelIds = [];
+                if (admin) { channelIds.push("cwe", "kirkwood", "managers"); }
+                else { if (myLoc === "cwe" || myLoc === "all") channelIds.push("cwe"); if (myLoc === "kirkwood" || myLoc === "all") channelIds.push("kirkwood"); }
+                let groupDmDocs = [], channelData = {};
+                const unreadOf = (lm, readAt) => lm && lm.from !== staffName && (!readAt || readAt < lm.at);
+                const recompute = () => {
+                    let count = 0;
+                    groupDmDocs.forEach(d => { if (unreadOf(d.lastMessage, d.reads && d.reads[staffName])) count++; });
+                    channelIds.forEach(cid => { const d = channelData[cid]; if (d && unreadOf(d.lastMessage, d.reads && d.reads[staffName])) count++; });
+                    setMsgUnread(count);
+                };
+                const unsub1 = db.collection("messages").where("members", "array-contains", staffName).onSnapshot(snap => { groupDmDocs = snap.docs.map(d => d.data()); recompute(); }, () => {});
+                const unsubs = channelIds.map(cid => db.collection("messages").doc("channel_" + cid).onSnapshot(d => { channelData[cid] = d.exists ? d.data() : {}; recompute(); }, () => {}));
+                return () => { unsub1(); unsubs.forEach(u => u()); };
+            }, [staffName, staffList]);
 
             const saveUserPref = async (key, value) => {
                 const updated = { ...userPrefs, [key]: value };
@@ -11437,8 +11614,9 @@
                                     )}
                                     <button
                                         onClick={() => setActiveTab("messages")}
-                                        className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                        className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left relative"
                                     >
+                                        {msgUnread > 0 && <span className="absolute top-3 right-3 min-w-[20px] h-5 px-1.5 rounded-full text-white text-xs font-bold flex items-center justify-center" style={{ background: "#0891b2" }}>{msgUnread}</span>}
                                         <div className="w-12 h-12 bg-cyan-50 rounded-xl flex items-center justify-center text-2xl mb-3">💬</div>
                                         <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Mensajes" : "Messages"}</div>
                                         <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Chatea con el equipo" : "Chat with team"}</div>
@@ -11593,6 +11771,9 @@
                                                 }}
                                             >
                                                 {isActive && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-poke-500 rounded-full"></div>}
+                                                {item.id === "messages" && msgUnread > 0 && (
+                                                    <span className="absolute rounded-full text-white text-[10px] font-bold flex items-center justify-center" style={{ top: 4, right: "50%", marginRight: -22, minWidth: 16, height: 16, padding: "0 4px", background: "#0891b2" }}>{msgUnread > 9 ? "9+" : msgUnread}</span>
+                                                )}
                                                 {item.isLogo ? (
                                                     <div style={{
                                                         width: 28, height: 28, borderRadius: 8,
