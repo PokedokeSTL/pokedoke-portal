@@ -4931,9 +4931,20 @@
                 window.showToast(language === "es" ? "Solicitud enviada" : "Request submitted", "success");
             };
 
+            // Who can review a request: must be a manager/owner, not the requester,
+            // and a MANAGER's request can only be approved by an OWNER.
+            const canReviewTO = (req) => mgrAccess && req.employee !== staffName && !(isAdmin(req.employee) && !ownerAccess);
             const reviewTimeOff = async (id, status) => {
-                await db.collection("timeOffRequests").doc(id).update({status, reviewedBy:staffName, reviewedAt:new Date().toISOString()});
                 const req = timeOffRequests.find(r=>r.id===id);
+                if (req && req.employee === staffName) {
+                    window.showToast(language==="es"?"No puedes aprobar tu propia solicitud":"You can't review your own request", "error");
+                    return;
+                }
+                if (req && isAdmin(req.employee) && !ownerAccess) {
+                    window.showToast(language==="es"?"Solo un dueño puede aprobar la solicitud de un gerente":"Only an owner can approve a manager's request", "error");
+                    return;
+                }
+                await db.collection("timeOffRequests").doc(id).update({status, reviewedBy:staffName, reviewedAt:new Date().toISOString()});
                 if (req) {
                     const emoji = status==="approved"?"✅":"❌";
                     sendNotification([req.employee], emoji + " Time Off " + (status==="approved"?"Approved":"Denied"), "Your request for " + req.startDate + " to " + req.endDate + " was " + status + " by " + staffName, {type:"timeoff"});
@@ -5820,22 +5831,33 @@
                                 <button onClick={submitTimeOff} disabled={!toStartDate||!toEndDate} className={"w-full py-3 rounded-xl font-bold text-sm "+(toStartDate&&toEndDate?"bg-poke-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>{language==="es"?"Enviar Solicitud":"Submit Request"}</button>
                             </div>
                             <p className="font-bold text-gray-800 text-sm">{language==="es"?"Solicitudes":"Requests"}</p>
-                            {timeOffRequests.filter(r=>mgrAccess||r.employee===staffName).map(req=>(
+                            {timeOffRequests.filter(r=>mgrAccess||r.employee===staffName).sort((a,b)=>(b.requestedAt||"").localeCompare(a.requestedAt||"")).map(req=>(
                                 <div key={req.id} className={"bg-white rounded-xl border p-3 "+(req.status==="approved"?"border-green-200":req.status==="denied"?"border-red-200":"border-yellow-200")}>
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <p className="font-semibold text-sm text-gray-800">{req.employee}</p>
                                             <p className="text-xs text-gray-500">{req.startDate} → {req.endDate}{req.reason?" · "+req.reason:""}</p>
+                                            {req.requestedAt && <p className="text-[11px] text-gray-400 mt-0.5">🕒 {language==="es"?"Enviado":"Submitted"}: {new Date(req.requestedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"})}</p>}
+                                            {ownerAccess && req.reviewedAt && <p className="text-[11px] text-gray-400">{req.status==="approved"?"✅":"❌"} {language==="es"?"Revisado por":"Reviewed by"} {req.reviewedBy} · {new Date(req.reviewedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</p>}
                                         </div>
                                         <span className={"text-xs font-bold px-2 py-1 rounded-full "+(req.status==="approved"?"bg-green-100 text-green-700":req.status==="denied"?"bg-red-100 text-red-700":"bg-yellow-100 text-yellow-700")}>
                                             {req.status==="approved"?"✅":req.status==="denied"?"❌":"⏳"} {req.status}
                                         </span>
                                     </div>
-                                    {mgrAccess && req.status==="pending" && (
+                                    {req.status==="pending" && canReviewTO(req) && (
                                         <div className="flex gap-2 mt-2">
                                             <button onClick={()=>reviewTimeOff(req.id,"approved")} className="flex-1 py-1.5 bg-green-600 text-white rounded-xl text-xs font-bold">✅ {language==="es"?"Aprobar":"Approve"}</button>
                                             <button onClick={()=>reviewTimeOff(req.id,"denied")} className="flex-1 py-1.5 bg-red-500 text-white rounded-xl text-xs font-bold">❌ {language==="es"?"Denegar":"Deny"}</button>
                                         </div>
+                                    )}
+                                    {mgrAccess && req.status==="pending" && !canReviewTO(req) && (
+                                        <p className="text-[11px] italic text-gray-400 mt-2">⏳ {
+                                            req.employee === staffName
+                                                ? (isAdmin(req.employee)
+                                                    ? (language==="es"?"Pendiente de aprobación de un dueño":"Awaiting owner approval")
+                                                    : (language==="es"?"Pendiente de aprobación de un gerente o dueño":"Awaiting approval from a manager or owner"))
+                                                : (language==="es"?"Solo un dueño puede aprobar la solicitud de un gerente":"Only an owner can approve a manager's request")
+                                        }</p>
                                     )}
                                 </div>
                             ))}
