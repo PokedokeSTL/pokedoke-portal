@@ -8980,7 +8980,7 @@
                                 <button onClick={() => setUrgent(false)} className="text-base">×</button>
                             </div>
                         )}
-                        <div className="px-2 py-2 flex gap-1 items-center" style={{ background: "var(--bg-card)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+                        <div className="px-3 py-2 flex gap-1 items-center" style={{ background: "var(--bg-card)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
                             <input ref={fileRef} type="file" accept="image/*" onChange={onPickPhoto} style={{ display: "none" }} />
                             <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} className="flex-none flex items-center justify-center rounded-full active:scale-90 transition" style={{ width: 38, height: 38, color: "var(--text-muted)" }} aria-label={es ? "Foto" : "Photo"}>
                                 {uploading
