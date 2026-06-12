@@ -8049,6 +8049,65 @@
             ].join("\n");
         }
 
+        // HTML version of the invite for the emailed copy
+        function buildInviteHtml(name, pin, lang) {
+            const es = lang === "es";
+            const t = es ? {
+                hi: "¡Bienvenido/a al equipo de PokeDoke! 🐟",
+                blurb: "Instala la app del personal en tu teléfono para ver tu horario, turnos y avisos del equipo.",
+                s1: "Abre este enlace en tu teléfono:",
+                s2: "Agrégala a tu pantalla de inicio para que funcione como una app:",
+                ios: "iPhone (Safari): toca Compartir → \"Agregar a inicio\" → \"Agregar\".",
+                and: "Android (Chrome): toca el menú (⋮) → \"Agregar a pantalla de inicio\" → \"Agregar\".",
+                s3: "Abre la app de PokeDoke desde tu pantalla de inicio.",
+                s4: "Inicia sesión: elige tu nombre (<b>" + name + "</b>) e ingresa tu PIN de 4 dígitos:",
+                s5: "Permite las notificaciones cuando te lo pida para recibir recordatorios de turnos.",
+                foot: "¿Preguntas? Pregúntale a tu gerente. ¡Bienvenido/a al equipo!"
+            } : {
+                hi: "Welcome to the PokeDoke team! 🐟",
+                blurb: "Get the staff app on your phone for your schedule, shifts, and team updates.",
+                s1: "Open this link on your phone:",
+                s2: "Add it to your home screen so it works like a real app:",
+                ios: "iPhone (Safari): tap Share → \"Add to Home Screen\" → \"Add\".",
+                and: "Android (Chrome): tap the menu (⋮) → \"Add to Home screen\" → \"Add\".",
+                s3: "Open the PokeDoke app from your home screen.",
+                s4: "Log in: pick your name (<b>" + name + "</b>) and enter your 4-digit PIN:",
+                s5: "Allow notifications when asked so you get shift reminders.",
+                foot: "Questions? Just ask your manager. Welcome aboard!"
+            };
+            return [
+                '<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;color:#0f172a;">',
+                '<div style="background:#0891b2;color:#fff;padding:20px 24px;border-radius:12px 12px 0 0;">',
+                '<div style="font-size:20px;font-weight:700;">' + t.hi + '</div></div>',
+                '<div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:24px;">',
+                '<p style="font-size:15px;line-height:1.5;margin:0 0 18px;">' + t.blurb + '</p>',
+                '<p style="font-size:14px;margin:0 0 6px;"><b>1.</b> ' + t.s1 + '</p>',
+                '<p style="margin:0 0 18px;"><a href="https://staff.pokedoke.com" style="display:inline-block;background:#0891b2;color:#fff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:600;font-size:15px;">staff.pokedoke.com</a></p>',
+                '<p style="font-size:14px;margin:0 0 6px;"><b>2.</b> ' + t.s2 + '</p>',
+                '<p style="font-size:13px;color:#475569;margin:0 0 4px 14px;">• ' + t.ios + '</p>',
+                '<p style="font-size:13px;color:#475569;margin:0 0 18px 14px;">• ' + t.and + '</p>',
+                '<p style="font-size:14px;margin:0 0 18px;"><b>3.</b> ' + t.s3 + '</p>',
+                '<p style="font-size:14px;margin:0 0 8px;"><b>4.</b> ' + t.s4 + '</p>',
+                '<div style="background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:14px;text-align:center;margin:0 0 18px;"><div style="font-size:13px;color:#155e75;margin-bottom:2px;">PIN</div><div style="font-size:30px;font-weight:800;letter-spacing:6px;color:#0e7490;">' + pin + '</div></div>',
+                '<p style="font-size:14px;margin:0 0 18px;"><b>5.</b> ' + t.s5 + '</p>',
+                '<p style="font-size:14px;color:#475569;margin:18px 0 0;border-top:1px solid #e2e8f0;padding-top:16px;">' + t.foot + '</p>',
+                '</div></div>'
+            ].join("");
+        }
+
+        // Queue an invite email into the Firestore "mail" collection (sent by the Trigger Email extension)
+        async function sendInviteEmail(name, email, pin, lang) {
+            if (!email) return false;
+            const subject = lang === "es" ? "Tu invitación a la app de PokeDoke 🐟" : "Your PokeDoke Staff App invite 🐟";
+            try {
+                await db.collection("mail").add({
+                    to: [email],
+                    message: { subject, text: buildInviteMessage(name, pin, lang), html: buildInviteHtml(name, pin, lang) }
+                });
+                return true;
+            } catch (e) { console.error("invite email failed", e); return false; }
+        }
+
         // One-tap invite delivery (pre-filled text / email, plus copy + share fallbacks)
         function InviteModal({ language, invite, onClose }) {
             const es = language === "es";
@@ -8071,6 +8130,12 @@
                         </div>
                         <p className="text-sm mb-3" style={{ color: "var(--text-muted)" }}>{invite.name} · {es ? "PIN" : "PIN"} {invite.pin}</p>
 
+                        {invite.emailed && (
+                            <div className="rounded-xl p-3 mb-3 text-sm flex items-start gap-2" style={{ background: "#dcfce7", color: "#166534" }}>
+                                <span>✅</span>
+                                <span>{es ? "Invitación enviada por email a " : "Invite emailed automatically to "}<b>{invite.email}</b>. {es ? "También puedes enviarla por texto abajo." : "You can also send it by text below."}</span>
+                            </div>
+                        )}
                         <div className="rounded-xl p-3 mb-4 text-xs whitespace-pre-wrap" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", maxHeight: 180, overflowY: "auto" }}>{msg}</div>
 
                         <div className="space-y-2">
@@ -8080,7 +8145,7 @@
                                 <div className={btn} style={{ background: "var(--bg-subtle)", color: "var(--text-muted)" }}>💬 {es ? "Sin teléfono guardado" : "No phone on file"}</div>
                             )}
                             {invite.email ? (
-                                <a href={mailHref} className={btn + " bg-poke-600 text-white"}>✉️ {es ? "Enviar por Email" : "Send by Email"}</a>
+                                <a href={mailHref} className={btn + " bg-poke-600 text-white"}>✉️ {invite.emailed ? (es ? "Reenviar por Email" : "Resend by Email") : (es ? "Enviar por Email" : "Send by Email")}</a>
                             ) : (
                                 <div className={btn} style={{ background: "var(--bg-subtle)", color: "var(--text-muted)" }}>✉️ {es ? "Sin email guardado" : "No email on file"}</div>
                             )}
@@ -8203,7 +8268,10 @@
                     // Send invite if requested
                     if (newEmp.sendInvite) {
                         await logInvite(nameTrimmed, newEmp.email.trim(), newEmp.phone.trim(), newEmp.pin);
-                        setInviteEmp({ name: nameTrimmed, email: newEmp.email.trim(), phone: newEmp.phone.trim(), pin: newEmp.pin });
+                        let emailed = false;
+                        if (newEmp.email.trim()) emailed = await sendInviteEmail(nameTrimmed, newEmp.email.trim(), newEmp.pin, language);
+                        if (emailed) window.showToast((language === "es" ? "📧 Invitación enviada por email a " : "📧 Invite emailed to ") + nameTrimmed, "success");
+                        setInviteEmp({ name: nameTrimmed, email: newEmp.email.trim(), phone: newEmp.phone.trim(), pin: newEmp.pin, emailed });
                     }
 
                     window.showToast(
@@ -8412,7 +8480,7 @@
                                     <button onClick={()=>{setEditMode(true);setEditData({...selectedEmp});}} className="py-3 bg-poke-600 text-white rounded-xl font-bold text-sm">✏️ {language==="es"?"Editar":"Edit"}</button>
                                     <button onClick={toggleStatus} className={"py-3 rounded-xl font-bold text-sm "+(selectedEmp.status==="active"?"bg-red-500 text-white":"bg-green-600 text-white")}>{selectedEmp.status==="active"?"❌ "+(language==="es"?"Desactivar":"Deactivate"):"✅ "+(language==="es"?"Reactivar":"Reactivate")}</button>
                                 </div>
-                                <button onClick={()=>{ logInvite(selectedEmp.name, selectedEmp.email||"", selectedEmp.phone||"", selectedEmp.pin); setInviteEmp({name:selectedEmp.name, email:selectedEmp.email||"", phone:selectedEmp.phone||"", pin:selectedEmp.pin}); }} className="w-full py-3 rounded-xl font-bold text-sm" style={{background:"#dbeafe",color:"#1e40af"}}>📲 {language==="es"?"Enviar Invitación a la App":"Send App Invite"}</button>
+                                <button onClick={async ()=>{ logInvite(selectedEmp.name, selectedEmp.email||"", selectedEmp.phone||"", selectedEmp.pin); let emailed=false; if (selectedEmp.email) emailed = await sendInviteEmail(selectedEmp.name, selectedEmp.email, selectedEmp.pin, language); if (emailed) window.showToast((language==="es"?"📧 Invitación enviada por email a ":"📧 Invite emailed to ")+selectedEmp.name, "success"); setInviteEmp({name:selectedEmp.name, email:selectedEmp.email||"", phone:selectedEmp.phone||"", pin:selectedEmp.pin, emailed}); }} className="w-full py-3 rounded-xl font-bold text-sm" style={{background:"#dbeafe",color:"#1e40af"}}>📲 {language==="es"?"Enviar Invitación a la App":"Send App Invite"}</button>
                             </div>
                         ):(
                             <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
