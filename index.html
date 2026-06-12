@@ -4255,6 +4255,8 @@
             const [closeTime, setCloseTime] = useState("20:00");
             const [showSettings, setShowSettings] = useState(false);
             const [tempCloseTime, setTempCloseTime] = useState("20:00");
+            const [timeOffMinDays, setTimeOffMinDays] = useState(14);
+            const [tempTimeOffDays, setTempTimeOffDays] = useState(14);
             const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
             const [showAllEmployees, setShowAllEmployees] = useState(true);
             const [gridAddCell, setGridAddCell] = useState(null); // {employee, dayKey} when adding via grid
@@ -4293,6 +4295,13 @@
             const csvFileRef = React.useRef(null);
             const mgrAccess = isAdmin(staffName);
             const ownerAccess = isOwner(staffName);
+            // Time-off request lead time (owner-configurable in Schedule Settings; managers/owners can override)
+            const toMinDate = (() => { const d = new Date(); d.setDate(d.getDate() + (timeOffMinDays || 0)); return window.fmtLocalDate(d); })();
+            const toMinForUser = mgrAccess ? "" : toMinDate;
+            const toMinDisplay = new Date(toMinDate + "T00:00:00").toLocaleDateString(language === "es" ? "es-ES" : "en-US", { month: "short", day: "numeric", year: "numeric" });
+            const toLeadLabel = (timeOffMinDays % 7 === 0 && timeOffMinDays > 0)
+                ? (timeOffMinDays / 7) + " " + (language === "es" ? (timeOffMinDays / 7 === 1 ? "semana" : "semanas") : (timeOffMinDays / 7 === 1 ? "week" : "weeks"))
+                : timeOffMinDays + " " + (language === "es" ? "días" : "days");
             const DAYS = language==="es"?["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]:["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
             const DAY_KEYS = ["mon","tue","wed","thu","fri","sat","sun"];
             const LOCATIONS = [{id:"cwe",name:"Central West End"},{id:"kirkwood",name:"Kirkwood"}];
@@ -4407,6 +4416,10 @@
                         setCloseTime(doc.data().closeTime);
                         setTempCloseTime(doc.data().closeTime);
                     }
+                    if (doc.exists && typeof doc.data().timeOffMinDays === "number") {
+                        setTimeOffMinDays(doc.data().timeOffMinDays);
+                        setTempTimeOffDays(doc.data().timeOffMinDays);
+                    }
                 });
                 return () => unsub();
             }, []);
@@ -4479,9 +4492,12 @@
             };
 
             const saveCloseTime = async () => {
-                await db.collection("ops").doc("scheduleSettings").set({closeTime: tempCloseTime, updatedBy: staffName, updatedAt: new Date().toISOString()}, {merge: true});
+                const days = Math.max(0, Math.min(120, parseInt(tempTimeOffDays) || 0));
+                await db.collection("ops").doc("scheduleSettings").set({closeTime: tempCloseTime, timeOffMinDays: days, updatedBy: staffName, updatedAt: new Date().toISOString()}, {merge: true});
                 setCloseTime(tempCloseTime);
+                setTimeOffMinDays(days);
                 setShowSettings(false);
+                window.showToast(language==="es"?"Ajustes guardados":"Settings saved","success");
             };
 
             const saveDayNote = async (dayKey, note) => {
@@ -4904,8 +4920,15 @@
 
             const submitTimeOff = async () => {
                 if(!toStartDate||!toEndDate)return;
+                if (!mgrAccess && toStartDate < toMinDate) {
+                    window.showToast(language === "es"
+                        ? "Las solicitudes deben ser con " + toLeadLabel + " de anticipación (a partir del " + toMinDisplay + ")"
+                        : "Requests must be at least " + toLeadLabel + " out (on or after " + toMinDisplay + ")", "error", 5000);
+                    return;
+                }
                 await db.collection("timeOffRequests").add({employee:staffName, startDate:toStartDate, endDate:toEndDate, reason:toReason, status:"pending", requestedAt:new Date().toISOString()});
                 setToStartDate(""); setToEndDate(""); setToReason("");
+                window.showToast(language === "es" ? "Solicitud enviada" : "Request submitted", "success");
             };
 
             const reviewTimeOff = async (id, status) => {
@@ -5556,6 +5579,22 @@
                                         <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{language==="es"?"Los turnos que terminen a esta hora mostrarán 'CL' en lugar de la hora.":"Shifts ending at this time will display 'CL' instead of the time."}</p>
                                     </div>
 
+                                    {ownerAccess && (
+                                        <div className="pt-3 border-t" style={{borderColor:"var(--border-subtle)"}}>
+                                            <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Anticipación para solicitudes de descanso":"Time-Off Request Lead Time"}</label>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <input type="number" min="0" max="120" value={tempTimeOffDays} onChange={e=>setTempTimeOffDays(e.target.value)} className="w-24 px-3 py-2 border rounded-xl text-sm" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                                <span className="text-sm" style={{color:"var(--text-muted)"}}>{language==="es"?"días":"days"}</span>
+                                            </div>
+                                            <div className="flex gap-1.5 mt-2">
+                                                {[7,14,21,28].map(d=>(
+                                                    <button key={d} onClick={()=>setTempTimeOffDays(d)} className="flex-1 text-xs font-bold py-1.5 rounded-lg" style={{background: Number(tempTimeOffDays)===d?"#0891b2":"var(--bg-subtle)", color: Number(tempTimeOffDays)===d?"white":"var(--text-secondary)"}}>{d/7} {language==="es"?(d/7===1?"sem":"sem"):(d/7===1?"wk":"wks")}</button>
+                                                ))}
+                                            </div>
+                                            <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{language==="es"?"Los empleados no podrán solicitar descanso antes de este plazo. Gerentes y dueños pueden anularlo. (0 = sin límite)":"Staff can't request time off sooner than this. Managers & owners can override. (0 = no limit)"}</p>
+                                        </div>
+                                    )}
+
                                     <div className="flex gap-2 pt-3">
                                         <button onClick={()=>setShowSettings(false)} className="flex-1 py-3 rounded-xl font-bold text-sm" style={{background: "var(--bg-subtle)", color: "var(--text-secondary)"}}>{language==="es"?"Cancelar":"Cancel"}</button>
                                         <button onClick={saveCloseTime} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold text-sm active:scale-95">💾 {language==="es"?"Guardar":"Save"}</button>
@@ -5766,9 +5805,16 @@
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 space-y-3">
                                 <p className="font-bold text-gray-800 text-sm">🏖️ {language==="es"?"Solicitar Descanso":"Request Time Off"}</p>
+                                {!mgrAccess && (
+                                    <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+                                        📌 {language==="es"
+                                            ? "Las solicitudes deben hacerse con al menos " + toLeadLabel + " de anticipación. La fecha más temprana disponible es el " + toMinDisplay + "."
+                                            : "Requests must be made at least " + toLeadLabel + " in advance. The earliest date you can request is " + toMinDisplay + "."}
+                                    </div>
+                                )}
                                 <div className="grid grid-cols-2 gap-2">
-                                    <div><label className="text-xs text-gray-500">{language==="es"?"Desde":"From"}</label><input type="date" value={toStartDate} onChange={e=>setToStartDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
-                                    <div><label className="text-xs text-gray-500">{language==="es"?"Hasta":"To"}</label><input type="date" value={toEndDate} onChange={e=>setToEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                    <div><label className="text-xs text-gray-500">{language==="es"?"Desde":"From"}</label><input type="date" min={toMinForUser} value={toStartDate} onChange={e=>setToStartDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                    <div><label className="text-xs text-gray-500">{language==="es"?"Hasta":"To"}</label><input type="date" min={toStartDate||toMinForUser} value={toEndDate} onChange={e=>setToEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
                                 </div>
                                 <input type="text" value={toReason} onChange={e=>setToReason(e.target.value)} placeholder={language==="es"?"Razón (opcional)":"Reason (optional)"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                 <button onClick={submitTimeOff} disabled={!toStartDate||!toEndDate} className={"w-full py-3 rounded-xl font-bold text-sm "+(toStartDate&&toEndDate?"bg-poke-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>{language==="es"?"Enviar Solicitud":"Submit Request"}</button>
