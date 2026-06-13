@@ -4260,12 +4260,24 @@
             const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
             const [showAllEmployees, setShowAllEmployees] = useState(true);
             const [gridAddCell, setGridAddCell] = useState(null); // {employee, dayKey} when adding via grid
+            const gridHeadRef = useRef(null);
+            const [gridHeaderH, setGridHeaderH] = useState(46);
+            const [publishPrompt, setPublishPrompt] = useState(false);
 
             useEffect(() => {
                 const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
                 window.addEventListener("resize", handleResize);
                 return () => window.removeEventListener("resize", handleResize);
             }, []);
+
+            // Measure the grid header row height so the open-shifts row can stick right below it
+            useEffect(() => {
+                const measure = () => { if (gridHeadRef.current) setGridHeaderH(gridHeadRef.current.offsetHeight); };
+                measure();
+                const t = setTimeout(measure, 100);
+                window.addEventListener("resize", measure);
+                return () => { clearTimeout(t); window.removeEventListener("resize", measure); };
+            }, [isDesktop, language, schedLocation, showAllEmployees]);
             const [newShiftEmp, setNewShiftEmp] = useState("");
             const [newShiftStart, setNewShiftStart] = useState("10:00");
             const [newShiftEnd, setNewShiftEnd] = useState("18:00");
@@ -4684,7 +4696,16 @@
                 await writeDraft(updated);
             };
 
-            const publishSchedule = async () => {
+            // Signature of one employee's shifts, to detect who changed between published and draft
+            const empShiftSig = (list, n) => list.filter(s=>s.employee===n).map(s=>s.day+"|"+s.startTime+"|"+s.endTime+"|"+(s.role||"")+"|"+(s.notes||"")).sort().join(";");
+            const changedEmployees = () => {
+                const names = new Set([...publishedShifts, ...shifts].filter(s=>s.employee!=="__OPEN__").map(s=>s.employee));
+                return [...names].filter(n => !isOwner(n) && empShiftSig(publishedShifts, n) !== empShiftSig(shifts, n));
+            };
+
+            const publishSchedule = async (notifyScope) => {
+                notifyScope = notifyScope || "all";
+                const prevPublished = publishedShifts;
                 // Copy draft → published, clear the unpublished-changes flag
                 await db.collection("schedules").doc(weekKey).set({
                     publishedShifts: shifts,
@@ -4697,10 +4718,23 @@
                 setPublishedShifts(shifts);
                 setSchedStatus("published");
                 setHasUnpublishedChanges(false);
-                const locationStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>s.name);
+
                 const locName = LOCATIONS.find(l=>l.id===schedLocation)?.name || schedLocation;
-                sendNotification(locationStaff, "📅 New Schedule Published", locName + " schedule for week of " + new Date(weekStart+"T12:00:00").toLocaleDateString() + " is live!", {type:"schedule", weekKey});
-                window.showToast(language==="es"?"Horario publicado":"Schedule published", "success");
+                const locationStaff = staffList.filter(s=>(s.location===schedLocation||s.location==="all") && !isOwner(s.name)).map(s=>s.name);
+                let recipients = [];
+                if (notifyScope === "all") recipients = locationStaff;
+                else if (notifyScope === "changed") {
+                    const names = new Set([...prevPublished, ...shifts].filter(s=>s.employee!=="__OPEN__").map(s=>s.employee));
+                    const changed = [...names].filter(n => empShiftSig(prevPublished, n) !== empShiftSig(shifts, n));
+                    recipients = locationStaff.filter(n => changed.includes(n));
+                }
+                if (recipients.length) {
+                    sendNotification(recipients, "📅 New Schedule Published", locName + " schedule for week of " + new Date(weekStart+"T12:00:00").toLocaleDateString() + " is live!", {type:"schedule", weekKey});
+                }
+                const msg = notifyScope === "none"
+                    ? (language==="es"?"Horario publicado · sin notificaciones":"Schedule published · no one notified")
+                    : (language==="es"?("Horario publicado · "+recipients.length+" notificados"):("Schedule published · "+recipients.length+" notified"));
+                window.showToast(msg, "success");
             };
 
             const unpublishSchedule = async () => {
@@ -4969,6 +5003,22 @@
                 }
             };
 
+            // Take back an offered shift — only allowed while still unclaimed (open)
+            const cancelOffer = async (swapId) => {
+                try {
+                    await db.runTransaction(async (tx) => {
+                        const ref = db.collection("shiftSwaps").doc(swapId);
+                        const snap = await tx.get(ref);
+                        if (!snap.exists) return;
+                        if (snap.data().status !== "open") throw new Error("claimed");
+                        tx.delete(ref);
+                    });
+                    window.showToast(language==="es"?"Oferta cancelada — el turno vuelve a ser tuyo":"Offer canceled — the shift is yours again","success");
+                } catch(e) {
+                    window.showToast(language==="es"?"Ya no se puede cancelar — alguien ya lo reclamó":"Too late to take back — someone already claimed it","error",5000);
+                }
+            };
+
             const approveSwap = async (swap) => {
                 await db.collection("shiftSwaps").doc(swap.id).update({status:"approved", approvedBy:staffName, approvedAt:new Date().toISOString()});
                 // Swap approval is staff-facing; update both published and draft so it's visible immediately
@@ -5024,7 +5074,8 @@
             };
 
             const myShifts = shifts.filter(s => s.employee === staffName);
-            const visibleShifts = mgrAccess ? shifts : myShifts;
+            // Everyone sees the full schedule in the Schedule tab (coworkers + open shifts); "My Shifts" tab still filters to just theirs
+            const visibleShifts = shifts;
 
             return (
                 <div className="p-4 pb-24 animate-in">
@@ -5069,7 +5120,7 @@
                                     <p className="font-bold text-orange-800 text-sm">⚠️ {language==="es"?"Cambios Sin Publicar":"Unpublished Changes"}</p>
                                     <p className="text-xs text-orange-700 mt-1">{language==="es"?"El equipo aún ve la versión publicada. Publica de nuevo para que vean tus cambios, o descarta para volver a la versión publicada.":"Staff still see the published version. Publish again to push your changes, or revert to discard them."}</p>
                                     <div className="flex gap-2 mt-2">
-                                        <button onClick={publishSchedule} className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Republicar":"Republish"}</button>
+                                        <button onClick={()=>setPublishPrompt(true)} className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Republicar":"Republish"}</button>
                                         <button onClick={revertChanges} className="flex-1 py-2 bg-white border border-orange-300 text-orange-700 rounded-xl text-xs font-bold active:scale-95">↩️ {language==="es"?"Descartar":"Revert"}</button>
                                     </div>
                                 </div>
@@ -5078,9 +5129,9 @@
                             {mgrAccess && (
                                 <div className="grid grid-cols-2 gap-2">
                                     {schedStatus==="draft"?(
-                                        <button onClick={publishSchedule} className="py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Publicar":"Publish"}</button>
+                                        <button onClick={()=>setPublishPrompt(true)} className="py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Publicar":"Publish"}</button>
                                     ):hasUnpublishedChanges?(
-                                        <button onClick={publishSchedule} className="py-2 bg-orange-600 text-white rounded-xl text-xs font-bold active:scale-95">⚠️ {language==="es"?"Republicar":"Republish"}</button>
+                                        <button onClick={()=>setPublishPrompt(true)} className="py-2 bg-orange-600 text-white rounded-xl text-xs font-bold active:scale-95">⚠️ {language==="es"?"Republicar":"Republish"}</button>
                                     ):(
                                         <button onClick={unpublishSchedule} className="py-2 bg-yellow-500 text-white rounded-xl text-xs font-bold active:scale-95">📝 {language==="es"?"Despublicar":"Unpublish"}</button>
                                     )}
@@ -5176,10 +5227,26 @@
 
                             {/* ========== DESKTOP GRID VIEW (managers, screens >= 1024px) ========== */}
                             {isDesktop && mgrAccess && (() => {
-                                const locStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all");
+                                const locStaff = staffList.filter(s=>(s.location===schedLocation||s.location==="all") && !isOwner(s.name));
                                 const empsWithShifts = new Set(shifts.filter(s=>s.employee!=="__OPEN__").map(s=>s.employee));
                                 const visibleEmps = showAllEmployees ? locStaff : locStaff.filter(s=>empsWithShifts.has(s.name));
                                 const openShifts = shifts.filter(s=>s.employee==="__OPEN__");
+
+                                // Group employees by role for the grid
+                                const ROLE_ORDER = ["Manager", "Shift Manager", "Line Server", "Prep Cook", "Dishwasher", "Owner"];
+                                const ROLE_META = {
+                                    "Manager":       {emoji:"⭐", bg:"#fef9c3", color:"#854d0e"},
+                                    "Shift Manager": {emoji:"🔑", bg:"#e0e7ff", color:"#3730a3"},
+                                    "Line Server":   {emoji:"🥢", bg:"#cffafe", color:"#155e75"},
+                                    "Prep Cook":     {emoji:"🔪", bg:"#dcfce7", color:"#166534"},
+                                    "Dishwasher":    {emoji:"🧼", bg:"#f1f5f9", color:"#475569"},
+                                    "Owner":         {emoji:"👑", bg:"#fae8ff", color:"#86198f"}
+                                };
+                                const empGroups = {};
+                                visibleEmps.forEach(e => { const r = e.role || "Other"; (empGroups[r] = empGroups[r] || []).push(e); });
+                                const orderedRoles = [...ROLE_ORDER.filter(r=>empGroups[r]), ...Object.keys(empGroups).filter(r=>!ROLE_ORDER.includes(r)).sort()];
+                                const scheduleRows = [];
+                                orderedRoles.forEach(role => { scheduleRows.push({__group: role}); empGroups[role].forEach(e=>scheduleRows.push(e)); });
 
                                 return (
                                     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -5195,20 +5262,20 @@
                                         </div>
 
                                         {/* Grid */}
-                                        <div className="overflow-x-auto">
+                                        <div style={{overflowX: "auto", overflowY: "auto", maxHeight: "calc(100vh - 200px)"}}>
                                             <table style={{width: "100%", borderCollapse: "separate", borderSpacing: 0}}>
                                                 <thead>
-                                                    <tr style={{background: "var(--bg-subtle)"}}>
-                                                        <th style={{position: "sticky", left: 0, background: "var(--bg-subtle)", padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)", minWidth: 180, zIndex: 1}}>
+                                                    <tr ref={gridHeadRef} style={{background: "var(--bg-subtle)"}}>
+                                                        <th style={{position: "sticky", left: 0, top: 0, background: "var(--bg-subtle)", padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)", minWidth: 210, zIndex: 30}}>
                                                             {language==="es"?"EMPLEADO":"EMPLOYEE"}
                                                         </th>
                                                         {DAY_KEYS.map((dk,di)=>(
-                                                            <th key={dk} style={{padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)"}}>
+                                                            <th key={dk} style={{position: "sticky", top: 0, background: "var(--bg-subtle)", padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)", zIndex: 20}}>
                                                                 <div>{DAYS[di].slice(0,3).toUpperCase()}</div>
                                                                 <div style={{fontSize: 10, fontWeight: 500, color: "var(--text-muted)", marginTop: 2}}>{getDateForDay(di)}</div>
                                                             </th>
                                                         ))}
-                                                        <th style={{padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", minWidth: 60}}>
+                                                        <th style={{position: "sticky", top: 0, background: "var(--bg-subtle)", padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", minWidth: 60, zIndex: 20}}>
                                                             {language==="es"?"HRS":"HRS"}
                                                         </th>
                                                     </tr>
@@ -5217,7 +5284,7 @@
                                                     {/* Open shifts row — always visible for drag targets */}
                                                     {mgrAccess && (
                                                         <tr>
-                                                            <td style={{position: "sticky", left: 0, background: "#dbeafe", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", zIndex: 1}}>
+                                                            <td style={{position: "sticky", left: 0, top: gridHeaderH, background: "#dbeafe", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "2px solid #93c5fd", zIndex: 25}}>
                                                                 <div style={{fontWeight: 700, fontSize: 13, color: "#1e40af"}}>🆕 {language==="es"?"Turnos Abiertos":"Open Shifts"}</div>
                                                                 <div style={{fontSize: 10, color: "#3b82f6"}}>{openShifts.length} {language==="es"?"sin asignar":"unassigned"}</div>
                                                             </td>
@@ -5226,10 +5293,10 @@
                                                                 return (
                                                                     <td key={dk}
                                                                         onDragOver={(e)=>{e.preventDefault();e.currentTarget.style.background="#dbeafe";}}
-                                                                        onDragLeave={(e)=>{e.currentTarget.style.background="";}}
-                                                                        onDrop={(e)=>{e.preventDefault();e.currentTarget.style.background="";if(draggedShift){const updated=shifts.map(s=>s.id===draggedShift.id?{...s,day:dk,employee:"__OPEN__"}:s);setShifts(updated);writeDraft(updated);}setDraggedShift(null);}}
+                                                                        onDragLeave={(e)=>{e.currentTarget.style.background="#eff6ff";}}
+                                                                        onDrop={(e)=>{e.preventDefault();e.currentTarget.style.background="#eff6ff";if(draggedShift){const updated=shifts.map(s=>s.id===draggedShift.id?{...s,day:dk,employee:"__OPEN__"}:s);setShifts(updated);writeDraft(updated);}setDraggedShift(null);}}
                                                                         onClick={()=>setGridAddCell({employee:"__OPEN__", dayKey:dk})}
-                                                                        style={{padding: 4, borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", verticalAlign: "top", minHeight: 60, background: "#eff6ff", cursor: "pointer"}}>
+                                                                        style={{position: "sticky", top: gridHeaderH, padding: 4, borderRight: "1px solid var(--border-subtle)", borderBottom: "2px solid #93c5fd", verticalAlign: "top", minHeight: 60, background: "#eff6ff", cursor: "pointer", zIndex: 15}}>
                                                                         {cellShifts.map(shift=>(
                                                                             <div key={shift.id}
                                                                                 draggable
@@ -5247,25 +5314,42 @@
                                                                     </td>
                                                                 );
                                                             })}
-                                                            <td style={{padding: 4, fontSize: 11, color: "#3b82f6", textAlign: "center", borderBottom: "1px solid var(--border-subtle)"}}>—</td>
+                                                            <td style={{position: "sticky", top: gridHeaderH, background: "#eff6ff", padding: 4, fontSize: 11, color: "#3b82f6", textAlign: "center", borderBottom: "2px solid #93c5fd", zIndex: 15}}>—</td>
                                                         </tr>
                                                     )}
 
                                                     {/* Employee rows */}
-                                                    {visibleEmps.map(emp=>{
+                                                    {scheduleRows.map((rowItem)=>{
+                                                        if (rowItem.__group) {
+                                                            const meta = ROLE_META[rowItem.__group] || {emoji:"👥", bg:"var(--bg-subtle)", color:"var(--text-secondary)"};
+                                                            const grpEmps = empGroups[rowItem.__group];
+                                                            const grpHours = grpEmps.reduce((sum,e)=> sum + shifts.filter(s=>s.employee===e.name).reduce((a,s)=>a+calcHours(s.startTime,s.endTime),0), 0);
+                                                            return (
+                                                                <tr key={"grp-"+rowItem.__group}>
+                                                                    <td colSpan={9} style={{background: meta.bg, padding: "5px 12px", borderBottom: "1px solid var(--border-subtle)"}}>
+                                                                        <div style={{display:"flex", alignItems:"center", gap:8, fontSize:11, fontWeight:800, letterSpacing:0.4, color: meta.color}}>
+                                                                            <span style={{textTransform:"uppercase"}}>{meta.emoji} {rowItem.__group}</span>
+                                                                            <span style={{fontWeight:600, opacity:0.75, textTransform:"none"}}>· {grpEmps.length} {language==="es"?"pers.":"staff"} · {grpHours % 1 === 0 ? grpHours : grpHours.toFixed(1)}h</span>
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        }
+                                                        const emp = rowItem;
                                                         const empShifts = shifts.filter(s=>s.employee===emp.name);
                                                         const totalHours = empShifts.reduce((sum,s)=>sum+calcHours(s.startTime,s.endTime),0);
                                                         const isOT = totalHours > 40;
                                                         const avail = allAvailability.find(a=>a.name===emp.name);
                                                         return (
                                                             <tr key={emp.id}>
-                                                                <td style={{position: "sticky", left: 0, background: "var(--bg-card)", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", zIndex: 1}}>
+                                                                <td style={{position: "sticky", left: 0, background: "var(--bg-card)", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)", zIndex: 10}}>
                                                                     <div style={{display: "flex", alignItems: "center", gap: 8}}>
                                                                         <Avatar name={emp.name} prefs={{}} size={28} />
                                                                         <div style={{flex: 1, minWidth: 0}}>
                                                                             <div style={{fontWeight: 600, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>{emp.name}</div>
                                                                             <div style={{fontSize: 10, color: "var(--text-muted)"}}>{emp.role}</div>
                                                                         </div>
+                                                                        <div title={language==="es"?"Horas programadas esta semana":"Hours scheduled this week"} style={{flexShrink: 0, fontSize: 12, fontWeight: 700, color: isOT?"#ea580c":"#0891b2", background: isOT?"#fff7ed":"#ecfeff", border: "1px solid "+(isOT?"#fed7aa":"#a5f3fc"), padding: "2px 7px", borderRadius: 8, whiteSpace: "nowrap"}}>{totalHours % 1 === 0 ? totalHours : totalHours.toFixed(1)}h</div>
                                                                     </div>
                                                                 </td>
                                                                 {DAY_KEYS.map((dk,dayIdx)=>{
@@ -5449,9 +5533,14 @@
                                                             {isOpen && !mgrAccess && (
                                                                 <button onClick={(e)=>{e.stopPropagation();claimOpenShift(shift.id);}} className="text-xs bg-blue-600 text-white px-2 py-1 rounded-lg font-bold">{language==="es"?"🙋 Tomar":"🙋 Claim"}</button>
                                                             )}
-                                                            {!mgrAccess && isMine && schedStatus==="published" && (
-                                                                <button onClick={(e)=>{e.stopPropagation();offerShift(shift);}} className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded-lg font-bold">🔄</button>
-                                                            )}
+                                                            {!mgrAccess && isMine && schedStatus==="published" && (() => {
+                                                                const myOpenOffer = swapOffers.find(o => o.offeredBy===staffName && o.status==="open" && o.shift && o.shift.id===shift.id);
+                                                                return myOpenOffer ? (
+                                                                    <button onClick={(e)=>{e.stopPropagation();cancelOffer(myOpenOffer.id);}} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-lg font-bold whitespace-nowrap">↩️ {language==="es"?"Recuperar":"Take back"}</button>
+                                                                ) : (
+                                                                    <button onClick={(e)=>{e.stopPropagation();offerShift(shift);}} className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded-lg font-bold whitespace-nowrap">🔄 {language==="es"?"Ofrecer":"Offer up"}</button>
+                                                                );
+                                                            })()}
                                                             {mgrAccess && (
                                                                 <button onClick={(e)=>{e.stopPropagation();deleteShift(shift.id);}} className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-lg font-bold">✕</button>
                                                             )}
@@ -5502,6 +5591,35 @@
                             {mgrAccess && <p className="text-xs text-gray-400 text-center pt-2">💡 {language==="es"?"Tip: Toca un turno para editar · Arrastra entre días para mover":"Tip: Tap a shift to edit · Drag between days to move"}</p>}
                         </div>
                     )}
+
+                    {/* ===== PUBLISH NOTIFY-SCOPE CHOOSER ===== */}
+                    {publishPrompt && (() => {
+                        const changed = changedEmployees();
+                        const wasPublished = schedStatus === "published";
+                        return (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in" style={{background:"rgba(0,0,0,0.5)"}} onClick={()=>setPublishPrompt(false)}>
+                                <div className="bg-white rounded-2xl p-5 w-full max-w-sm animate-scale" onClick={e=>e.stopPropagation()}>
+                                    <h3 className="font-display text-lg font-bold text-gray-800 mb-1">📅 {language==="es"?"Publicar Horario":"Publish Schedule"}</h3>
+                                    <p className="text-sm text-gray-500 mb-4">{language==="es"?"¿A quién quieres notificar?":"Who should be notified?"}</p>
+                                    <div className="space-y-2">
+                                        <button onClick={async()=>{setPublishPrompt(false); await publishSchedule("all");}} className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-poke-400 active:scale-95 transition">
+                                            <div className="font-bold text-sm text-gray-800">📣 {language==="es"?"Notificar a todos":"Notify everyone"}</div>
+                                            <div className="text-xs text-gray-500">{language==="es"?"Todo el personal de esta ubicación":"All staff at this location"}</div>
+                                        </button>
+                                        <button onClick={async()=>{setPublishPrompt(false); await publishSchedule("changed");}} className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-poke-400 active:scale-95 transition">
+                                            <div className="font-bold text-sm text-gray-800">✏️ {language==="es"?"Solo con cambios":"Only staff with changes"} <span className="text-poke-600">({changed.length})</span></div>
+                                            <div className="text-xs text-gray-500">{wasPublished ? (language==="es"?"Solo a quienes cambió su horario":"Only those whose shifts changed") : (language==="es"?"Primera publicación — todos con turnos":"First publish — everyone with shifts")}</div>
+                                        </button>
+                                        <button onClick={async()=>{setPublishPrompt(false); await publishSchedule("none");}} className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-poke-400 active:scale-95 transition">
+                                            <div className="font-bold text-sm text-gray-800">🔕 {language==="es"?"No notificar a nadie":"Don't notify anyone"}</div>
+                                            <div className="text-xs text-gray-500">{language==="es"?"Publicar en silencio":"Publish silently"}</div>
+                                        </button>
+                                    </div>
+                                    <button onClick={()=>setPublishPrompt(false)} className="w-full mt-3 py-2 text-sm font-bold text-gray-500">{language==="es"?"Cancelar":"Cancel"}</button>
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* ===== GRID QUICK-ADD MODAL ===== */}
                     {gridAddCell && (() => {
@@ -5882,6 +6000,9 @@
                                             <button onClick={()=>claimSwap(swap.id)} className="flex-1 py-1.5 bg-poke-600 text-white rounded-xl text-xs font-bold">{language==="es"?"🙋 Reclamar":"🙋 Claim"}</button>
                                         )}
                                         {swap.status==="open" && <span className="text-xs text-yellow-600 font-bold">⏳ {language==="es"?"Disponible":"Available"}</span>}
+                                        {swap.status==="open" && swap.offeredBy===staffName && (
+                                            <button onClick={()=>cancelOffer(swap.id)} className="py-1.5 px-3 bg-green-100 text-green-700 rounded-xl text-xs font-bold whitespace-nowrap">↩️ {language==="es"?"Recuperar":"Take back"}</button>
+                                        )}
                                         {swap.status==="pending_approval" && <span className="text-xs text-blue-600 font-bold">🙋 {swap.claimedBy} — {language==="es"?"esperando":"awaiting"}</span>}
                                         {swap.status==="pending_approval" && mgrAccess && (
                                             <button onClick={()=>approveSwap(swap)} className="py-1.5 px-3 bg-green-600 text-white rounded-xl text-xs font-bold">✅</button>
@@ -5937,7 +6058,7 @@
                                 <p className="text-xs text-gray-400 mt-1">{language==="es"?"Compara los turnos programados contra el reloj de tiempo real.":"Compare scheduled shifts against actual time clock punches."}</p>
                             </div>
                             {(()=>{
-                                const locStaff = staffList.filter(s=>s.location===schedLocation||s.location==="all");
+                                const locStaff = staffList.filter(s=>(s.location===schedLocation||s.location==="all") && !isOwner(s.name));
                                 const empData = locStaff.map(s => {
                                     const empShifts = shifts.filter(sh=>sh.employee===s.name);
                                     const scheduledHrs = empShifts.reduce((sum,sh)=>sum+calcHours(sh.startTime,sh.endTime),0);
