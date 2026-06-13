@@ -4585,6 +4585,38 @@
                 return startTime >= dayAvail.start && endTime <= dayAvail.end;
             };
 
+            // Clopen detection: a shift the morning after a late close, with under REST_MIN_HOURS between
+            const REST_MIN_HOURS = 10;
+            const timeToMin = (t) => { if(!t) return null; const v=(t==="CL"||t==="BD")?closeTime:t; const p=String(v).split(":").map(Number); if(isNaN(p[0])) return null; return p[0]*60+(p[1]||0); };
+            const hasClopen = (empName, dayIdx, startTime) => {
+                if (dayIdx <= 0) return false;
+                const startM = timeToMin(startTime);
+                if (startM == null) return false;
+                const prevKey = DAY_KEYS[dayIdx-1];
+                return shifts.some(s => {
+                    if (s.employee !== empName || s.day !== prevKey) return false;
+                    const endM = timeToMin(s.endTime);
+                    if (endM == null) return false;
+                    const restMin = (24*60 - endM) + startM; // overnight gap into the next morning
+                    return restMin < REST_MIN_HOURS*60;
+                });
+            };
+
+            // All warnings for a placed shift (time-off, availability, clopen)
+            const getShiftWarnings = (shift) => {
+                if (!shift || shift.employee === "__OPEN__") return [];
+                const dayIdx = DAY_KEYS.indexOf(shift.day);
+                const out = [];
+                if (hasTimeOffConflict(shift.employee, dayIdx)) out.push({type:"timeoff", icon:"⛔", text: language==="es"?"En descanso aprobado":"On approved time off"});
+                if (isAvailable(shift.employee, shift.day, shift.startTime, shift.endTime) === false) out.push({type:"avail", icon:"❌", text: language==="es"?"Fuera de disponibilidad":"Outside availability"});
+                if (hasClopen(shift.employee, dayIdx, shift.startTime)) out.push({type:"clopen", icon:"🌙", text: language==="es"?"Clopen — menos de 10h de descanso":"Clopen — under 10h rest"});
+                return out;
+            };
+
+            // Wage lookup + labor cost for a set of shifts
+            const wageFor = (empName) => wages[empName.replace(/\s/g,"_")] || 0;
+            const laborForShifts = (list) => list.reduce((sum,s)=> s.employee==="__OPEN__" ? sum : sum + calcHours(s.startTime,s.endTime)*wageFor(s.employee), 0);
+
             // Calculate weekly hours per employee
             const getEmpWeeklyHours = (empName) => {
                 return shifts.filter(s=>s.employee===empName).reduce((sum,s)=>sum+calcHours(s.startTime,s.endTime),0);
@@ -5248,18 +5280,37 @@
                                 const scheduleRows = [];
                                 orderedRoles.forEach(role => { scheduleRows.push({__group: role}); empGroups[role].forEach(e=>scheduleRows.push(e)); });
 
+                                // Live labor $ + pre-publish conflict scan
+                                const totalLabor = laborForShifts(shifts);
+                                let cTimeOff=0, cAvail=0, cClopen=0;
+                                shifts.forEach(s=>{ if(s.employee==="__OPEN__") return; const di=DAY_KEYS.indexOf(s.day); if(hasTimeOffConflict(s.employee,di)) cTimeOff++; if(isAvailable(s.employee,s.day,s.startTime,s.endTime)===false) cAvail++; if(hasClopen(s.employee,di,s.startTime)) cClopen++; });
+                                const otEmps = [...new Set(shifts.filter(s=>s.employee!=="__OPEN__").map(s=>s.employee))].filter(n=>getEmpWeeklyHours(n)>40);
+                                const totalIssues = cTimeOff + cAvail + cClopen + otEmps.length;
+
                                 return (
                                     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                                         {/* Toolbar */}
                                         <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex items-center justify-between flex-wrap gap-2">
                                             <p className="font-bold text-poke-700 text-sm">🗓️ {language==="es"?"Vista de Cuadrícula":"Grid View"} — {LOCATIONS.find(l=>l.id===schedLocation)?.name}</p>
                                             <div className="flex items-center gap-2">
+                                                {ownerAccess && totalLabor > 0 && <span className="text-xs font-bold px-2.5 py-1.5 rounded-lg" style={{background:"#ecfeff", color:"#0e7490"}}>💲 {language==="es"?"Nómina":"Labor"}: ${totalLabor.toLocaleString(undefined,{maximumFractionDigits:0})}</span>}
                                                 <button onClick={()=>setShowAllEmployees(!showAllEmployees)} className={"text-xs font-bold px-3 py-1.5 rounded-lg "+(showAllEmployees?"bg-poke-600 text-white":"bg-gray-200 text-gray-600")}>
                                                     {showAllEmployees?(language==="es"?"👥 Todos los empleados":"👥 All Employees"):(language==="es"?"📋 Solo con turnos":"📋 With Shifts Only")}
                                                 </button>
                                                 <span className="text-xs text-gray-400">{visibleEmps.length} {language==="es"?"empleados":"staff"}</span>
                                             </div>
                                         </div>
+
+                                        {/* Conflict summary */}
+                                        {totalIssues > 0 && (
+                                            <div className="px-3 py-2 border-b flex items-center gap-2 flex-wrap" style={{background:"#fffbeb"}}>
+                                                <span className="text-xs font-bold" style={{color:"#92400e"}}>⚠️ {totalIssues} {language==="es"?"cosas a revisar:":"to review:"}</span>
+                                                {cTimeOff>0 && <span className="text-xs font-semibold px-2 py-0.5 rounded" style={{background:"#fee2e2",color:"#b91c1c"}}>⛔ {cTimeOff} {language==="es"?"en descanso":"on time off"}</span>}
+                                                {cAvail>0 && <span className="text-xs font-semibold px-2 py-0.5 rounded" style={{background:"#fef3c7",color:"#a16207"}}>❌ {cAvail} {language==="es"?"fuera de disp.":"unavailable"}</span>}
+                                                {cClopen>0 && <span className="text-xs font-semibold px-2 py-0.5 rounded" style={{background:"#ede9fe",color:"#6d28d9"}}>🌙 {cClopen} {language==="es"?"clopen":"clopens"}</span>}
+                                                {otEmps.length>0 && <span className="text-xs font-semibold px-2 py-0.5 rounded" style={{background:"#ffedd5",color:"#c2410c"}}>⏰ {otEmps.length} {language==="es"?"sobre 40h":"over 40h"}</span>}
+                                            </div>
+                                        )}
 
                                         {/* Grid */}
                                         <div style={{overflowX: "auto", overflowY: "auto", maxHeight: "calc(100vh - 200px)"}}>
@@ -5389,11 +5440,15 @@
                                                                             {isAvailableDay === false && !hasConflict && !hasPendingTO && cellShifts.length===0 && (
                                                                                 <div style={{fontSize: 9, color: "#a16207", textAlign: "center", padding: 4, fontWeight: 700}}>❌ {language==="es"?"NO DISP":"UNAVAIL"}</div>
                                                                             )}
-                                                                            {cellShifts.map(shift=>(
+                                                                            {cellShifts.map(shift=>{
+                                                                                const shiftWarn = getShiftWarnings(shift);
+                                                                                const warnAvailClopen = shiftWarn.some(w=>w.type==="avail"||w.type==="clopen");
+                                                                                return (
                                                                                 <div key={shift.id}
                                                                                     draggable
                                                                                     onDragStart={(e)=>{e.stopPropagation();setDraggedShift(shift);}}
                                                                                     onClick={(e)=>{e.stopPropagation();openEditShift(shift);}}
+                                                                                    title={shiftWarn.map(w=>w.text).join(" · ")}
                                                                                     style={{
                                                                                         background: shift.isBD ? "#fbbf24" : isOT ? "#fb923c" : hasConflict ? "#ef4444" : "#0891b2",
                                                                                         color: "white",
@@ -5403,12 +5458,18 @@
                                                                                         marginBottom: 2,
                                                                                         cursor: "move",
                                                                                         fontWeight: 600,
-                                                                                        boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                                                                                        boxShadow: "0 1px 2px rgba(0,0,0,0.1)",
+                                                                                        outline: warnAvailClopen ? "2px solid #f59e0b" : "none",
+                                                                                        outlineOffset: warnAvailClopen ? "-2px" : 0
                                                                                     }}>
                                                                                     {fmtShiftRange(shift)}
                                                                                     {shift.role && <div style={{fontSize: 10, opacity: 0.9, fontWeight: 400}}>{shift.role}</div>}
+                                                                                    {shiftWarn.length > 0 && (
+                                                                                        <div style={{fontSize: 9, fontWeight: 700, marginTop: 1, lineHeight: 1.2}}>{shiftWarn.map(w=>w.icon).join(" ")}</div>
+                                                                                    )}
                                                                                 </div>
-                                                                            ))}
+                                                                                );
+                                                                            })}
                                                                             {/* Plus icon on hover (CSS will show it) */}
                                                                             {cellShifts.length === 0 && !hasConflict && isAvailableDay !== false && (
                                                                                 <div style={{textAlign: "center", color: "#cbd5e0", fontSize: 18, padding: "8px 0"}}>+</div>
@@ -5419,6 +5480,7 @@
                                                                 <td style={{padding: "8px 4px", textAlign: "center", fontSize: 13, fontWeight: 700, color: isOT ? "#ea580c" : "var(--text-primary)", borderBottom: "1px solid var(--border-subtle)"}}>
                                                                     {totalHours.toFixed(1)}
                                                                     {isOT && <div style={{fontSize: 9, color: "#ea580c"}}>OT</div>}
+                                                                    {ownerAccess && wageFor(emp.name) > 0 && <div style={{fontSize: 10, fontWeight: 600, color: "var(--text-muted)"}}>${laborForShifts(empShifts).toLocaleString(undefined,{maximumFractionDigits:0})}</div>}
                                                                 </td>
                                                             </tr>
                                                         );
@@ -9885,6 +9947,7 @@
             const [loading, setLoading] = useState(true);
             const [settings, setSettings] = useState({ float: 200, taxRate: 9.68 });
             const L = (en,es)=> language==="es"?es:en;
+            const ownerAccess = isOwner(staffName);
 
             // form state
             const [today, setToday] = useState(window.fmtLocalDate());
@@ -9953,8 +10016,85 @@
                 setSaving(false);
             };
 
+            // Manager drawer close — writes ONLY cash fields, never touches sales/tax/tender
+            const saveDrawer = async () => {
+                if (cashCounted==="" && depositAmt==="") { window.showToast(L("Enter the cash counted or deposit","Ingresa el efectivo contado o depósito"),"error"); return; }
+                setSaving(true);
+                try {
+                    await db.collection("dailySales").doc(today+"_"+loc).set({
+                        date: today, location: loc,
+                        openingFloat: floatVal,
+                        cashCounted: cashCounted===""?null:num(cashCounted),
+                        cashPaidOut: num(cashPaidOut), cashTipOut: num(cashTipOut),
+                        depositAmount: depositAmt===""?null:num(depositAmt),
+                        depositBy: depositAmt===""?null:staffName,
+                        drawerClosedBy: staffName, drawerUpdatedAt: new Date().toISOString()
+                    }, {merge:true});
+                    window.showToast(L("Drawer close saved","Cierre de caja guardado"),"success");
+                } catch(e){ console.error(e); window.showToast(L("Couldn't save","Error al guardar"),"error"); }
+                setSaving(false);
+            };
+
             // Reusable money input
             const recent = sales.slice(0, 14);
+
+            // ===== MANAGER VIEW: drawer close only (no sales, no over/short) =====
+            if (!ownerAccess) {
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>🪙 {L("Close the Drawer","Cierre de Caja")}</h2>
+                        <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{L("Count the cash drawer and record the deposit at end of day.","Cuenta la caja y registra el depósito al final del día.")}</p>
+
+                        <div className="card p-3 mb-3 flex gap-2">
+                            <div className="flex-1 min-w-0">
+                                <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{L("Date","Fecha")}</label>
+                                <input type="date" value={today} onChange={e=>setToday(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16,boxSizing:"border-box",maxWidth:"100%"}}/>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{L("Location","Ubicación")}</label>
+                                <select value={loc} onChange={e=>setLoc(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16,boxSizing:"border-box",maxWidth:"100%"}}>
+                                    <option value="cwe">Central West End</option>
+                                    <option value="kirkwood">Kirkwood</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="card p-3 mb-3 space-y-2">
+                            <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>🪙 {L("Cash Drawer","Caja")}</p>
+                            <div className="grid grid-cols-2 gap-2">
+                                <Money label={L("Opening float","Fondo inicial")} val={openFloat} setter={setOpenFloat} placeholder={String(settings.float)} hint={L("Default $"+settings.float,"Por defecto $"+settings.float)}/>
+                                <Money label={L("Cash counted","Efectivo contado")} val={cashCounted} setter={setCashCounted}/>
+                                <Money label={L("Cash paid out","Pagos en efectivo")} val={cashPaidOut} setter={setCashPaidOut} hint={L("Petty cash, vendor cash","Caja chica")}/>
+                                <Money label={L("Cash tip-out","Propinas en efectivo")} val={cashTipOut} setter={setCashTipOut}/>
+                            </div>
+                        </div>
+
+                        <div className="card p-3 mb-3 space-y-2">
+                            <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>🏦 {L("Bank Deposit","Depósito Bancario")}</p>
+                            <Money label={L("Amount deposited","Monto depositado")} val={depositAmt} setter={setDepositAmt} placeholder={suggestedDeposit.toFixed(2)} hint={suggestedDeposit>0?L("Suggested (above float): $"+suggestedDeposit.toFixed(2),"Sugerido: $"+suggestedDeposit.toFixed(2)):null}/>
+                        </div>
+
+                        <button onClick={saveDrawer} disabled={saving} className="w-full py-3 rounded-xl font-bold text-sm active:scale-95 transition mb-5" style={{background:"#0891b2",color:"white",opacity:saving?0.6:1}}>💾 {saving?L("Saving…","Guardando…"):L("Save Drawer Close","Guardar Cierre")}</button>
+
+                        <p className="font-bold text-sm mb-2" style={{color:"var(--text-primary)"}}>📋 {L("Recent Closes","Cierres Recientes")}</p>
+                        {loading ? <Skeleton count={3}/> : recent.filter(s=>s.cashCounted!=null||s.depositAmount!=null).length===0 ? (
+                            <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{L("No drawer closes yet","Sin cierres registrados")}</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {recent.filter(s=>s.cashCounted!=null||s.depositAmount!=null).map(s => (
+                                    <div key={s.id} className="card p-3 flex justify-between items-center">
+                                        <div>
+                                            <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>{new Date(s.date+"T12:00:00").toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})}</p>
+                                            <p className="text-xs" style={{color:"var(--text-muted)"}}>{s.location==="cwe"?"CWE":"Kirkwood"}{s.drawerClosedBy?" · "+s.drawerClosedBy:""}</p>
+                                        </div>
+                                        <p className="text-sm font-bold" style={{color:"var(--text-secondary)"}}>{s.depositAmount!=null?L("Deposited ","Depósito ")+"$"+(s.depositAmount||0).toLocaleString():"✓"}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            }
 
             return (
                 <div className="p-4 pb-24 animate-in">
@@ -10262,6 +10402,11 @@
             // Helpers
             const fmtM = (n) => "$" + (n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
             const fmtMK = (n) => n >= 1000 ? "$" + (n/1000).toFixed(1) + "k" : "$" + Math.round(n||0).toLocaleString();
+            // Over/short: recompute live from counted vs (float + cash sales − payouts); falls back to stored value
+            const computeOS = (c) => {
+                if (c.cashCounted == null || c.tenderCash == null) return c.cashOverShort != null ? c.cashOverShort : null;
+                return (c.cashCounted - (c.openingFloat||0)) - (c.tenderCash||0) + (c.cashPaidOut||0) + (c.cashTipOut||0);
+            };
             const pct = (part, total) => total > 0 ? (part / total * 100).toFixed(1) + "%" : "—";
             const catInfo = (id) => EXPENSE_CATEGORIES.find(c=>c.id===id) || EXPENSE_CATEGORIES[8];
 
@@ -10316,8 +10461,8 @@
             const fLaborSched = laborForDateLoc(flashDate, flashLoc);
             const fPrime = fCOGS + fLaborSched;
             const fPrimePct = fRev > 0 ? (fPrime/fRev*100) : 0;
-            const fOverShort = fSales.reduce((s,x)=> s + (x.cashOverShort||0), 0);
-            const fHasClose = fSales.some(x => x.cashOverShort != null || x.cashCounted != null);
+            const fOverShort = fSales.reduce((s,x)=> s + (computeOS(x)||0), 0);
+            const fHasClose = fSales.some(x => computeOS(x) != null || x.cashCounted != null);
 
             // ═══ P&L DATA ═══
             const plDates = getDateRange(plRange);
@@ -10699,7 +10844,7 @@
                     {/* ═══════════════════════════════════ */}
                     {bkTab === "cash" && (() => {
                         const closes = plSalesData.filter(s => s.cashOverShort != null || s.cashCounted != null).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
-                        const totalOverShort = closes.reduce((s,x)=>s+(x.cashOverShort||0),0);
+                        const totalOverShort = closes.reduce((s,x)=>s+(computeOS(x)||0),0);
                         const deposits = plSalesData.filter(s => s.depositAmount != null && s.depositAmount > 0).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
                         const totalDeposits = deposits.reduce((s,x)=>s+(x.depositAmount||0),0);
                         const cardTipsOwed = plSalesData.reduce((s,x)=>s+(x.cardTips||0),0);
@@ -10741,7 +10886,9 @@
                                             {closes.slice(0,14).map(c => (
                                                 <div key={c.id} className="flex justify-between items-center text-sm py-1" style={{borderBottom:"1px solid var(--border-subtle)"}}>
                                                     <span style={{color:"var(--text-secondary)"}}>{new Date(c.date+"T12:00:00").toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})} · {c.location==="cwe"?"CWE":"KW"}</span>
-                                                    <span className="font-bold" style={{color:c.cashOverShort==null?"var(--text-muted)":Math.abs(c.cashOverShort)<0.5?"#16a34a":Math.abs(c.cashOverShort)<5?"#ca8a04":"#dc2626"}}>{c.cashOverShort==null?"—":(c.cashOverShort>=0?"+":"−")+fmtM(Math.abs(c.cashOverShort)).replace("$","$")}</span>
+                                                    {(() => { const os = computeOS(c); return (
+                                                    <span className="font-bold" style={{color:os==null?"var(--text-muted)":Math.abs(os)<0.5?"#16a34a":Math.abs(os)<5?"#ca8a04":"#dc2626"}}>{os==null?(c.cashCounted!=null?(language==="es"?"falta venta":"needs sales"):"—"):(os>=0?"+":"−")+fmtM(Math.abs(os))}</span>
+                                                    ); })()}
                                                 </div>
                                             ))}
                                         </div>
