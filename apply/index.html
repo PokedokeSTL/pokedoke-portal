@@ -4234,8 +4234,20 @@
         }
 
         // Schedule Component
-        function Schedule({ staffName, language, staffList }) {
+        function Schedule({ staffName, language, staffList, focus }) {
             const [schedTab, setSchedTab] = useState("view");
+            const [highlightId, setHighlightId] = useState(null);
+
+            // Deep-link from the Activity Log: jump to a sub-tab and highlight the item
+            useEffect(() => {
+                if (!focus || !focus.sub) return;
+                setSchedTab(focus.sub);
+                if (focus.id) {
+                    setHighlightId(focus.id);
+                    const t = setTimeout(()=>setHighlightId(null), 4000);
+                    return () => clearTimeout(t);
+                }
+            }, [focus]);
             const [schedLocation, setSchedLocation] = useState("cwe");
             const [weekOffset, setWeekOffset] = useState(0);
             const [shifts, setShifts] = useState([]);
@@ -6012,7 +6024,7 @@
                             </div>
                             <p className="font-bold text-gray-800 text-sm">{language==="es"?"Solicitudes":"Requests"}</p>
                             {timeOffRequests.filter(r=>mgrAccess||r.employee===staffName).sort((a,b)=>(b.requestedAt||"").localeCompare(a.requestedAt||"")).map(req=>(
-                                <div key={req.id} className={"bg-white rounded-xl border p-3 "+(req.status==="approved"?"border-green-200":req.status==="denied"?"border-red-200":"border-yellow-200")}>
+                                <div key={req.id} ref={el=>{ if(el && highlightId===req.id) el.scrollIntoView({behavior:"smooth",block:"center"}); }} className={"bg-white rounded-xl border p-3 "+(req.status==="approved"?"border-green-200":req.status==="denied"?"border-red-200":"border-yellow-200")} style={highlightId===req.id?{boxShadow:"0 0 0 3px #06b6d4",transition:"box-shadow 0.3s"}:undefined}>
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <p className="font-semibold text-sm text-gray-800">{req.employee}</p>
@@ -6054,7 +6066,7 @@
                                 <p className="text-xs text-gray-400 mt-1">{language==="es"?"Ofrece un turno que no puedes trabajar.":"Offer a shift you can't work."}</p>
                             </div>
                             {swapOffers.filter(s=>s.status==="open"||s.status==="pending_approval"||(mgrAccess)).map(swap=>(
-                                <div key={swap.id} className={"bg-white rounded-xl border p-3 "+(swap.status==="approved"?"border-green-200":swap.status==="open"?"border-yellow-200":"border-blue-200")}>
+                                <div key={swap.id} ref={el=>{ if(el && highlightId===swap.id) el.scrollIntoView({behavior:"smooth",block:"center"}); }} className={"bg-white rounded-xl border p-3 "+(swap.status==="approved"?"border-green-200":swap.status==="open"?"border-yellow-200":"border-blue-200")} style={highlightId===swap.id?{boxShadow:"0 0 0 3px #06b6d4",transition:"box-shadow 0.3s"}:undefined}>
                                     <p className="font-semibold text-sm text-gray-800">{swap.offeredBy} {language==="es"?"ofrece":"offers"}:</p>
                                     <p className="text-xs text-gray-500">{swap.shift?.day} · {swap.shift?.startTime}-{swap.shift?.endTime} · {swap.shift?.role}</p>
                                     <div className="flex items-center gap-2 mt-2">
@@ -10198,7 +10210,7 @@
         }
 
         // ============ ACTIVITY LOG (owner only) ============
-        function ActivityLog({ language, staffName }) {
+        function ActivityLog({ language, staffName, onNavigate }) {
             const [activity, setActivity] = useState([]);
             const [loading, setLoading] = useState(true);
 
@@ -10217,13 +10229,13 @@
                             db.collection("wasteLog").orderBy("date","desc").limit(20).get()
                         ];
                         const [audits, orders, deliveries, timeOff, swaps, schedules, waste] = await Promise.all(promises);
-                        audits.forEach(d=>{const a=d.data();items.push({icon:"🔍",text:a.auditedBy+" "+(language==="es"?"auditó inventario":"audited inventory"),date:a.date,who:a.auditedBy});});
-                        orders.forEach(d=>{const o=d.data();items.push({icon:"📦",text:o.orderedBy+" "+(language==="es"?"ordenó de":"ordered from")+" "+o.supplier,date:o.date,who:o.orderedBy});});
-                        deliveries.forEach(d=>{const r=d.data();items.push({icon:"📥",text:r.receivedBy+" "+(language==="es"?"recibió entrega":"received delivery"),date:r.date,who:r.receivedBy});});
-                        timeOff.forEach(d=>{const t=d.data();items.push({icon:"🏖️",text:t.employee+" "+(language==="es"?"solicitó descanso":"requested time off")+(t.reviewedBy?" — "+(t.status==="approved"?"✅":"❌")+" "+t.reviewedBy:""),date:t.requestedAt,who:t.employee});});
-                        swaps.forEach(d=>{const sw=d.data();items.push({icon:"🔄",text:sw.offeredBy+" "+(language==="es"?"ofreció turno":"offered shift")+(sw.claimedBy?" → "+sw.claimedBy:""),date:sw.createdAt,who:sw.offeredBy});});
-                        schedules.forEach(d=>{const s=d.data();if(s.publishedAt)items.push({icon:"📅",text:(s.publishedBy||"?")+" "+(language==="es"?"publicó":"published")+" "+(s.location||"")+" "+(language==="es"?"horario":"schedule"),date:s.publishedAt,who:s.publishedBy});});
-                        waste.forEach(d=>{const w=d.data();items.push({icon:"🗑️",text:(w.loggedBy||"?")+" "+(language==="es"?"registró merma":"logged waste"),date:w.date,who:w.loggedBy});});
+                        audits.forEach(d=>{const a=d.data();items.push({icon:"🔍",text:a.auditedBy+" "+(language==="es"?"auditó inventario":"audited inventory"),date:a.date,who:a.auditedBy,nav:{tab:"operations"}});});
+                        orders.forEach(d=>{const o=d.data();items.push({icon:"📦",text:o.orderedBy+" "+(language==="es"?"ordenó de":"ordered from")+" "+o.supplier,date:o.date,who:o.orderedBy,nav:{tab:"operations"}});});
+                        deliveries.forEach(d=>{const r=d.data();items.push({icon:"📥",text:r.receivedBy+" "+(language==="es"?"recibió entrega":"received delivery"),date:r.date,who:r.receivedBy,nav:{tab:"operations"}});});
+                        timeOff.forEach(d=>{const t=d.data();items.push({icon:"🏖️",text:t.employee+" "+(language==="es"?"solicitó descanso":"requested time off")+(t.reviewedBy?" — "+(t.status==="approved"?"✅":"❌")+" "+t.reviewedBy:""),date:t.requestedAt,who:t.employee,nav:{tab:"schedule",sub:"timeoff",id:d.id}});});
+                        swaps.forEach(d=>{const sw=d.data();items.push({icon:"🔄",text:sw.offeredBy+" "+(language==="es"?"ofreció turno":"offered shift")+(sw.claimedBy?" → "+sw.claimedBy:""),date:sw.createdAt,who:sw.offeredBy,nav:{tab:"schedule",sub:"swaps",id:d.id}});});
+                        schedules.forEach(d=>{const s=d.data();if(s.publishedAt)items.push({icon:"📅",text:(s.publishedBy||"?")+" "+(language==="es"?"publicó":"published")+" "+(s.location||"")+" "+(language==="es"?"horario":"schedule"),date:s.publishedAt,who:s.publishedBy,nav:{tab:"schedule",sub:"view"}});});
+                        waste.forEach(d=>{const w=d.data();items.push({icon:"🗑️",text:(w.loggedBy||"?")+" "+(language==="es"?"registró merma":"logged waste"),date:w.date,who:w.loggedBy,nav:{tab:"operations"}});});
                         items.sort((a,b)=>(b.date||"").localeCompare(a.date||""));
                         if (mounted) {
                             setActivity(items.slice(0, 60));
@@ -10238,21 +10250,26 @@
             return (
                 <div className="p-4 pb-24 animate-in">
                     <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>📜 {language==="es"?"Registro de Actividad":"Activity Log"}</h2>
-                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{language==="es"?"Lo que ha sucedido recientemente":"Recent activity across the business"}</p>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{language==="es"?"Lo que ha sucedido recientemente · toca para ver":"Recent activity · tap to open"}</p>
 
                     {loading ? <Skeleton count={6}/> : activity.length===0 ? (
                         <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin actividad":"No activity yet"}</p>
                     ) : (
                         <div className="space-y-2">
-                            {activity.map((a,i) => (
-                                <div key={i} className="card p-3 flex items-start gap-3">
+                            {activity.map((a,i) => {
+                                const clickable = a.nav && onNavigate;
+                                return (
+                                <div key={i} onClick={clickable?()=>onNavigate(a.nav):undefined}
+                                    className={"card p-3 flex items-center gap-3"+(clickable?" active:scale-[0.99] transition cursor-pointer":"")}>
                                     <div style={{fontSize: 20, lineHeight: 1}}>{a.icon}</div>
                                     <div className="flex-1 min-w-0">
                                         <p className="text-sm" style={{color:"var(--text-primary)"}}>{a.text}</p>
                                         <p className="text-xs mt-0.5" style={{color:"var(--text-muted)"}}>{a.date ? new Date(a.date).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : ""}</p>
                                     </div>
+                                    {clickable && <div style={{fontSize:18,color:"var(--text-muted)",flexShrink:0}}>›</div>}
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
                 </div>
@@ -12117,6 +12134,12 @@
                 } catch(e) { return "home"; }
             });
             const [empAutoAdd, setEmpAutoAdd] = useState(false);
+            const [scheduleFocus, setScheduleFocus] = useState(null);
+            const navigateTo = (target) => {
+                if (!target || !target.tab) return;
+                if (target.sub) setScheduleFocus({ sub: target.sub, id: target.id || null, ts: Date.now() });
+                setActiveTab(target.tab);
+            };
 
             // Listen for service worker messages (notification clicks while app is open)
             useEffect(() => {
@@ -12494,7 +12517,7 @@
                         {activeTab === "training" && <TrainingHub staffName={staffName} language={language} />}
                         {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
-                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} staffList={staffList} />}
+                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} staffList={staffList} focus={scheduleFocus} />}
                         {activeTab === "dashboard" && staffIsOwner && <Dashboard language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "bookkeeping" && staffIsOwner && <Bookkeeping language={language} staffName={staffName} />}
                         {activeTab === "employees" && staffIsOwner && <Employees language={language} staffName={staffName} staffList={staffList} autoAdd={empAutoAdd} onAutoAddHandled={()=>setEmpAutoAdd(false)} />}
@@ -12506,7 +12529,7 @@
                         {activeTab === "checklists" && <Checklists language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "allergens" && <Allergens language={language} />}
                         {activeTab === "sales" && staffIsAdmin && <SalesInput language={language} staffName={staffName} staffList={staffList} />}
-                        {activeTab === "activity" && staffIsOwner && <ActivityLog language={language} staffName={staffName} />}
+                        {activeTab === "activity" && staffIsOwner && <ActivityLog language={language} staffName={staffName} onNavigate={navigateTo} />}
                         {activeTab === "hiring" && staffIsOwner && <Hiring language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} />}
                     </div>
 
