@@ -1150,7 +1150,8 @@
             WIS: { id: "WIS", name: "Wismettac", color: "#dc2626", cutoff: "Friday 12:00pm", cutoffEs: "Viernes 12:00pm", delivery: "CWE/Delmar: Mon-Tue, Kirkwood: Wed", deliveryEs: "CWE/Delmar: Lun-Mar, Kirkwood: Mié", url: "https://econnect.wismettacusa.com/login" },
             PFG: { id: "PFG", name: "PFG", color: "#2563eb", cutoff: "Tuesday 3:00pm", cutoffEs: "Martes 3:00pm", delivery: "Wednesday", deliveryEs: "Miércoles", url: "https://www.customerfirstsolutions.com" },
             RDC: { id: "RDC", name: "RD/Costco/Other", color: "#059669", cutoff: "Tuesday EOD", cutoffEs: "Martes fin del día", delivery: "Wed-Fri", deliveryEs: "Mié-Vie", url: "" },
-            BOB: { id: "BOB", name: "Qbubble", color: "#7c3aed", cutoff: "Mon-Fri (anytime)", cutoffEs: "Lun-Vie (cualquier hora)", delivery: "FedEx 3-5 days", deliveryEs: "FedEx 3-5 días", url: "" }
+            BOB: { id: "BOB", name: "Qbubble", color: "#7c3aed", cutoff: "Mon-Fri (anytime)", cutoffEs: "Lun-Vie (cualquier hora)", delivery: "FedEx 3-5 days", deliveryEs: "FedEx 3-5 días", url: "" },
+            FAB: { id: "FAB", name: "Fabulous Fish", color: "#0ea5e9", daily: true, cutoffHour: 11, cutoff: "Daily — by 11am = same-day PM, day before = next AM", cutoffEs: "Diario — antes de 11am = mismo día PM, día anterior = AM siguiente", delivery: "Same-day PM or next-AM", deliveryEs: "Mismo día PM o AM siguiente", url: "" }
         };
 
         // Inventory Data — Complete PokeDoke inventory with PAR levels and vendor tags
@@ -1159,7 +1160,7 @@
                 id: 0, name: "Proteins", nameEs: "Proteínas",
                 items: [
                     { id: "0-0", name: "Tuna Loins", nameEs: "Atún Ahi", supplier: "WIS", orderDay: "fri", unit: "case", par: 15 },
-                    { id: "0-1", name: "Salmon (sashimi grade)", nameEs: "Salmón", supplier: "WIS", orderDay: "fri", unit: "unit", par: 15 },
+                    { id: "0-1", name: "Salmon (sashimi grade)", nameEs: "Salmón", supplier: "FAB", orderDay: "", unit: "unit", par: 15 },
                     { id: "0-2", name: "Ground Tuna (Spicy Tuna Mix)", nameEs: "Atún Molido", supplier: "WIS", orderDay: "fri", unit: "case", par: 10 },
                     { id: "0-3", name: "71/90 P/D Shrimp", nameEs: "Camarón P/D", supplier: "PFG", orderDay: "tue", unit: "case", par: 8 },
                     { id: "0-4", name: "Tempura Shrimp", nameEs: "Camarón Tempura", supplier: "WIS", orderDay: "fri", unit: "case", par: 4 },
@@ -1644,7 +1645,14 @@
         function Operations({ language, staffList, staffName }) {
             const [passwordEntered, setPasswordEntered] = useState(false);
             const [password, setPassword] = useState("");
-            const [inventory, setInventory] = useState({});
+            const [allCounts, setAllCounts] = useState({}); // { cwe:{itemId:n}, kirkwood:{...} }
+            const [parByLoc, setParByLoc] = useState({});   // optional per-location par overrides
+            const _opsStaffRec = (staffList || []).find(s => s.name === staffName);
+            const _opsMyLoc = _opsStaffRec?.location || "cwe";
+            const opsCanSwitchLoc = _opsMyLoc === "all" || isOwner(staffName);
+            const [invLoc, setInvLoc] = useState(_opsMyLoc === "all" ? "cwe" : _opsMyLoc);
+            const inventory = allCounts[invLoc] || {};
+            const setInventory = (next) => setAllCounts(prev => ({ ...prev, [invLoc]: (typeof next === "function" ? next(prev[invLoc] || {}) : next) }));
             const [activeTab, setActiveTab] = useState("checklist");
             const [lastUpdated, setLastUpdated] = useState({});
             const [editMode, setEditMode] = useState(false);
@@ -1755,6 +1763,7 @@
             const DAY_LABELS_ES = { sun:"Dom", mon:"Lun", tue:"Mar", wed:"Mié", thu:"Jue", fri:"Vie", sat:"Sáb" };
             const parseVendorDefault = (vendor) => {
                 if (!vendor || !vendor.cutoff) return null;
+                if (vendor.daily) return { daily: true, hour: vendor.cutoffHour != null ? vendor.cutoffHour : 11, leadDays: 0 };
                 const ct = vendor.cutoff.toLowerCase();
                 if (ct.includes("anytime")) return null; // no fixed cutoff day
                 let day = null;
@@ -1777,6 +1786,11 @@
                 const vendor = VENDORS[vId];
                 const def = parseVendorDefault(vendor);
                 const ov = vendorSettings[vId] || {};
+                // Daily vendors (e.g. local fish): cutoff every day, unless owner pins a specific day
+                if (def && def.daily && !ov.day) {
+                    const hour = ov.hour != null ? ov.hour : def.hour;
+                    return { daily: true, hour, leadDays: ov.leadDays != null ? ov.leadDays : 0 };
+                }
                 const day = ov.day || (def && def.day);
                 if (!day) return null;
                 const hour = ov.hour != null ? ov.hour : (def ? def.hour : 23);
@@ -1792,7 +1806,8 @@
             // The order day an item inherits from its supplier
             const orderDayForSupplier = (supplierCode) => {
                 const sch = getVendorSchedule(supplierCode);
-                return sch ? sch.day : null;
+                if (!sch) return null;
+                return sch.daily ? "daily" : sch.day;
             };
 
             const getOrderReminders = () => {
@@ -1803,6 +1818,13 @@
                 Object.values(VENDORS).forEach(v => {
                     const sch = getVendorSchedule(v.id);
                     if (!sch) return; // anytime vendors → no fixed reminder
+                    const vendorItems = getOrderList().filter(i => i.supplier === v.id);
+                    if (sch.daily) {
+                        // Only nudge when something's actually low (don't nag daily otherwise)
+                        if (vendorItems.length === 0) return;
+                        reminders.push({ vendor: v, urgency: hour < sch.hour ? "today" : "tomorrow", daily: true, daysUntil: 0, itemCount: vendorItems.length, cutoffHour: sch.hour });
+                        return;
+                    }
                     let daysUntil = (sch.dayNum - todayNum + 7) % 7;
                     let urgency = null;
                     if (daysUntil === 0) {
@@ -1813,7 +1835,6 @@
                         urgency = daysUntil === 1 ? "tomorrow" : "soon";
                     }
                     if (urgency) {
-                        const vendorItems = getOrderList().filter(i => i.supplier === v.id);
                         reminders.push({ vendor: v, urgency, daysUntil, itemCount: vendorItems.length, cutoffHour: sch.hour, cutoffDay: sch.day });
                     }
                 });
@@ -1837,14 +1858,14 @@
             useEffect(() => {
                 if (!passwordEntered) return;
                 const unsub = db.collection("pendingOrders").orderBy("date", "desc").onSnapshot(snap => {
-                    setPendingOrders(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                    setPendingOrders(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(o => o.location ? o.location === invLoc : true));
                 });
                 return () => unsub();
-            }, [passwordEntered]);
+            }, [passwordEntered, invLoc]);
 
             const placeOrder = async (supplier, items) => {
                 const orderId = Date.now().toString();
-                const order = { supplier, items: items.map(i => ({id:i.id,name:i.name,unit:i.unit||"",qtyOrdered:i.needed})), orderedBy: staffName, date: new Date().toISOString(), status: "pending" };
+                const order = { supplier, items: items.map(i => ({id:i.id,name:i.name,unit:i.unit||"",qtyOrdered:i.needed})), orderedBy: staffName, location: invLoc, date: new Date().toISOString(), status: "pending" };
                 try { await db.collection("pendingOrders").doc(orderId).set(order); } catch(e) { console.error(e); }
             };
 
@@ -1860,9 +1881,9 @@
                         await ref.put(receiptFile);
                         receiptUrl = await ref.getDownloadURL();
                     }
-                    await db.collection("ops").doc("inventory").set({counts:newInv,customInventory,date:new Date().toISOString()});
+                    await persistCounts(newInv);
                     await db.collection("deliveryLog").doc(deliveryId).set({
-                        orderId, items: receivedItems, receivedBy: staffName, date: new Date().toISOString(), receiptUrl,
+                        orderId, items: receivedItems, receivedBy: staffName, location: invLoc, date: new Date().toISOString(), receiptUrl,
                         discrepancies: receivedItems.filter(i => i.qtyOrdered !== i.qtyReceived).map(i => ({name:i.name,ordered:i.qtyOrdered,received:i.qtyReceived,diff:i.qtyReceived-i.qtyOrdered}))
                     });
                     await db.collection("pendingOrders").doc(orderId).update({status:"received",receivedDate:new Date().toISOString(),receivedBy:staffName});
@@ -1897,7 +1918,7 @@
                 try {
                     const auditId = Date.now().toString();
                     await db.collection("audits").doc(auditId).set({
-                        results, auditedBy: staffName, date: new Date().toISOString(), totalItems: results.length,
+                        results, auditedBy: staffName, location: invLoc, date: new Date().toISOString(), totalItems: results.length,
                         totalVariance, itemsWithVariance: results.filter(r => r.variance !== 0).length
                     });
 
@@ -1905,7 +1926,7 @@
                     const newInv = { ...inventory };
                     results.forEach(r => { newInv[r.id] = r.physicalCount; });
                     setInventory(newInv);
-                    await db.collection("ops").doc("inventory").set({ counts: newInv, customInventory, date: new Date().toISOString() });
+                    await persistCounts(newInv);
 
                     setAuditCounts({});
                     await db.collection("ops").doc("latestAlert").set({type:"audit",by:staffName,date:new Date().toISOString(),totalItems:results.length,itemsWithVariance:results.filter(r=>r.variance!==0).length,belowPar:results.filter(r=>r.physicalCount<(parLevels[r.id]||0)).length});
@@ -1918,10 +1939,10 @@
             useEffect(() => {
                 if (!passwordEntered) return;
                 const unsub = db.collection("audits").orderBy("date", "desc").limit(20).onSnapshot(snap => {
-                    setAuditHistory(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                    setAuditHistory(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(a => a.location ? a.location === invLoc : true));
                 });
                 return () => unsub();
-            }, [passwordEntered]);
+            }, [passwordEntered, invLoc]);
 
             const [parLevels, setParLevels] = useState({});
 
@@ -2263,7 +2284,15 @@
                 const unsubInventorySnapshot = inventoryRef.onSnapshot((doc) => {
                     if (doc.exists) {
                         const data = doc.data();
-                        setInventory(data.counts || {});
+                        // Per-location counts; migrate legacy single `counts` into both stores if needed
+                        if (data.countsByLoc) {
+                            setAllCounts(data.countsByLoc);
+                        } else if (data.counts) {
+                            setAllCounts({ cwe: data.counts, kirkwood: { ...data.counts } });
+                        } else {
+                            setAllCounts({});
+                        }
+                        if (data.parByLoc) setParByLoc(data.parByLoc);
                         if (data.customInventory) {
                             // Merge vendor/supplier info from defaults into Firestore data
                             const defaultLookup = {};
@@ -2516,7 +2545,7 @@
                 const newInventory = { ...inventory, [itemId]: parseInt(newCount) || 0 };
                 setInventory(newInventory);
                 try {
-                    await db.collection("ops").doc("inventory").set({ counts: newInventory, customInventory, date: new Date().toISOString() });
+                    await persistCounts(newInventory);
                 } catch (err) { console.error("Error updating inventory:", err); }
             };
 
@@ -2531,24 +2560,35 @@
                         cat.items.forEach(item => { resetCounts[item.id] = 0; });
                     });
                     setInventory(resetCounts);
-                    await db.collection("ops").doc("inventory").set({ counts: resetCounts, customInventory, date: new Date().toISOString() });
+                    await persistCounts(resetCounts);
                 } catch (err) { console.error("Error saving/resetting inventory:", err); }
                 setInventorySaving(false);
                 setShowSaveConfirm(false);
             };
 
             const saveInventory = async (counts, items) => {
+                const nextAll = { ...allCounts, [invLoc]: counts };
+                setAllCounts(nextAll);
                 try {
                     await db.collection("ops").doc("inventory").set({
-                        counts, customInventory: items, date: new Date().toISOString()
-                    });
+                        countsByLoc: nextAll, customInventory: items, parByLoc, date: new Date().toISOString()
+                    }, { merge: true });
                     await saveInventorySnapshot(counts, items);
+                } catch (err) { console.error("Error updating inventory:", err); }
+            };
+
+            // Persist counts for the active location only (no history snapshot) — used for count tweaks, receiving, audits
+            const persistCounts = async (counts) => {
+                const nextAll = { ...allCounts, [invLoc]: counts };
+                setAllCounts(nextAll);
+                try {
+                    await db.collection("ops").doc("inventory").set({ countsByLoc: nextAll, customInventory, parByLoc, date: new Date().toISOString() }, { merge: true });
                 } catch (err) { console.error("Error updating inventory:", err); }
             };
 
             // --- Inventory Enhancement Functions ---
             const logWaste = async (itemName, qty, reason, notes) => {
-                const entry = { id: Date.now().toString(), item: itemName, qty: parseInt(qty) || 1, reason, notes, loggedBy: staffName, date: new Date().toISOString() };
+                const entry = { id: Date.now().toString(), item: itemName, qty: parseInt(qty) || 1, reason, notes, loggedBy: staffName, location: invLoc, date: new Date().toISOString() };
                 setWasteLog(prev => [entry, ...prev]);
                 try { await db.collection("wasteLog").doc(entry.id).set(entry); } catch (err) { console.error(err); }
             };
@@ -2556,12 +2596,17 @@
             useEffect(() => {
                 if (!passwordEntered) return;
                 const unsub = db.collection("wasteLog").orderBy("date", "desc").limit(100).onSnapshot(snap => {
-                    setWasteLog(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                    setWasteLog(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(w => w.location ? w.location === invLoc : true));
                 });
                 return () => unsub();
-            }, [passwordEntered]);
+            }, [passwordEntered, invLoc]);
 
-            const getParLevel = (item) => parLevels[item.id] !== undefined ? parLevels[item.id] : (item.par || 0);
+            const getParLevel = (item) => {
+                const ov = parByLoc[invLoc];
+                if (ov && ov[item.id] !== undefined && ov[item.id] !== null && ov[item.id] !== "") return Number(ov[item.id]);
+                if (parLevels[item.id] !== undefined) return parLevels[item.id];
+                return item.par || 0;
+            };
             const getStockStatus = (item) => {
                 const count = inventory[item.id] || 0;
                 const par = getParLevel(item);
@@ -2580,13 +2625,17 @@
                 return () => unsub();
             }, [passwordEntered]);
 
-            // Load the most recent Quick Check so its low/out flags can drive the Order list
+            // Load the most recent Quick Check for THIS location so its low/out flags drive the Order list
             useEffect(() => {
-                const unsub = db.collection("quickCounts").orderBy("date","desc").limit(1).onSnapshot(snap => {
-                    setLatestQuickCheck(!snap.empty ? (snap.docs[0].data().counts || {}) : {});
+                const unsub = db.collection("quickCounts").orderBy("date","desc").limit(30).onSnapshot(snap => {
+                    const docMatch = snap.docs.find(d => {
+                        const data = d.data();
+                        return data.location ? data.location === invLoc : d.id.startsWith(invLoc + "_") || (!d.id.includes("_"));
+                    });
+                    setLatestQuickCheck(docMatch ? (docMatch.data().counts || {}) : {});
                 });
                 return () => unsub();
-            }, []);
+            }, [invLoc]);
 
             const getOrderList = () => {
                 const items = [];
@@ -2669,7 +2718,7 @@
                 results.forEach(r => { if (r.id && r.qty) newInv[r.id] = (newInv[r.id] || 0) + r.qty; });
                 setInventory(newInv);
                 try {
-                    await db.collection("ops").doc("inventory").set({ counts: newInv, customInventory, date: new Date().toISOString() });
+                    await persistCounts(newInv);
                     await db.collection("receiptHistory").doc(Date.now().toString()).set({ items: results, appliedBy: staffName, date: new Date().toISOString() });
                 } catch (err) { console.error(err); }
                 setScanResults(null);
@@ -3159,6 +3208,17 @@
 
                     {activeTab === "inventory" && (
                         <div className="space-y-4 animate-in">
+                            {/* Location selector (owners) or label (managers) */}
+                            {opsCanSwitchLoc ? (
+                                <div className="flex gap-1 bg-gray-100 rounded-2xl p-1">
+                                    {[{id:"cwe",l:"Central West End"},{id:"kirkwood",l:"Kirkwood"}].map(loc=>(
+                                        <button key={loc.id} onClick={()=>setInvLoc(loc.id)}
+                                            className={"flex-1 py-2 px-2 rounded-xl text-sm font-bold transition-all "+(invLoc===loc.id?"bg-poke-600 text-white shadow-md":"text-gray-500")}>📍 {loc.l}</button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="rounded-2xl px-3 py-2 text-sm font-bold" style={{background:"#ecfeff",color:"#0e7490"}}>📍 {invLoc==="cwe"?"Central West End":"Kirkwood"}</div>
+                            )}
                             {/* How-it-works explainer */}
                             <div className="rounded-2xl p-3" style={{background:"#ecfeff", border:"1px solid #a5f3fc"}}>
                                 <div className="flex items-center justify-between cursor-pointer" onClick={()=>setInvHelpOpen(o=>!o)}>
@@ -3191,7 +3251,7 @@
                                     <div className="p-4 border-b flex items-center justify-between" style={{background:"#0891b2"}}>
                                         <div>
                                             <p className="font-bold text-white">⚙️ {language==="es"?"Configurar Niveles Par":"Set Up Par Levels"}</p>
-                                            <p className="text-xs text-white/80">{language==="es"?"Define cuánto quieres tener de cada artículo":"Set how much you want on hand for each item"}</p>
+                                            <p className="text-xs text-white/80">{language==="es"?"Aplica a ambas ubicaciones · pon par, unidad y costo una vez":"Applies to both locations · set par, unit & cost once"}</p>
                                         </div>
                                         <button onClick={()=>setShowParSetup(false)} className="text-white text-2xl leading-none px-2">✕</button>
                                     </div>
@@ -3205,13 +3265,18 @@
                                                     {cat.items.map(it => {
                                                         const draftSup = parDraft[it.id]?.supplier||"";
                                                         const derivedDay = orderDayForSupplier(draftSup);
+                                                        const dayBadge = derivedDay === "daily" ? (language==="es"?"Diario":"Daily") : (derivedDay ? (language==="es"?DAY_LABELS_ES[derivedDay]:DAY_LABELS[derivedDay]) : null);
                                                         return (
                                                         <div key={it.id} className="p-3">
                                                             <div className="flex items-center justify-between gap-2">
                                                                 <p className="text-sm font-medium text-gray-800 truncate flex-1">{language==="es"&&it.nameEs?it.nameEs:it.name}</p>
-                                                                {derivedDay && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{background:"#ecfeff",color:"#0e7490"}}>📅 {language==="es"?DAY_LABELS_ES[derivedDay]:DAY_LABELS[derivedDay]}</span>}
+                                                                {dayBadge && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{background:"#ecfeff",color:"#0e7490"}}>📅 {dayBadge}</span>}
                                                             </div>
-                                                            <input type="text" value={draftSup} onChange={e=>setParDraft(d=>({...d,[it.id]:{...d[it.id],supplier:e.target.value}}))} placeholder={language==="es"?"Proveedor (WIS, PFG…)":"Supplier (WIS, PFG…)"} className="mt-1 w-full px-2 py-1 border border-gray-200 rounded-lg text-xs" style={{fontSize:16}}/>
+                                                            <select value={draftSup} onChange={e=>setParDraft(d=>({...d,[it.id]:{...d[it.id],supplier:e.target.value}}))} className="mt-1 w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" style={{fontSize:16}}>
+                                                                <option value="">{language==="es"?"Proveedor…":"Supplier…"}</option>
+                                                                {Object.values(VENDORS).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                                                                {draftSup && !VENDORS[draftSup] && <option value={draftSup}>{draftSup}</option>}
+                                                            </select>
                                                             <div className="grid grid-cols-3 gap-2 mt-2">
                                                                 <div>
                                                                     <label className="text-[10px] font-bold text-gray-400">PAR</label>
@@ -3262,9 +3327,11 @@
                                             const sch = getVendorSchedule(v.id);
                                             const ov = vendorSettings[v.id] || {};
                                             const def = parseVendorDefault(v);
+                                            const isDaily = sch && sch.daily;
                                             const curDay = ov.day || (def && def.day) || "";
                                             const curHour = ov.hour != null ? ov.hour : (def ? def.hour : 23);
                                             const curLead = ov.leadDays != null ? ov.leadDays : (def ? def.leadDays : 2);
+                                            const hr12 = (h)=> h>=23?"—" : h>12?((h-12)+"pm") : (h===12?"12pm":(h+"am"));
                                             return (
                                                 <div key={v.id} className="bg-white rounded-2xl border border-gray-100 p-3">
                                                     <p className="font-bold text-sm" style={{color:v.color}}>{v.name}</p>
@@ -3272,8 +3339,9 @@
                                                     <div className="grid grid-cols-3 gap-2">
                                                         <div>
                                                             <label className="text-[10px] font-bold text-gray-400">{language==="es"?"DÍA DE CORTE":"CUTOFF DAY"}</label>
-                                                            <select value={curDay} onChange={e=>saveVendorSettings(v.id,{day:e.target.value||null})} className="w-full px-1 py-1.5 border border-gray-200 rounded-lg text-xs" style={{fontSize:16}}>
-                                                                <option value="">{language==="es"?"Cualquiera":"Anytime"}</option>
+                                                            <select value={isDaily?"__daily":curDay} onChange={e=>saveVendorSettings(v.id,{day:e.target.value==="__daily"?null:(e.target.value||null)})} className="w-full px-1 py-1.5 border border-gray-200 rounded-lg text-xs" style={{fontSize:16}}>
+                                                                {def && def.daily && <option value="__daily">{language==="es"?"Diario":"Daily"}</option>}
+                                                                {!(def&&def.daily) && <option value="">{language==="es"?"Cualquiera":"Anytime"}</option>}
                                                                 {["mon","tue","wed","thu","fri","sat","sun"].map(dc=><option key={dc} value={dc}>{language==="es"?DAY_LABELS_ES[dc]:DAY_LABELS[dc]}</option>)}
                                                             </select>
                                                         </div>
@@ -3285,12 +3353,14 @@
                                                         </div>
                                                         <div>
                                                             <label className="text-[10px] font-bold text-gray-400">{language==="es"?"AVISAR (DÍAS)":"LEAD (DAYS)"}</label>
-                                                            <select value={curLead} onChange={e=>saveVendorSettings(v.id,{leadDays:Number(e.target.value)})} className="w-full px-1 py-1.5 border border-gray-200 rounded-lg text-xs" style={{fontSize:16}}>
-                                                                {[1,2,3,4,5].map(n=><option key={n} value={n}>{n}</option>)}
+                                                            <select value={curLead} disabled={isDaily} onChange={e=>saveVendorSettings(v.id,{leadDays:Number(e.target.value)})} className="w-full px-1 py-1.5 border border-gray-200 rounded-lg text-xs" style={{fontSize:16, opacity:isDaily?0.4:1}}>
+                                                                {[0,1,2,3,4,5].map(n=><option key={n} value={n}>{n}</option>)}
                                                             </select>
                                                         </div>
                                                     </div>
-                                                    {sch && <p className="text-[11px] mt-2" style={{color:"#0e7490"}}>{language==="es"?"Avisará desde":"Reminds starting"} {curLead} {language==="es"?"día(s) antes del":"day(s) before"} {language==="es"?DAY_LABELS_ES[curDay]:DAY_LABELS[curDay]}.</p>}
+                                                    {isDaily
+                                                        ? <p className="text-[11px] mt-2" style={{color:"#0e7490"}}>{language==="es"?"Diario: avisa cuando algo esté bajo. Antes de "+hr12(curHour)+" = mismo día; después = mañana.":"Daily: nudges when something's low. Before "+hr12(curHour)+" = same-day; after = next morning."}</p>
+                                                        : (sch && <p className="text-[11px] mt-2" style={{color:"#0e7490"}}>{language==="es"?"Avisará desde":"Reminds starting"} {curLead} {language==="es"?"día(s) antes del":"day(s) before"} {language==="es"?DAY_LABELS_ES[curDay]:DAY_LABELS[curDay]}.</p>)}
                                                 </div>
                                             );
                                         })}
@@ -3332,20 +3402,31 @@
                                         {reminders.map((r, i) => {
                                             const isToday = r.urgency === "today";
                                             const dl = DAY_LABELS, dle = DAY_LABELS_ES;
-                                            const whenEn = isToday ? "TODAY" : r.urgency === "tomorrow" ? "TOMORROW" : "in "+r.daysUntil+" days";
-                                            const whenEs = isToday ? "HOY" : r.urgency === "tomorrow" ? "MAÑANA" : "en "+r.daysUntil+" días";
-                                            const bg = isToday ? "bg-red-50 border-red-200" : r.urgency === "tomorrow" ? "bg-amber-50 border-amber-200" : "bg-blue-50 border-blue-200";
-                                            const icon = isToday ? "🚨" : r.urgency === "tomorrow" ? "⏰" : "🗓️";
+                                            const hr12 = (h)=> h>=23?"" : h>12?((h-12)+"pm") : (h===12?"12pm":(h+"am"));
+                                            let whenEn, whenEs, bg, icon, subEn, subEs;
+                                            if (r.daily) {
+                                                bg = isToday ? "bg-sky-50 border-sky-200" : "bg-amber-50 border-amber-200";
+                                                icon = "🐟";
+                                                whenEn = isToday ? "order by "+hr12(r.cutoffHour)+" → same-day PM" : "past "+hr12(r.cutoffHour)+" → order for tomorrow AM";
+                                                whenEs = isToday ? "pide antes de "+hr12(r.cutoffHour)+" → mismo día PM" : "pasó "+hr12(r.cutoffHour)+" → pide para mañana AM";
+                                                subEn = "Order any weekday"; subEs = "Pide cualquier día hábil";
+                                            } else {
+                                                whenEn = isToday ? "TODAY" : r.urgency === "tomorrow" ? "TOMORROW" : "in "+r.daysUntil+" days";
+                                                whenEs = isToday ? "HOY" : r.urgency === "tomorrow" ? "MAÑANA" : "en "+r.daysUntil+" días";
+                                                bg = isToday ? "bg-red-50 border-red-200" : r.urgency === "tomorrow" ? "bg-amber-50 border-amber-200" : "bg-blue-50 border-blue-200";
+                                                icon = isToday ? "🚨" : r.urgency === "tomorrow" ? "⏰" : "🗓️";
+                                                subEn = "Closes "+dl[r.cutoffDay]+" "+hr12(r.cutoffHour); subEs = "Cierra "+dle[r.cutoffDay]+" "+hr12(r.cutoffHour);
+                                            }
                                             return (
                                             <div key={i} className={"rounded-2xl p-3 border flex items-center gap-3 cursor-pointer " + bg}
                                                 onClick={() => { setInvViewMode("order"); setInvVendorFilter(r.vendor.id); }}>
                                                 <span className="text-2xl">{icon}</span>
                                                 <div className="flex-1">
                                                     <p className="font-bold text-sm" style={{color: r.vendor.color}}>
-                                                        {r.vendor.name} — {language === "es" ? "Corte" : "Cutoff"} {language === "es" ? whenEs : whenEn}
+                                                        {r.vendor.name} — {language === "es" ? whenEs : whenEn}
                                                     </p>
                                                     <p className="text-xs text-gray-500">
-                                                        {language === "es" ? "Cierra" : "Closes"} {language==="es"?dle[r.cutoffDay]:dl[r.cutoffDay]} {r.cutoffHour<23?(r.cutoffHour>12?(r.cutoffHour-12)+"pm":(r.cutoffHour===12?"12pm":r.cutoffHour+"am")):""}
+                                                        {language === "es" ? subEs : subEn}
                                                         {r.itemCount > 0 && <span className="font-bold text-red-600 ml-2">· {r.itemCount} {language === "es" ? "por pedir" : "to order"}</span>}
                                                     </p>
                                                 </div>
@@ -3411,7 +3492,7 @@
                                     </div>
                                     {isOwner(staffName) && getInventoryValue() > 0 && (
                                         <div className="rounded-2xl p-4" style={{background:"linear-gradient(135deg,#0e7490,#0891b2)"}}>
-                                            <p className="text-white/70 text-xs font-bold">💰 {language==="es"?"VALOR DEL INVENTARIO (EXISTENCIAS × COSTO)":"INVENTORY VALUE (ON-HAND × COST)"}</p>
+                                            <p className="text-white/70 text-xs font-bold">💰 {language==="es"?"VALOR DEL INVENTARIO":"INVENTORY VALUE"} — {invLoc==="cwe"?"CWE":"Kirkwood"}</p>
                                             <p className="text-white text-3xl font-bold font-display">${getInventoryValue().toLocaleString(undefined,{maximumFractionDigits:0})}</p>
                                             <p className="text-white/70 text-[11px] mt-1">{language==="es"?"Dinero en el estante ahora. Agrega costos unitarios en Configurar para mayor precisión.":"Money sitting on the shelf right now. Add unit costs in Setup for accuracy."}</p>
                                         </div>
@@ -3575,7 +3656,7 @@
                                         </div>
                                     );}).filter(Boolean)}
                                     <button onClick={async()=>{try{
-                                        await db.collection("quickCounts").doc(window.fmtLocalDate()).set({counts:quickCounts,countedBy:staffName,date:new Date().toISOString()});
+                                        await db.collection("quickCounts").doc(invLoc+"_"+window.fmtLocalDate()).set({counts:quickCounts,countedBy:staffName,location:invLoc,date:new Date().toISOString()});
                                         const lowItems=Object.entries(quickCounts).filter(([k,v])=>v==="low"||v==="out");
                                         await db.collection("ops").doc("latestAlert").set({type:"quickcheck",by:staffName,date:new Date().toISOString(),lowCount:lowItems.length,outCount:Object.values(quickCounts).filter(v=>v==="out").length});
                                         window.showToast(language==="es"?"¡Guardado!":"Saved!", "success");
@@ -10485,13 +10566,13 @@
                             db.collection("wasteLog").orderBy("date","desc").limit(20).get()
                         ];
                         const [audits, orders, deliveries, timeOff, swaps, schedules, waste] = await Promise.all(promises);
-                        audits.forEach(d=>{const a=d.data();items.push({icon:"🔍",text:a.auditedBy+" "+(language==="es"?"auditó inventario":"audited inventory"),date:a.date,who:a.auditedBy,nav:{tab:"operations"}});});
-                        orders.forEach(d=>{const o=d.data();items.push({icon:"📦",text:o.orderedBy+" "+(language==="es"?"ordenó de":"ordered from")+" "+o.supplier,date:o.date,who:o.orderedBy,nav:{tab:"operations"}});});
-                        deliveries.forEach(d=>{const r=d.data();items.push({icon:"📥",text:r.receivedBy+" "+(language==="es"?"recibió entrega":"received delivery"),date:r.date,who:r.receivedBy,nav:{tab:"operations"}});});
+                        audits.forEach(d=>{const a=d.data();items.push({icon:"🔍",text:a.auditedBy+" "+(language==="es"?"auditó inventario":"audited inventory"),date:a.date,who:a.auditedBy,loc:a.location,nav:{tab:"operations"}});});
+                        orders.forEach(d=>{const o=d.data();items.push({icon:"📦",text:o.orderedBy+" "+(language==="es"?"ordenó de":"ordered from")+" "+o.supplier,date:o.date,who:o.orderedBy,loc:o.location,nav:{tab:"operations"}});});
+                        deliveries.forEach(d=>{const r=d.data();items.push({icon:"📥",text:r.receivedBy+" "+(language==="es"?"recibió entrega":"received delivery"),date:r.date,who:r.receivedBy,loc:r.location,nav:{tab:"operations"}});});
                         timeOff.forEach(d=>{const t=d.data();items.push({icon:"🏖️",text:t.employee+" "+(language==="es"?"solicitó descanso":"requested time off")+(t.reviewedBy?" — "+(t.status==="approved"?"✅":"❌")+" "+t.reviewedBy:""),date:t.requestedAt,who:t.employee,nav:{tab:"schedule",sub:"timeoff",id:d.id}});});
                         swaps.forEach(d=>{const sw=d.data();items.push({icon:"🔄",text:sw.offeredBy+" "+(language==="es"?"ofreció turno":"offered shift")+(sw.claimedBy?" → "+sw.claimedBy:""),date:sw.createdAt,who:sw.offeredBy,nav:{tab:"schedule",sub:"swaps",id:d.id}});});
-                        schedules.forEach(d=>{const s=d.data();if(s.publishedAt)items.push({icon:"📅",text:(s.publishedBy||"?")+" "+(language==="es"?"publicó":"published")+" "+(s.location||"")+" "+(language==="es"?"horario":"schedule"),date:s.publishedAt,who:s.publishedBy,nav:{tab:"schedule",sub:"view"}});});
-                        waste.forEach(d=>{const w=d.data();items.push({icon:"🗑️",text:(w.loggedBy||"?")+" "+(language==="es"?"registró merma":"logged waste"),date:w.date,who:w.loggedBy,nav:{tab:"operations"}});});
+                        schedules.forEach(d=>{const s=d.data();if(s.publishedAt)items.push({icon:"📅",text:(s.publishedBy||"?")+" "+(language==="es"?"publicó el horario":"published schedule"),date:s.publishedAt,who:s.publishedBy,loc:s.location,nav:{tab:"schedule",sub:"view"}});});
+                        waste.forEach(d=>{const w=d.data();items.push({icon:"🗑️",text:(w.loggedBy||"?")+" "+(language==="es"?"registró merma":"logged waste"),date:w.date,who:w.loggedBy,loc:w.location,nav:{tab:"operations"}});});
                         items.sort((a,b)=>(b.date||"").localeCompare(a.date||""));
                         if (mounted) {
                             setActivity(items.slice(0, 60));
@@ -10519,7 +10600,7 @@
                                     className={"card p-3 flex items-center gap-3"+(clickable?" active:scale-[0.99] transition cursor-pointer":"")}>
                                     <div style={{fontSize: 20, lineHeight: 1}}>{a.icon}</div>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm" style={{color:"var(--text-primary)"}}>{a.text}</p>
+                                        <p className="text-sm" style={{color:"var(--text-primary)"}}>{a.text}{a.loc && <span className="ml-1.5 text-[10px] font-bold align-middle px-1.5 py-0.5 rounded" style={{background:"#ecfeff",color:"#0e7490"}}>📍 {a.loc==="cwe"?"CWE":a.loc==="kirkwood"?"Kirkwood":a.loc}</span>}</p>
                                         <p className="text-xs mt-0.5" style={{color:"var(--text-muted)"}}>{a.date ? new Date(a.date).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : ""}</p>
                                     </div>
                                     {clickable && <div style={{fontSize:18,color:"var(--text-muted)",flexShrink:0}}>›</div>}
@@ -10598,8 +10679,14 @@
                 const unsub4 = db.collection("ops").doc("bookkeepingSettings").onSnapshot(doc => { if (doc.exists) setBkSettings({float: doc.data().float != null ? doc.data().float : 200, taxRate: doc.data().taxRate != null ? doc.data().taxRate : 9.68}); });
                 const unsub5 = db.collection("ops").doc("inventory").onSnapshot(doc => {
                     if (!doc.exists) return;
-                    const data = doc.data(); const counts = data.counts || {}; let v = 0;
-                    (data.customInventory || []).forEach(cat => (cat.items||[]).forEach(it => { v += (counts[it.id]||0) * (it.cost||0); }));
+                    const data = doc.data();
+                    const byLoc = data.countsByLoc || (data.counts ? { all: data.counts } : {});
+                    let v = 0;
+                    (data.customInventory || []).forEach(cat => (cat.items||[]).forEach(it => {
+                        let onHand = 0;
+                        Object.values(byLoc).forEach(locCounts => { onHand += (locCounts[it.id]||0); });
+                        v += onHand * (it.cost||0);
+                    }));
                     setInvValue(v);
                 });
                 return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); };
@@ -11336,13 +11423,16 @@
                     try {
                         // Inventory stats
                         const invDoc = await db.collection("ops").doc("inventory").get();
-                        const counts = invDoc.exists ? invDoc.data().counts || {} : {};
-                        const customInv = invDoc.exists ? invDoc.data().customInventory || [] : [];
+                        const invData = invDoc.exists ? invDoc.data() : {};
+                        const byLoc = invData.countsByLoc || (invData.counts ? { all: invData.counts } : {});
+                        const customInv = invData.customInventory || [];
                         let belowPar = 0, outOfStock = 0;
                         customInv.forEach(cat=>cat.items.forEach(item=>{
-                            const c = counts[item.id]||0;
-                            if(item.par && c < item.par) belowPar++;
-                            if(c === 0 && item.par) outOfStock++;
+                            if(!item.par) return;
+                            let low=false, out=false;
+                            Object.values(byLoc).forEach(lc=>{ const c=lc[item.id]||0; if(c < item.par) low=true; if(c === 0) out=true; });
+                            if(low) belowPar++;
+                            if(out) outOfStock++;
                         }));
 
                         // Pending orders
