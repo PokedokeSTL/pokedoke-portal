@@ -1682,6 +1682,7 @@
             const [invEditNameEs, setInvEditNameEs] = useState("");
             const [invEditSupplier, setInvEditSupplier] = useState("");
             const [invEditPar, setInvEditPar] = useState(0);
+            const [invEditCost, setInvEditCost] = useState("");
             const [invEditOrderDay, setInvEditOrderDay] = useState("Fri");
             const [invShowAddForm, setInvShowAddForm] = useState(null);
             const [invNewName, setInvNewName] = useState("");
@@ -1700,6 +1701,10 @@
             const [wasteReason, setWasteReason] = useState("spoiled");
             const [wasteNotes, setWasteNotes] = useState("");
             const [quickCounts, setQuickCounts] = useState({});
+            const [latestQuickCheck, setLatestQuickCheck] = useState({});
+            const [showParSetup, setShowParSetup] = useState(false);
+            const [parDraft, setParDraft] = useState(null);
+            const [invHelpOpen, setInvHelpOpen] = useState(true);
             const [scanProcessing, setScanProcessing] = useState(false);
             const [scanResults, setScanResults] = useState(null);
             const [scanError, setScanError] = useState("");
@@ -2526,16 +2531,56 @@
                 return () => unsub();
             }, [passwordEntered]);
 
+            // Load the most recent Quick Check so its low/out flags can drive the Order list
+            useEffect(() => {
+                const unsub = db.collection("quickCounts").orderBy("date","desc").limit(1).onSnapshot(snap => {
+                    setLatestQuickCheck(!snap.empty ? (snap.docs[0].data().counts || {}) : {});
+                });
+                return () => unsub();
+            }, []);
+
             const getOrderList = () => {
                 const items = [];
                 customInventory.forEach(cat => {
                     cat.items.forEach(item => {
                         const count = inventory[item.id] || 0;
                         const par = getParLevel(item);
-                        if (par > 0 && count < par) items.push({ ...item, currentCount: count, par, needed: par - count, categoryName: cat.name });
+                        const qc = latestQuickCheck[item.id]; // 'good' | 'low' | 'out'
+                        const numericLow = par > 0 && count < par;
+                        const quickLow = qc === "low" || qc === "out";
+                        if (numericLow || quickLow) {
+                            let needed;
+                            if (numericLow) needed = par - count;
+                            else needed = par > 0 ? (qc === "out" ? par : Math.max(1, Math.ceil(par/2))) : 1;
+                            items.push({ ...item, currentCount: count, par, needed, categoryName: cat.name, source: numericLow ? "count" : "quick", qc });
+                        }
                     });
                 });
                 return items;
+            };
+
+            // Bulk par-level setup
+            const getInventoryValue = () => {
+                let total = 0;
+                customInventory.forEach(cat => cat.items.forEach(it => { total += (inventory[it.id]||0) * (it.cost||0); }));
+                return total;
+            };
+            const openParSetup = () => {
+                const d = {};
+                customInventory.forEach(cat => cat.items.forEach(it => { d[it.id] = { par: (it.par!=null?String(it.par):""), cost: (it.cost!=null?String(it.cost):""), supplier: it.supplier||"", orderDay: it.orderDay||"" }; }));
+                setParDraft(d);
+                setShowParSetup(true);
+            };
+            const saveParSetup = async () => {
+                const updated = customInventory.map(cat => ({ ...cat, items: cat.items.map(it => {
+                    const d = parDraft && parDraft[it.id];
+                    if (!d) return it;
+                    return { ...it, par: Number(d.par)||0, cost: Number(d.cost)||0, supplier: (d.supplier||"").trim(), orderDay: d.orderDay||it.orderDay };
+                })}));
+                setCustomInventory(updated);
+                await saveInventory(inventory, updated);
+                setShowParSetup(false);
+                window.showToast(language==="es"?"Niveles par guardados":"Par levels saved","success");
             };
 
             const getOrderBySupplier = () => {
@@ -2605,14 +2650,14 @@
                     cIdx === catIdx
                         ? { ...cat, items: cat.items.map((item, iIdx) =>
                             iIdx === itemIdx
-                                ? { ...item, name: invEditName.trim(), nameEs: invEditNameEs.trim(), supplier: invEditSupplier.trim(), orderDay: invEditOrderDay, par: Number(invEditPar) || 0 }
+                                ? { ...item, name: invEditName.trim(), nameEs: invEditNameEs.trim(), supplier: invEditSupplier.trim(), orderDay: invEditOrderDay, par: Number(invEditPar) || 0, cost: Number(invEditCost) || 0 }
                                 : item
                             )}
                         : cat
                 );
                 setCustomInventory(updated);
                 await saveInventory(inventory, updated);
-                setInvEditingIdx(null); setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri"); setInvEditPar(0);
+                setInvEditingIdx(null); setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri"); setInvEditPar(0); setInvEditCost("");
             };
 
             const deleteInvItem = async (catIdx, itemIdx) => {
@@ -3063,12 +3108,82 @@
 
                     {activeTab === "inventory" && (
                         <div className="space-y-4 animate-in">
+                            {/* How-it-works explainer */}
+                            <div className="rounded-2xl p-3" style={{background:"#ecfeff", border:"1px solid #a5f3fc"}}>
+                                <div className="flex items-center justify-between cursor-pointer" onClick={()=>setInvHelpOpen(o=>!o)}>
+                                    <p className="font-bold text-sm" style={{color:"#0e7490"}}>💡 {language==="es"?"Cómo funciona el inventario":"How inventory works"}</p>
+                                    <span style={{color:"#0e7490"}}>{invHelpOpen?"▲":"▼"}</span>
+                                </div>
+                                {invHelpOpen && (
+                                    <div className="mt-2 text-xs space-y-1.5" style={{color:"#155e75"}}>
+                                        <p><b>1. {language==="es"?"Configura":"Set up"}</b> — {language==="es"?"define el par (cuánto quieres tener) de cada artículo. Sin par, nada funciona.":"set a par (how much you want on hand) for each item. Nothing works without pars."}</p>
+                                        <p><b>2. ⚡ {language==="es"?"Rápido (diario)":"Quick (daily)"}</b> — {language==="es"?"marca ✅/⚠️/❌ al cerrar. Lo bajo/agotado va al Pedido.":"tap ✅/⚠️/❌ at close. Low/out items flow to the Order list."}</p>
+                                        <p><b>3. 📊 {language==="es"?"Contar (semanal)":"Count (weekly)"}</b> — {language==="es"?"cuenta físicamente cada artículo. Alimenta el Pedido y el valor de inventario.":"physically count everything. Feeds the Order list and inventory value."}</p>
+                                        <p><b>4. 📦 {language==="es"?"Pedido":"Order"}</b> — {language==="es"?"lista automática por proveedor (par − existencia). Envía.":"auto list by supplier (par − on-hand). Send it."}</p>
+                                        <p><b>5. 📥 {language==="es"?"Recibir":"Receive"}</b> — {language==="es"?"al llegar la entrega, recibe y se actualizan las existencias.":"when the delivery arrives, receive it and stock updates."}</p>
+                                        {isOwner(staffName) && <button onClick={openParSetup} className="mt-2 w-full py-2 rounded-xl font-bold text-xs" style={{background:"#0891b2",color:"white"}}>⚙️ {language==="es"?"Configurar niveles par":"Set up par levels"}</button>}
+                                    </div>
+                                )}
+                            </div>
+
                             <div className="flex gap-1 bg-gray-100 rounded-2xl p-1 overflow-x-auto">
                                 {[{id:"count",l:"📊 "+(language==="es"?"Contar":"Count")},{id:"quick",l:"⚡ "+(language==="es"?"Rápido":"Quick")},{id:"order",l:"📦 "+(language==="es"?"Pedido":"Order")},{id:"waste",l:"🗑️ "+(language==="es"?"Merma":"Waste")},{id:"receive",l:"📥 "+(language==="es"?"Recibir":"Receive")},{id:"audit",l:"🔍 "+(language==="es"?"Auditar":"Audit")}].map(tab=>(
                                     <button key={tab.id} onClick={()=>setInvViewMode(tab.id)}
                                         className={"flex-1 py-2 px-1 rounded-xl text-xs font-bold transition-all whitespace-nowrap "+(invViewMode===tab.id?"bg-poke-600 text-white shadow-md":"text-gray-500")}>{tab.l}</button>
                                 ))}
                             </div>
+
+                            {/* PAR SETUP OVERLAY */}
+                            {showParSetup && parDraft && (
+                                <div className="fixed inset-0 z-50 flex flex-col" style={{background:"var(--bg-main, #fff)"}}>
+                                    <div className="p-4 border-b flex items-center justify-between" style={{background:"#0891b2"}}>
+                                        <div>
+                                            <p className="font-bold text-white">⚙️ {language==="es"?"Configurar Niveles Par":"Set Up Par Levels"}</p>
+                                            <p className="text-xs text-white/80">{language==="es"?"Define cuánto quieres tener de cada artículo":"Set how much you want on hand for each item"}</p>
+                                        </div>
+                                        <button onClick={()=>setShowParSetup(false)} className="text-white text-2xl leading-none px-2">✕</button>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto p-3 space-y-3" style={{background:"#f8fafc"}}>
+                                        {customInventory.map(cat => (
+                                            <div key={cat.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                                                <div className="px-3 py-2 bg-gradient-to-r from-poke-50 to-white border-b">
+                                                    <span className="font-bold text-poke-700 text-sm">{language==="es"?cat.nameEs:cat.name}</span>
+                                                </div>
+                                                <div className="divide-y divide-gray-50">
+                                                    {cat.items.map(it => (
+                                                        <div key={it.id} className="p-3">
+                                                            <p className="text-sm font-medium text-gray-800 truncate">{language==="es"&&it.nameEs?it.nameEs:it.name}</p>
+                                                            <input type="text" value={parDraft[it.id]?.supplier||""} onChange={e=>setParDraft(d=>({...d,[it.id]:{...d[it.id],supplier:e.target.value}}))} placeholder={language==="es"?"Proveedor":"Supplier"} className="mt-1 w-full px-2 py-1 border border-gray-200 rounded-lg text-xs" style={{fontSize:16}}/>
+                                                            <div className="grid grid-cols-3 gap-2 mt-2">
+                                                                <div>
+                                                                    <label className="text-[10px] font-bold text-gray-400">PAR</label>
+                                                                    <input type="number" inputMode="numeric" min="0" value={parDraft[it.id]?.par||""} onChange={e=>setParDraft(d=>({...d,[it.id]:{...d[it.id],par:e.target.value}}))} placeholder="0" className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm text-center font-bold" style={{fontSize:16}}/>
+                                                                </div>
+                                                                <div>
+                                                                    <label className="text-[10px] font-bold text-gray-400">{language==="es"?"COSTO $":"COST $"}</label>
+                                                                    <input type="number" inputMode="decimal" min="0" step="0.01" value={parDraft[it.id]?.cost||""} onChange={e=>setParDraft(d=>({...d,[it.id]:{...d[it.id],cost:e.target.value}}))} placeholder="0.00" className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm text-center" style={{fontSize:16}}/>
+                                                                </div>
+                                                                <div>
+                                                                    <label className="text-[10px] font-bold text-gray-400">{language==="es"?"DÍA":"DAY"}</label>
+                                                                    <select value={parDraft[it.id]?.orderDay||""} onChange={e=>setParDraft(d=>({...d,[it.id]:{...d[it.id],orderDay:e.target.value}}))} className="w-full px-1 py-1.5 border border-gray-200 rounded-lg text-xs" style={{fontSize:16}}>
+                                                                        <option value="">—</option>
+                                                                        {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(dd=><option key={dd} value={dd}>{dd}</option>)}
+                                                                    </select>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        <div style={{height:80}}></div>
+                                    </div>
+                                    <div className="p-3 border-t bg-white flex gap-2" style={{paddingBottom:"max(12px, env(safe-area-inset-bottom))"}}>
+                                        <button onClick={()=>setShowParSetup(false)} className="flex-1 py-3 rounded-xl font-bold text-sm bg-gray-200 text-gray-600">{language==="es"?"Cancelar":"Cancel"}</button>
+                                        <button onClick={saveParSetup} className="flex-1 py-3 rounded-xl font-bold text-sm" style={{background:"#0891b2",color:"white"}}>💾 {language==="es"?"Guardar todo":"Save all"}</button>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Vendor Filter */}
                             {(invViewMode==="count"||invViewMode==="quick"||invViewMode==="audit") && (
@@ -3169,6 +3284,13 @@
                                         <p className="font-bold text-gray-800 text-sm">📊 {language==="es"?"Conteo Completo":"Full Count"}</p>
                                         <p className="text-xs text-gray-400 mt-1">{language==="es"?"Usa esto una vez por semana. Cuenta físicamente cada artículo y ajusta el número con los botones + / −. Esto actualiza el inventario del sistema y alimenta la lista de pedidos automáticamente.":"Use this once a week. Physically count each item and adjust the number with the + / − buttons. This updates the system inventory and automatically feeds the Order list."}</p>
                                     </div>
+                                    {isOwner(staffName) && getInventoryValue() > 0 && (
+                                        <div className="rounded-2xl p-4" style={{background:"linear-gradient(135deg,#0e7490,#0891b2)"}}>
+                                            <p className="text-white/70 text-xs font-bold">💰 {language==="es"?"VALOR DEL INVENTARIO (EXISTENCIAS × COSTO)":"INVENTORY VALUE (ON-HAND × COST)"}</p>
+                                            <p className="text-white text-3xl font-bold font-display">${getInventoryValue().toLocaleString(undefined,{maximumFractionDigits:0})}</p>
+                                            <p className="text-white/70 text-[11px] mt-1">{language==="es"?"Dinero en el estante ahora. Agrega costos unitarios en Configurar para mayor precisión.":"Money sitting on the shelf right now. Add unit costs in Setup for accuracy."}</p>
+                                        </div>
+                                    )}
                                     <div className="flex justify-between items-center">
                                         {lastUpdated.inventory && <p className="text-xs text-gray-400">{t("lastUpdated",language)}: {lastUpdated.inventory}</p>}
                                         {isOwner(staffName) && (
@@ -3216,6 +3338,10 @@
                                                                             <label className="text-[10px] font-bold text-gray-500">PAR Level</label>
                                                                             <input type="number" min="0" value={invEditPar} onChange={e=>setInvEditPar(e.target.value)} placeholder="PAR" className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                                         </div>
+                                                                        <div>
+                                                                            <label className="text-[10px] font-bold text-gray-500">{language==="es"?"Costo unitario $":"Unit cost $"}</label>
+                                                                            <input type="number" min="0" step="0.01" value={invEditCost} onChange={e=>setInvEditCost(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
+                                                                        </div>
                                                                     </div>
                                                                     <div className="flex gap-2">
                                                                         <button onClick={()=>saveInvEdit(catIdx,itemIdx)} className="flex-1 bg-green-600 text-white py-2 rounded-xl text-sm font-bold">Save</button>
@@ -3236,7 +3362,7 @@
                                                                     <div className="flex items-center gap-1 flex-shrink-0">
                                                                         {invEditMode?(
                                                                             <>
-                                                                                <button onClick={()=>{setInvEditingIdx({catIdx,itemIdx});setInvEditName(item.name);setInvEditNameEs(item.nameEs||"");setInvEditSupplier(item.supplier||"");setInvEditOrderDay(item.orderDay||"");setInvEditPar(item.par||0);}} className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm">✏️</button>
+                                                                                <button onClick={()=>{setInvEditingIdx({catIdx,itemIdx});setInvEditName(item.name);setInvEditNameEs(item.nameEs||"");setInvEditSupplier(item.supplier||"");setInvEditOrderDay(item.orderDay||"");setInvEditPar(item.par||0);setInvEditCost(item.cost!=null?String(item.cost):"");}} className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm">✏️</button>
                                                                                 <button onClick={()=>deleteInvItem(catIdx,itemIdx)} className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center text-sm">🗑️</button>
                                                                             </>
                                                                         ):(
@@ -3338,16 +3464,17 @@
                                     if (filtered.length > 0) bySupplier[k] = { ...v, items: filtered };
                                 });
                                 const keys=Object.keys(bySupplier);const total=Object.values(bySupplier).reduce((s,g)=>s+g.items.length,0);
+                                const orderCost=Object.values(bySupplier).reduce((s,g)=>s+g.items.reduce((a,it)=>a+(it.needed||0)*(it.cost||0),0),0);
                                 const pending=pendingOrders.filter(o=>o.status==="pending");
                                 return (
                                     <div className="space-y-4">
                                         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
                                             <p className="font-bold text-gray-800 text-sm">📦 {language==="es"?"Lista de Pedidos — Automática":"Order List — Auto-Generated"}</p>
-                                            <p className="text-xs text-gray-400 mt-1">{language==="es"?"Esta lista se genera automáticamente comparando tu inventario actual con los niveles PAR. Los artículos se agrupan por proveedor. Cuando hagas el pedido, toca \"Marcar como Pedido\" para que aparezca en la pestaña Recibir cuando llegue la entrega.":"This list auto-generates by comparing your current inventory against PAR levels. Items are grouped by supplier. When you place the order, tap \"Mark as Ordered\" so it appears in the Receive tab when the delivery arrives."}</p>
+                                            <p className="text-xs text-gray-400 mt-1">{language==="es"?"Se genera automáticamente: artículos bajo PAR (por conteo) y los marcados ⚠️/❌ en la Revisión Rápida. Agrupados por proveedor.":"Auto-generates from items below PAR (by count) plus anything flagged ⚠️/❌ in the Quick Check. Grouped by supplier."}</p>
                                         </div>
                                         <div className={"rounded-2xl p-4 border "+(total===0?"bg-green-50 border-green-200":"bg-gold-50 border-gold-200")}>
                                             <p className="font-bold text-lg">{total===0?"✅ "+(language==="es"?"Todo en stock":"All stocked up!"):"📦 "+total+" "+(language==="es"?"por pedir":"to order")}</p>
-                                            <p className="text-xs text-gray-500 mt-1">{language==="es"?"Basado en conteo vs PAR":"Based on count vs PAR levels"}</p>
+                                            <p className="text-xs text-gray-500 mt-1">{language==="es"?"Conteo vs PAR + Revisión Rápida":"Count vs PAR + Quick Check"}{isOwner(staffName) && orderCost>0 ? " · ≈$"+orderCost.toLocaleString(undefined,{maximumFractionDigits:0})+" "+(language==="es"?"costo estimado":"est. cost"):""}</p>
                                         </div>
 
                                         {pending.length>0&&(
@@ -3388,7 +3515,7 @@
                                                 <div className="divide-y divide-gray-50">
                                                     {items.map(item=>(
                                                         <div key={item.id} className="p-3 flex items-center justify-between">
-                                                            <div className="flex-1"><p className="font-semibold text-gray-800 text-sm">{item.name}</p><p className="text-xs text-gray-400">Have: {item.currentCount} · PAR: {item.par} {item.unit}</p></div>
+                                                            <div className="flex-1"><p className="font-semibold text-gray-800 text-sm">{item.name}{item.source==="quick" && <span className="ml-1 text-[10px] font-bold align-middle px-1.5 py-0.5 rounded" style={{background:"#fef9c3",color:"#854d0e"}}>⚡ {item.qc==="out"?(language==="es"?"agotado":"out"):(language==="es"?"bajo":"low")}</span>}</p><p className="text-xs text-gray-400">{language==="es"?"Tienes":"Have"}: {item.currentCount} · PAR: {item.par} {item.unit}</p></div>
                                                             <div className="bg-red-100 text-red-700 px-3 py-1.5 rounded-xl font-bold text-sm">+{item.needed} {item.unit}</div>
                                                         </div>
                                                     ))}
@@ -10325,6 +10452,7 @@
             const [wages, setWages] = useState({});
             const [laborMap, setLaborMap] = useState({}); // {"YYYY-MM-DD_loc": laborCost}
             const [bkSettings, setBkSettings] = useState({ float: 200, taxRate: 9.68 });
+            const [invValue, setInvValue] = useState(0);
             const [setFloat, setSetFloat] = useState("");
             const [setTax, setSetTax] = useState("");
 
@@ -10339,7 +10467,13 @@
                 });
                 const unsub3 = db.collection("ops").doc("wages").onSnapshot(doc => { if (doc.exists) setWages(doc.data()); });
                 const unsub4 = db.collection("ops").doc("bookkeepingSettings").onSnapshot(doc => { if (doc.exists) setBkSettings({float: doc.data().float != null ? doc.data().float : 200, taxRate: doc.data().taxRate != null ? doc.data().taxRate : 9.68}); });
-                return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+                const unsub5 = db.collection("ops").doc("inventory").onSnapshot(doc => {
+                    if (!doc.exists) return;
+                    const data = doc.data(); const counts = data.counts || {}; let v = 0;
+                    (data.customInventory || []).forEach(cat => (cat.items||[]).forEach(it => { v += (counts[it.id]||0) * (it.cost||0); }));
+                    setInvValue(v);
+                });
+                return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); };
             }, []);
 
             // Date helpers for labor-from-schedule
@@ -10936,6 +11070,16 @@
                                     <div className="card p-4 flex justify-between items-center">
                                         <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>💳 {language==="es"?"PROPINAS DE TARJETA (DEBIDAS AL PERSONAL)":"CARD TIPS (OWED TO STAFF)"}</p>
                                         <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(cardTipsOwed)}</span>
+                                    </div>
+                                )}
+
+                                {invValue > 0 && (
+                                    <div className="card p-4 flex justify-between items-center">
+                                        <div>
+                                            <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>📦 {language==="es"?"INVENTARIO EN EXISTENCIA":"INVENTORY ON HAND"}</p>
+                                            <p className="text-[11px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Valor actual (existencias × costo)":"Current value (on-hand × cost)"}</p>
+                                        </div>
+                                        <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(invValue)}</span>
                                     </div>
                                 )}
 
