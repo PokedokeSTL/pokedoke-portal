@@ -9864,72 +9864,189 @@
             );
         }
 
-        // ============ SALES INPUT (managers/owners) ============
+        // Reusable money input (module-level so it keeps focus across re-renders)
+        function Money({label, val, setter, placeholder, hint}) {
+            return (
+                <div>
+                    <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{label}</label>
+                    <div className="relative mt-1">
+                        <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"var(--text-muted)",fontSize:14}}>$</span>
+                        <input type="number" inputMode="decimal" step="0.01" value={val} onChange={e=>setter(e.target.value)} placeholder={placeholder||"0.00"}
+                            className="w-full pl-6 pr-2 py-2 border rounded-xl text-sm" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16,boxSizing:"border-box"}}/>
+                    </div>
+                    {hint && <p className="text-[11px] mt-0.5" style={{color:"var(--text-muted)"}}>{hint}</p>}
+                </div>
+            );
+        }
+
+        // ============ END-OF-DAY CLOSE (managers/owners) ============
         function SalesInput({ language, staffName, staffList }) {
             const [sales, setSales] = useState([]);
-            const [today, setToday] = useState(window.fmtLocalDate());
-            const [salesAmount, setSalesAmount] = useState("");
-            const [salesLocation, setSalesLocation] = useState("cwe");
             const [loading, setLoading] = useState(true);
-            const ownerAccess = isOwner(staffName);
+            const [settings, setSettings] = useState({ float: 200, taxRate: 9.68 });
+            const L = (en,es)=> language==="es"?es:en;
+
+            // form state
+            const [today, setToday] = useState(window.fmtLocalDate());
+            const [loc, setLoc] = useState("cwe");
+            const [fFood, setFFood] = useState("");
+            const [fDrink, setFDrink] = useState("");
+            const [fRetail, setFRetail] = useState("");
+            const [fTax, setFTax] = useState("");
+            const [tCash, setTCash] = useState("");
+            const [tCard, setTCard] = useState("");
+            const [tDelivery, setTDelivery] = useState("");
+            const [openFloat, setOpenFloat] = useState("");
+            const [cashCounted, setCashCounted] = useState("");
+            const [cashPaidOut, setCashPaidOut] = useState("");
+            const [cashTipOut, setCashTipOut] = useState("");
+            const [cardTips, setCardTips] = useState("");
+            const [depositAmt, setDepositAmt] = useState("");
+            const [saving, setSaving] = useState(false);
 
             useEffect(() => {
-                const unsub = db.collection("dailySales").orderBy("date","desc").limit(60).onSnapshot(snap => {
-                    setSales(snap.docs.map(d=>({id:d.id,...d.data()})));
-                    setLoading(false);
-                });
-                return () => unsub();
+                const u1 = db.collection("dailySales").orderBy("date","desc").limit(60).onSnapshot(snap=>{ setSales(snap.docs.map(d=>({id:d.id,...d.data()}))); setLoading(false); });
+                const u2 = db.collection("ops").doc("bookkeepingSettings").onSnapshot(doc=>{ if(doc.exists) setSettings({float: doc.data().float != null ? doc.data().float : 200, taxRate: doc.data().taxRate != null ? doc.data().taxRate : 9.68}); });
+                return ()=>{u1();u2();};
             }, []);
 
-            const saveSale = async () => {
-                if (!salesAmount) return;
-                const docId = today + "_" + salesLocation;
-                await db.collection("dailySales").doc(docId).set({
-                    date: today, location: salesLocation, amount: parseFloat(salesAmount),
-                    enteredBy: staffName, updatedAt: new Date().toISOString()
-                }, {merge:true});
-                setSalesAmount("");
-                window.showToast(language==="es"?"Ventas guardadas":"Sales saved", "success");
+            const num = (v)=> parseFloat(v)||0;
+            const netSales = num(fFood)+num(fDrink)+num(fRetail);
+            const taxAuto = netSales * (settings.taxRate/100);
+            const taxVal = fTax==="" ? taxAuto : num(fTax);
+            const totalCollected = netSales + taxVal;
+            const tenderTotal = num(tCash)+num(tCard)+num(tDelivery);
+            const tenderDiff = tenderTotal - totalCollected;
+            const floatVal = openFloat==="" ? settings.float : num(openFloat);
+            const expectedDrawer = floatVal + num(tCash) - num(cashPaidOut) - num(cashTipOut);
+            const overShort = cashCounted==="" ? null : (num(cashCounted) - expectedDrawer);
+            const suggestedDeposit = cashCounted==="" ? 0 : Math.max(0, num(cashCounted) - floatVal);
+
+            // Prefill the form from an existing close for this date+location
+            useEffect(() => {
+                const rec = sales.find(s=>s.date===today && s.location===loc);
+                const v = (x)=> x==null?"":String(x);
+                if (!rec) { setFFood("");setFDrink("");setFRetail("");setFTax("");setTCash("");setTCard("");setTDelivery("");setOpenFloat("");setCashCounted("");setCashPaidOut("");setCashTipOut("");setCardTips("");setDepositAmt(""); return; }
+                if (rec.salesFood==null && rec.salesDrink==null && rec.salesRetail==null && rec.amount!=null) { setFFood(String(rec.amount)); setFDrink(""); setFRetail(""); }
+                else { setFFood(v(rec.salesFood)); setFDrink(v(rec.salesDrink)); setFRetail(v(rec.salesRetail)); }
+                setFTax(v(rec.taxCollected)); setTCash(v(rec.tenderCash)); setTCard(v(rec.tenderCard)); setTDelivery(v(rec.tenderDelivery));
+                setOpenFloat(v(rec.openingFloat)); setCashCounted(v(rec.cashCounted)); setCashPaidOut(v(rec.cashPaidOut)); setCashTipOut(v(rec.cashTipOut)); setCardTips(v(rec.cardTips)); setDepositAmt(v(rec.depositAmount));
+            }, [today, loc, sales.length]);
+
+            const saveClose = async () => {
+                if (netSales<=0 && tenderTotal<=0) { window.showToast(L("Enter the day's sales first","Ingresa las ventas del día"),"error"); return; }
+                setSaving(true);
+                try {
+                    await db.collection("dailySales").doc(today+"_"+loc).set({
+                        date: today, location: loc, amount: netSales,
+                        salesFood: num(fFood), salesDrink: num(fDrink), salesRetail: num(fRetail),
+                        taxCollected: taxVal,
+                        tenderCash: num(tCash), tenderCard: num(tCard), tenderDelivery: num(tDelivery),
+                        openingFloat: floatVal, cashCounted: cashCounted===""?null:num(cashCounted),
+                        cashPaidOut: num(cashPaidOut), cashTipOut: num(cashTipOut), cardTips: num(cardTips),
+                        cashOverShort: overShort, depositAmount: depositAmt===""?null:num(depositAmt),
+                        depositBy: depositAmt===""?null:staffName,
+                        enteredBy: staffName, updatedAt: new Date().toISOString()
+                    }, {merge:true});
+                    window.showToast(L("End-of-day close saved","Cierre del día guardado"),"success");
+                } catch(e){ console.error(e); window.showToast(L("Couldn't save","Error al guardar"),"error"); }
+                setSaving(false);
             };
 
-            // Recent week sales by location
-            const weekSales = sales.slice(0, 14);
+            // Reusable money input
+            const recent = sales.slice(0, 14);
 
             return (
                 <div className="p-4 pb-24 animate-in">
-                    <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>💵 {language==="es"?"Ventas Diarias":"Daily Sales"}</h2>
-                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{language==="es"?"Registra las ventas para ver costo laboral como % de ventas":"Log daily sales to see labor as % of revenue"}</p>
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{color:"var(--text-primary)"}}>🧾 {L("End-of-Day Close","Cierre del Día")}</h2>
+                    <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{L("Log sales, count the drawer, and record the deposit.","Registra ventas, cuenta la caja y anota el depósito.")}</p>
 
-                    <div className="card p-4 mb-4 space-y-3">
-                        <p className="font-bold" style={{color:"var(--text-primary)"}}>📝 {language==="es"?"Registrar Ventas":"Log Sales"}</p>
-                        <div>
-                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Fecha":"Date"}</label>
-                            <input type="date" value={today} onChange={e=>setToday(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                    {/* Date + Location */}
+                    <div className="card p-3 mb-3 flex gap-2">
+                        <div className="flex-1 min-w-0">
+                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{L("Date","Fecha")}</label>
+                            <input type="date" value={today} onChange={e=>setToday(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16,boxSizing:"border-box",maxWidth:"100%"}}/>
                         </div>
-                        <div>
-                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Ubicación":"Location"}</label>
-                            <select value={salesLocation} onChange={e=>setSalesLocation(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                        <div className="flex-1 min-w-0">
+                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{L("Location","Ubicación")}</label>
+                            <select value={loc} onChange={e=>setLoc(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16,boxSizing:"border-box",maxWidth:"100%"}}>
                                 <option value="cwe">Central West End</option>
                                 <option value="kirkwood">Kirkwood</option>
                             </select>
                         </div>
-                        <div>
-                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Ventas ($)":"Sales ($)"}</label>
-                            <input type="number" step="0.01" value={salesAmount} onChange={e=>setSalesAmount(e.target.value)} placeholder="2500.00" className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
-                        </div>
-                        <button onClick={saveSale} disabled={!salesAmount} className={"w-full py-3 rounded-xl font-bold text-sm "+(salesAmount?"bg-green-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>💾 {language==="es"?"Guardar":"Save"}</button>
                     </div>
 
-                    <p className="font-bold text-sm mb-2" style={{color:"var(--text-primary)"}}>📊 {language==="es"?"Ventas Recientes":"Recent Sales"}</p>
-                    {loading ? <Skeleton count={4}/> : weekSales.length===0 ? (
-                        <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin ventas registradas":"No sales logged yet"}</p>
+                    {/* Sales by category */}
+                    <div className="card p-3 mb-3 space-y-2">
+                        <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>💵 {L("Sales","Ventas")}</p>
+                        <div className="grid grid-cols-3 gap-2">
+                            <Money label={L("Food","Comida")} val={fFood} setter={setFFood}/>
+                            <Money label={L("Drinks","Bebidas")} val={fDrink} setter={setFDrink}/>
+                            <Money label={L("Retail","Tienda")} val={fRetail} setter={setFRetail}/>
+                        </div>
+                        <div className="flex justify-between items-center pt-1">
+                            <span className="text-sm font-bold" style={{color:"var(--text-secondary)"}}>{L("Net Sales","Ventas Netas")}</span>
+                            <span className="font-display font-bold" style={{color:"var(--text-primary)"}}>${netSales.toFixed(2)}</span>
+                        </div>
+                        <Money label={L("Sales tax collected","Impuesto cobrado")} val={fTax} setter={setFTax} placeholder={taxAuto.toFixed(2)} hint={L("Auto: "+settings.taxRate+"% = $"+taxAuto.toFixed(2)+" (edit if your POS differs)","Auto: "+settings.taxRate+"% = $"+taxAuto.toFixed(2))}/>
+                    </div>
+
+                    {/* Payment tender */}
+                    <div className="card p-3 mb-3 space-y-2">
+                        <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>💳 {L("Payments Taken","Pagos Recibidos")}</p>
+                        <div className="grid grid-cols-3 gap-2">
+                            <Money label={L("Cash","Efectivo")} val={tCash} setter={setTCash}/>
+                            <Money label={L("Card","Tarjeta")} val={tCard} setter={setTCard}/>
+                            <Money label={L("Delivery","Delivery")} val={tDelivery} setter={setTDelivery}/>
+                        </div>
+                        <div className="flex justify-between items-center pt-1">
+                            <span className="text-sm" style={{color:"var(--text-muted)"}}>{L("Tender total","Total cobrado")}: <b style={{color:"var(--text-primary)"}}>${tenderTotal.toFixed(2)}</b></span>
+                            {tenderTotal>0 && (
+                                <span className="text-xs font-bold px-2 py-0.5 rounded" style={Math.abs(tenderDiff)<0.5?{background:"#dcfce7",color:"#166534"}:{background:"#fef3c7",color:"#92400e"}}>
+                                    {Math.abs(tenderDiff)<0.5 ? "✓ "+L("matches sales+tax","cuadra") : (tenderDiff>0?"+":"")+"$"+tenderDiff.toFixed(2)+" "+L("vs sales+tax","vs ventas+imp")}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Cash drawer reconciliation */}
+                    <div className="card p-3 mb-3 space-y-2">
+                        <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>🪙 {L("Cash Drawer","Caja")}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                            <Money label={L("Opening float","Fondo inicial")} val={openFloat} setter={setOpenFloat} placeholder={String(settings.float)} hint={L("Default $"+settings.float,"Por defecto $"+settings.float)}/>
+                            <Money label={L("Cash counted","Efectivo contado")} val={cashCounted} setter={setCashCounted}/>
+                            <Money label={L("Cash paid out","Pagos en efectivo")} val={cashPaidOut} setter={setCashPaidOut} hint={L("Petty cash, vendor cash","Caja chica")}/>
+                            <Money label={L("Cash tip-out","Propinas en efectivo")} val={cashTipOut} setter={setCashTipOut}/>
+                        </div>
+                        {overShort !== null && (
+                            <div className="rounded-xl p-3 mt-1 text-center" style={Math.abs(overShort)<0.5?{background:"#dcfce7"}:Math.abs(overShort)<5?{background:"#fef9c3"}:{background:"#fee2e2"}}>
+                                <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>{L("OVER / SHORT","SOBRANTE / FALTANTE")}</p>
+                                <p className="font-display text-2xl font-bold" style={{color:Math.abs(overShort)<0.5?"#166534":Math.abs(overShort)<5?"#854d0e":"#b91c1c"}}>{overShort>=0?"+":"−"}${Math.abs(overShort).toFixed(2)}</p>
+                                <p className="text-[11px]" style={{color:"var(--text-muted)"}}>{L("Counted − (float + cash sales − payouts)","Contado − (fondo + ventas efectivo − pagos)")}</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Deposit + tips */}
+                    <div className="card p-3 mb-3 space-y-2">
+                        <p className="font-bold text-sm" style={{color:"var(--text-primary)"}}>🏦 {L("Deposit & Tips","Depósito y Propinas")}</p>
+                        <Money label={L("Bank deposit","Depósito bancario")} val={depositAmt} setter={setDepositAmt} placeholder={suggestedDeposit.toFixed(2)} hint={suggestedDeposit>0?L("Suggested (drop above float): $"+suggestedDeposit.toFixed(2),"Sugerido: $"+suggestedDeposit.toFixed(2)):null}/>
+                        <Money label={L("Card tips (owed to staff)","Propinas tarjeta")} val={cardTips} setter={setCardTips}/>
+                    </div>
+
+                    <button onClick={saveClose} disabled={saving} className="w-full py-3 rounded-xl font-bold text-sm active:scale-95 transition mb-5" style={{background:"#0891b2",color:"white",opacity:saving?0.6:1}}>💾 {saving?L("Saving…","Guardando…"):L("Save Close","Guardar Cierre")}</button>
+
+                    {/* Recent closes */}
+                    <p className="font-bold text-sm mb-2" style={{color:"var(--text-primary)"}}>📊 {L("Recent Closes","Cierres Recientes")}</p>
+                    {loading ? <Skeleton count={4}/> : recent.length===0 ? (
+                        <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{L("No closes logged yet","Sin cierres registrados")}</p>
                     ) : (
                         <div className="space-y-2">
-                            {weekSales.map(s => (
+                            {recent.map(s => (
                                 <div key={s.id} className="card p-3 flex justify-between items-center">
                                     <div>
                                         <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>{new Date(s.date+"T12:00:00").toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})}</p>
-                                        <p className="text-xs" style={{color:"var(--text-muted)"}}>{s.location==="cwe"?"Central West End":"Kirkwood"} · {s.enteredBy}</p>
+                                        <p className="text-xs" style={{color:"var(--text-muted)"}}>{s.location==="cwe"?"CWE":"Kirkwood"} · {s.enteredBy}{s.cashOverShort!=null && Math.abs(s.cashOverShort)>=0.5 ? " · "+(s.cashOverShort>=0?"+":"−")+"$"+Math.abs(s.cashOverShort).toFixed(2) : (s.cashOverShort!=null?" · ✓":"")}</p>
                                     </div>
                                     <p className="font-display font-bold text-lg" style={{color:"var(--text-primary)"}}>${(s.amount||0).toLocaleString()}</p>
                                 </div>
@@ -10025,6 +10142,8 @@
             // Flash state
             const [flashDate, setFlashDate] = useState(window.fmtLocalDate());
             const [flashLoc, setFlashLoc] = useState("all");
+            const [salesDraft, setSalesDraft] = useState({});
+            const [salesSaving, setSalesSaving] = useState("");
 
             // Expense form
             const [showExpForm, setShowExpForm] = useState(false);
@@ -10045,6 +10164,13 @@
             const [expFilterCat, setExpFilterCat] = useState("all");
             const [expFilterLoc, setExpFilterLoc] = useState("all");
 
+            // Prime cost + settings
+            const [wages, setWages] = useState({});
+            const [laborMap, setLaborMap] = useState({}); // {"YYYY-MM-DD_loc": laborCost}
+            const [bkSettings, setBkSettings] = useState({ float: 200, taxRate: 9.68 });
+            const [setFloat, setSetFloat] = useState("");
+            const [setTax, setSetTax] = useState("");
+
             // Load data
             useEffect(() => {
                 const unsub1 = db.collection("expenses").orderBy("date","desc").limit(300).onSnapshot(snap => {
@@ -10054,8 +10180,84 @@
                     setSales(snap.docs.map(d=>({id:d.id,...d.data()})));
                     setLoading(false);
                 });
-                return () => { unsub1(); unsub2(); };
+                const unsub3 = db.collection("ops").doc("wages").onSnapshot(doc => { if (doc.exists) setWages(doc.data()); });
+                const unsub4 = db.collection("ops").doc("bookkeepingSettings").onSnapshot(doc => { if (doc.exists) setBkSettings({float: doc.data().float != null ? doc.data().float : 200, taxRate: doc.data().taxRate != null ? doc.data().taxRate : 9.68}); });
+                return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
             }, []);
+
+            // Date helpers for labor-from-schedule
+            const DKI = {mon:0,tue:1,wed:2,thu:3,fri:4,sat:5,sun:6};
+            const calcHrs = (s,e)=>{ if(!s||!e) return 0; const a=String(s).split(":").map(Number), b=String(e).split(":").map(Number); if(a.length<2||b.length<2||isNaN(a[0])||isNaN(b[0])) return 0; return Math.max(0,((b[0]*60+(b[1]||0))-(a[0]*60+(a[1]||0)))/60); };
+            const mondayOf = (ds)=>{ const d=new Date(ds+"T12:00:00"); const off=(d.getDay()+6)%7; d.setDate(d.getDate()-off); return window.fmtLocalDate(d); };
+            const addDays = (ds,n)=>{ const d=new Date(ds+"T12:00:00"); d.setDate(d.getDate()+n); return window.fmtLocalDate(d); };
+
+            // Build labor cost per date+location from published schedules over the needed range
+            useEffect(() => {
+                let mounted = true;
+                (async () => {
+                    try {
+                        const pl = getDateRange(plRange);
+                        const lo = [pl.start, flashDate].sort()[0];
+                        const hi = [pl.end, flashDate].sort().slice(-1)[0];
+                        const weeks = []; let w = mondayOf(lo); let guard=0;
+                        while (w <= hi && guard < 70) { weeks.push(w); w = addDays(w,7); guard++; }
+                        const ids = [];
+                        weeks.forEach(ws => ["cwe","kirkwood"].forEach(loc => ids.push(loc+"_"+ws)));
+                        const snaps = await Promise.all(ids.map(id => db.collection("schedules").doc(id).get()));
+                        const map = {};
+                        snaps.forEach((snap, idx) => {
+                            if (!snap.exists) return;
+                            const id = ids[idx]; const loc = id.split("_")[0]; const ws = id.split("_").slice(1).join("_");
+                            const arr = snap.data().publishedShifts || snap.data().shifts || [];
+                            arr.forEach(s => {
+                                if (s.employee === "__OPEN__") return;
+                                const di = DKI[s.day]; if (di === undefined) return;
+                                const date = addDays(ws, di);
+                                const cost = calcHrs(s.startTime, s.endTime) * (wages[s.employee.replace(/\s/g,"_")] || 0);
+                                const k = date + "_" + loc;
+                                map[k] = (map[k] || 0) + cost;
+                            });
+                        });
+                        if (mounted) setLaborMap(map);
+                    } catch(e) { console.error("labor map", e); }
+                })();
+                return () => { mounted = false; };
+            }, [plRange, flashDate, wages]);
+
+            const laborForDateLoc = (date, loc) => (loc==="all"?["cwe","kirkwood"]:[loc]).reduce((s,l)=>s+(laborMap[date+"_"+l]||0),0);
+            const laborForRange = (start, end, loc) => Object.entries(laborMap).reduce((sum,[k,v])=>{ const li=k.lastIndexOf("_"); const d=k.slice(0,li); const l=k.slice(li+1); return (d>=start && d<=end && (loc==="all"||l===loc)) ? sum+v : sum; }, 0);
+
+            const saveBkSettings = async () => {
+                const f = setFloat===""?bkSettings.float:parseFloat(setFloat);
+                const t = setTax===""?bkSettings.taxRate:parseFloat(setTax);
+                await db.collection("ops").doc("bookkeepingSettings").set({ float: f||0, taxRate: t||0, updatedBy: staffName, updatedAt: new Date().toISOString() }, {merge:true});
+                setSetFloat(""); setSetTax("");
+                window.showToast(language==="es"?"Ajustes guardados":"Settings saved","success");
+            };
+
+            // Prefill the revenue inputs from existing dailySales for the chosen date
+            useEffect(() => {
+                const draft = {};
+                ["cwe","kirkwood"].forEach(loc => {
+                    const rec = sales.find(s => s.date===flashDate && s.location===loc);
+                    draft[loc] = rec ? String(rec.amount) : "";
+                });
+                setSalesDraft(draft);
+            }, [flashDate, sales.length]);
+
+            const saveSales = async (loc) => {
+                const amt = parseFloat(salesDraft[loc]);
+                if (isNaN(amt) || amt < 0) { window.showToast(language==="es"?"Ingresa un monto válido":"Enter a valid amount","error"); return; }
+                setSalesSaving(loc);
+                try {
+                    await db.collection("dailySales").doc(flashDate+"_"+loc).set({
+                        date: flashDate, location: loc, amount: amt,
+                        enteredBy: staffName, updatedAt: new Date().toISOString()
+                    }, {merge:true});
+                    window.showToast(language==="es"?"Ventas guardadas":"Revenue saved","success");
+                } catch(e) { console.error(e); window.showToast(language==="es"?"Error al guardar":"Couldn't save","error"); }
+                setSalesSaving("");
+            };
 
             // Helpers
             const fmtM = (n) => "$" + (n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -10110,6 +10312,12 @@
             const fOther = fTotalExp - fCOGS - fLabor;
             const fProfit = fRev - fTotalExp;
             const fMargin = fRev > 0 ? (fProfit/fRev*100) : 0;
+            // Scheduled labor (from the schedule) + prime cost
+            const fLaborSched = laborForDateLoc(flashDate, flashLoc);
+            const fPrime = fCOGS + fLaborSched;
+            const fPrimePct = fRev > 0 ? (fPrime/fRev*100) : 0;
+            const fOverShort = fSales.reduce((s,x)=> s + (x.cashOverShort||0), 0);
+            const fHasClose = fSales.some(x => x.cashOverShort != null || x.cashCounted != null);
 
             // ═══ P&L DATA ═══
             const plDates = getDateRange(plRange);
@@ -10118,6 +10326,13 @@
             const plRev = plSalesData.reduce((s,x)=>s+(x.amount||0),0);
             const plTotalExp = plExpData.reduce((s,x)=>s+(x.amount||0),0);
             const plProfit = plRev - plTotalExp;
+            const plCOGS = plExpData.filter(e=>e.category==="cogs").reduce((s,x)=>s+(x.amount||0),0);
+            const plLaborSched = laborForRange(plDates.start, plDates.end, plLoc);
+            const plPrime = plCOGS + plLaborSched;
+            const plCOGSpct = plRev>0 ? plCOGS/plRev*100 : 0;
+            const plLaborPct = plRev>0 ? plLaborSched/plRev*100 : 0;
+            const plPrimePct = plRev>0 ? plPrime/plRev*100 : 0;
+            const plTaxSetAside = plSalesData.reduce((s,x)=>s+(x.taxCollected||0),0);
             const plCatBreakdown = EXPENSE_CATEGORIES.map(cat => {
                 const total = plExpData.filter(e=>e.category===cat.id).reduce((s,x)=>s+(x.amount||0),0);
                 return { ...cat, total };
@@ -10141,7 +10356,8 @@
                         {[
                             {id:"flash",l:"⚡ "+(language==="es"?"Flash":"Flash")},
                             {id:"expenses",l:"💳 "+(language==="es"?"Gastos":"Expenses")},
-                            {id:"pnl",l:"📊 P&L"}
+                            {id:"pnl",l:"📊 P&L"},
+                            {id:"cash",l:"🪙 "+(language==="es"?"Caja":"Cash")}
                         ].map(tab=>(
                             <button key={tab.id} onClick={()=>setBkTab(tab.id)}
                                 className={"flex-1 py-2 px-1 rounded-xl text-xs font-bold transition-all whitespace-nowrap "+(bkTab===tab.id?"bg-poke-600 text-white shadow-md":"")}
@@ -10156,20 +10372,45 @@
                         <div className="space-y-3">
                             {/* Date + Location */}
                             <div className="card p-3 flex gap-2">
-                                <div className="flex-1">
+                                <div className="flex-1 min-w-0">
                                     <label className="text-[10px] font-bold" style={{color:"var(--text-muted)"}}>{language==="es"?"FECHA":"DATE"}</label>
                                     <input type="date" value={flashDate} onChange={e=>setFlashDate(e.target.value)}
-                                        className="w-full px-2 py-1.5 border rounded-lg text-sm mt-0.5" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}/>
+                                        className="w-full px-2 py-1.5 border rounded-lg text-sm mt-0.5" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",maxWidth:"100%",boxSizing:"border-box",fontSize:16}}/>
                                 </div>
-                                <div className="flex-1">
+                                <div className="flex-1 min-w-0">
                                     <label className="text-[10px] font-bold" style={{color:"var(--text-muted)"}}>{language==="es"?"UBICACIÓN":"LOCATION"}</label>
                                     <select value={flashLoc} onChange={e=>setFlashLoc(e.target.value)}
-                                        className="w-full px-2 py-1.5 border rounded-lg text-sm mt-0.5" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                                        className="w-full px-2 py-1.5 border rounded-lg text-sm mt-0.5" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",maxWidth:"100%",boxSizing:"border-box",fontSize:16}}>
                                         <option value="all">{language==="es"?"Todas":"All"}</option>
                                         <option value="cwe">CWE</option>
                                         <option value="kirkwood">Kirkwood</option>
                                     </select>
                                 </div>
+                            </div>
+
+                            {/* Enter revenue for this day */}
+                            <div className="card p-3">
+                                <p className="text-xs font-bold mb-2" style={{color:"var(--text-muted)"}}>💵 {language==="es"?"INGRESAR VENTAS":"ENTER REVENUE"}</p>
+                                <div className="space-y-2">
+                                    {(flashLoc==="all"?["cwe","kirkwood"]:[flashLoc]).map(loc => (
+                                        <div key={loc} className="flex items-center gap-2">
+                                            <span className="text-sm font-semibold" style={{color:"var(--text-secondary)", width:72}}>{loc==="cwe"?"CWE":"Kirkwood"}</span>
+                                            <div className="flex-1 relative">
+                                                <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:"var(--text-muted)", fontSize:14}}>$</span>
+                                                <input type="number" inputMode="decimal" value={salesDraft[loc]||""}
+                                                    onChange={e=>setSalesDraft(d=>({...d,[loc]:e.target.value}))}
+                                                    onKeyDown={e=>e.key==="Enter"&&saveSales(loc)}
+                                                    placeholder="0.00"
+                                                    className="w-full pl-6 pr-2 py-2 border rounded-lg" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}}/>
+                                            </div>
+                                            <button onClick={()=>saveSales(loc)} disabled={salesSaving===loc}
+                                                className="px-4 py-2 rounded-lg text-sm font-bold flex-none" style={{background:"#0891b2",color:"white",opacity:salesSaving===loc?0.6:1}}>
+                                                {salesSaving===loc?"…":(language==="es"?"Guardar":"Save")}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Ingresa el total de ventas del día. COGS, nómina y otros gastos se agregan en la pestaña Gastos.":"Enter the day's total sales. COGS, labor & other costs are added on the Expenses tab."}</p>
                             </div>
 
                             {/* Big P&L card */}
@@ -10211,6 +10452,38 @@
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Prime cost (COGS + scheduled labor) */}
+                            <div className="card p-4">
+                                <div className="flex justify-between items-center mb-2">
+                                    <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>🎯 {language==="es"?"COSTO PRIMO":"PRIME COST"}</p>
+                                    <span className="text-xs font-bold px-2 py-0.5 rounded" style={fPrimePct===0?{background:"var(--bg-subtle)",color:"var(--text-muted)"}:fPrimePct<=60?{background:"#dcfce7",color:"#166534"}:fPrimePct<=65?{background:"#fef9c3",color:"#854d0e"}:{background:"#fee2e2",color:"#b91c1c"}}>{fRev>0?fPrimePct.toFixed(1)+"% "+(language==="es"?"de ventas":"of sales"):"—"}</span>
+                                </div>
+                                <div className="flex justify-between items-center py-1.5" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                    <span className="text-sm" style={{color:"var(--text-secondary)"}}>🥩 COGS</span>
+                                    <span className="text-sm font-bold" style={{color:"var(--text-primary)"}}>{fmtM(fCOGS)} <span className="text-xs font-normal" style={{color:"var(--text-muted)"}}>{pct(fCOGS,fRev)}</span></span>
+                                </div>
+                                <div className="flex justify-between items-center py-1.5" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                    <span className="text-sm" style={{color:"var(--text-secondary)"}}>👥 {language==="es"?"Nómina (programada)":"Labor (scheduled)"}</span>
+                                    <span className="text-sm font-bold" style={{color:"var(--text-primary)"}}>{fmtM(fLaborSched)} <span className="text-xs font-normal" style={{color:"var(--text-muted)"}}>{pct(fLaborSched,fRev)}</span></span>
+                                </div>
+                                <div className="flex justify-between items-center pt-2">
+                                    <span className="text-sm font-bold" style={{color:"var(--text-primary)"}}>{language==="es"?"Costo Primo":"Prime Cost"}</span>
+                                    <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(fPrime)}</span>
+                                </div>
+                                <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Nómina tomada del horario publicado × salarios. Meta del costo primo: ≤60%.":"Labor pulled from the published schedule × wages. Prime cost target: ≤60%."}</p>
+                            </div>
+
+                            {/* Cash over/short for the day */}
+                            {fHasClose && (
+                                <div className="card p-4 flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>🪙 {language==="es"?"SOBRANTE / FALTANTE":"CASH OVER / SHORT"}</p>
+                                        <p className="text-[11px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Del cierre del día":"From the end-of-day close"}</p>
+                                    </div>
+                                    <p className="font-display text-xl font-bold" style={{color:Math.abs(fOverShort)<0.5?"#16a34a":Math.abs(fOverShort)<5?"#ca8a04":"#dc2626"}}>{fOverShort>=0?"+":"−"}{fmtM(Math.abs(fOverShort)).replace("$","$")}</p>
+                                </div>
+                            )}
 
                             {/* Quick-add expense for this day */}
                             {fRev > 0 && fTotalExp === 0 && (
@@ -10340,6 +10613,20 @@
                                 </div>
                             </div>
 
+                            {/* Prime cost */}
+                            {plRev > 0 && (
+                                <div className="card p-3">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>🎯 {language==="es"?"COSTO PRIMO":"PRIME COST"}</p>
+                                        <span className="text-xs font-bold px-2 py-0.5 rounded" style={plPrimePct<=60?{background:"#dcfce7",color:"#166534"}:plPrimePct<=65?{background:"#fef9c3",color:"#854d0e"}:{background:"#fee2e2",color:"#b91c1c"}}>{plPrimePct.toFixed(1)}%</span>
+                                    </div>
+                                    <div className="flex justify-between text-sm py-1"><span style={{color:"var(--text-secondary)"}}>🥩 COGS</span><span style={{color:"var(--text-primary)"}}><b>{fmtM(plCOGS)}</b> <span className="text-xs" style={{color:"var(--text-muted)"}}>{plCOGSpct.toFixed(1)}%</span></span></div>
+                                    <div className="flex justify-between text-sm py-1"><span style={{color:"var(--text-secondary)"}}>👥 {language==="es"?"Nómina (programada)":"Labor (scheduled)"}</span><span style={{color:"var(--text-primary)"}}><b>{fmtM(plLaborSched)}</b> <span className="text-xs" style={{color:"var(--text-muted)"}}>{plLaborPct.toFixed(1)}%</span></span></div>
+                                    <div className="flex justify-between text-sm pt-1.5 mt-1" style={{borderTop:"1px solid var(--border-subtle)"}}><span className="font-bold" style={{color:"var(--text-primary)"}}>{language==="es"?"Costo Primo":"Prime Cost"}</span><span className="font-bold" style={{color:"var(--text-primary)"}}>{fmtM(plPrime)}</span></div>
+                                    <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Meta industria: ≤60% (COGS 28–35%). Nómina del horario publicado.":"Industry target: ≤60% (COGS 28–35%). Labor from the published schedule."}</p>
+                                </div>
+                            )}
+
                             {/* Margin bar */}
                             {plRev > 0 && (
                                 <div className="card p-3">
@@ -10406,6 +10693,110 @@
                             )}
                         </div>
                     )}
+
+                    {/* ═══════════════════════════════════ */}
+                    {/* ═══ CASH / TAX / DEPOSITS TAB ═══ */}
+                    {/* ═══════════════════════════════════ */}
+                    {bkTab === "cash" && (() => {
+                        const closes = plSalesData.filter(s => s.cashOverShort != null || s.cashCounted != null).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+                        const totalOverShort = closes.reduce((s,x)=>s+(x.cashOverShort||0),0);
+                        const deposits = plSalesData.filter(s => s.depositAmount != null && s.depositAmount > 0).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+                        const totalDeposits = deposits.reduce((s,x)=>s+(x.depositAmount||0),0);
+                        const cardTipsOwed = plSalesData.reduce((s,x)=>s+(x.cardTips||0),0);
+                        return (
+                            <div className="space-y-3">
+                                {/* Range + location */}
+                                <div className="card p-3 flex gap-2">
+                                    <select value={plRange} onChange={e=>setPlRange(e.target.value)} className="flex-1 min-w-0 px-2 py-1.5 border rounded-lg text-sm" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}}>
+                                        <option value="week">{language==="es"?"7 días":"Last 7 days"}</option>
+                                        <option value="month">{language==="es"?"Este mes":"This month"}</option>
+                                        <option value="quarter">{language==="es"?"3 meses":"Last 3 months"}</option>
+                                    </select>
+                                    <select value={plLoc} onChange={e=>setPlLoc(e.target.value)} className="flex-1 min-w-0 px-2 py-1.5 border rounded-lg text-sm" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}}>
+                                        <option value="all">{language==="es"?"Todas":"All"}</option>
+                                        <option value="cwe">CWE</option>
+                                        <option value="kirkwood">Kirkwood</option>
+                                    </select>
+                                </div>
+
+                                {/* Sales tax set aside */}
+                                <div className="card overflow-hidden">
+                                    <div style={{background:"linear-gradient(135deg,#7c3aed,#a855f7)", padding:"16px 20px"}}>
+                                        <p className="text-white/70 text-xs font-bold">💸 {language==="es"?"IMPUESTO A RESERVAR":"SALES TAX TO SET ASIDE"}</p>
+                                        <p className="text-white text-3xl font-bold font-display">{fmtM(plTaxSetAside)}</p>
+                                        <p className="text-white/70 text-sm mt-1">{language==="es"?"Cobrado este periodo — guárdalo para el pago de impuestos":"Collected this period — park it for your tax payment"}</p>
+                                    </div>
+                                </div>
+
+                                {/* Cash over/short summary */}
+                                <div className="card p-4">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>🪙 {language==="es"?"SOBRANTE / FALTANTE (PERIODO)":"CASH OVER / SHORT (PERIOD)"}</p>
+                                        <span className="font-display text-lg font-bold" style={{color:Math.abs(totalOverShort)<1?"#16a34a":Math.abs(totalOverShort)<20?"#ca8a04":"#dc2626"}}>{totalOverShort>=0?"+":"−"}{fmtM(Math.abs(totalOverShort))}</span>
+                                    </div>
+                                    {closes.length===0 ? (
+                                        <p className="text-xs py-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin cierres de caja en este periodo. Los gerentes los registran en 'Cierre del Día'.":"No cash closes this period. Managers log these in 'End-of-Day'."}</p>
+                                    ) : (
+                                        <div className="space-y-1 mt-2">
+                                            {closes.slice(0,14).map(c => (
+                                                <div key={c.id} className="flex justify-between items-center text-sm py-1" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                                    <span style={{color:"var(--text-secondary)"}}>{new Date(c.date+"T12:00:00").toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})} · {c.location==="cwe"?"CWE":"KW"}</span>
+                                                    <span className="font-bold" style={{color:c.cashOverShort==null?"var(--text-muted)":Math.abs(c.cashOverShort)<0.5?"#16a34a":Math.abs(c.cashOverShort)<5?"#ca8a04":"#dc2626"}}>{c.cashOverShort==null?"—":(c.cashOverShort>=0?"+":"−")+fmtM(Math.abs(c.cashOverShort)).replace("$","$")}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Deposits log */}
+                                <div className="card p-4">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>🏦 {language==="es"?"DEPÓSITOS":"BANK DEPOSITS"}</p>
+                                        <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(totalDeposits)}</span>
+                                    </div>
+                                    {deposits.length===0 ? (
+                                        <p className="text-xs py-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Sin depósitos registrados":"No deposits logged"}</p>
+                                    ) : (
+                                        <div className="space-y-1 mt-2">
+                                            {deposits.slice(0,14).map(d => (
+                                                <div key={d.id} className="flex justify-between items-center text-sm py-1" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                                    <span style={{color:"var(--text-secondary)"}}>{new Date(d.date+"T12:00:00").toLocaleDateString([],{month:"short",day:"numeric"})} · {d.location==="cwe"?"CWE":"KW"}{d.depositBy?" · "+d.depositBy:""}</span>
+                                                    <span className="font-bold" style={{color:"var(--text-primary)"}}>{fmtM(d.depositAmount)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {cardTipsOwed > 0 && (
+                                    <div className="card p-4 flex justify-between items-center">
+                                        <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>💳 {language==="es"?"PROPINAS DE TARJETA (DEBIDAS AL PERSONAL)":"CARD TIPS (OWED TO STAFF)"}</p>
+                                        <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(cardTipsOwed)}</span>
+                                    </div>
+                                )}
+
+                                {/* Settings */}
+                                <div className="card p-4">
+                                    <p className="text-xs font-bold mb-2" style={{color:"var(--text-muted)"}}>⚙️ {language==="es"?"AJUSTES":"SETTINGS"}</p>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="text-[11px] font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Fondo de caja":"Drawer float"}</label>
+                                            <div className="relative mt-1">
+                                                <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"var(--text-muted)",fontSize:14}}>$</span>
+                                                <input type="number" inputMode="decimal" value={setFloat} onChange={e=>setSetFloat(e.target.value)} placeholder={String(bkSettings.float)} className="w-full pl-6 pr-2 py-2 border rounded-lg text-sm" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16,boxSizing:"border-box"}}/>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="text-[11px] font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Tasa de impuesto %":"Sales tax rate %"}</label>
+                                            <input type="number" inputMode="decimal" step="0.01" value={setTax} onChange={e=>setSetTax(e.target.value)} placeholder={String(bkSettings.taxRate)} className="w-full px-2 py-2 border rounded-lg text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16,boxSizing:"border-box"}}/>
+                                        </div>
+                                    </div>
+                                    <button onClick={saveBkSettings} className="w-full mt-2 py-2 rounded-lg text-sm font-bold active:scale-95" style={{background:"#0891b2",color:"white"}}>{language==="es"?"Guardar ajustes":"Save settings"}</button>
+                                    <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"El fondo y la tasa se usan en el Cierre del Día para calcular sobrante/faltante e impuesto.":"Float & rate feed the End-of-Day close for over/short and tax math."}</p>
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* ═══════════════════════════════════ */}
                     {/* ═══ EXPENSE FORM MODAL ═══ */}
@@ -11921,8 +12312,8 @@
                                             className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
                                         >
                                             <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center text-2xl mb-3">💵</div>
-                                            <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Ventas" : "Daily Sales"}</div>
-                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Registro diario" : "Daily log"}</div>
+                                            <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Cierre" : "End-of-Day"}</div>
+                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Ventas y caja" : "Sales & cash"}</div>
                                         </button>
                                     )}
                                     {staffIsOwner && (
