@@ -4667,6 +4667,8 @@
                 }
             }, [focus]);
             const [schedLocation, setSchedLocation] = useState("cwe");
+            const [recoverOpen, setRecoverOpen] = useState(false);
+            const [recoverData, setRecoverData] = useState(null);
             const [weekOffset, setWeekOffset] = useState(0);
             const [shifts, setShifts] = useState([]);
             const [publishedShifts, setPublishedShifts] = useState([]);
@@ -5503,6 +5505,41 @@
                 sendNotification([swap.offeredBy, swap.claimedBy], "✅ Shift Swap Approved", swap.claimedBy + " now has " + swap.offeredBy + "'s shift. Approved by " + staffName, {type:"swap"});
             };
 
+            // ---- Schedule recovery: read the raw saved doc for the current week/location ----
+            const summarizeShifts = (arr) => {
+                if (!arr || !arr.length) return [];
+                const counts = {};
+                arr.forEach(s => { if (s.employee && s.employee !== "__OPEN__") counts[s.employee] = (counts[s.employee]||0)+1; });
+                return Object.entries(counts).map(([n,c]) => n + " (" + c + ")");
+            };
+            const scanForRecovery = async () => {
+                setRecoverData("loading");
+                try {
+                    const snap = await db.collection("schedules").doc(weekKey).get();
+                    if (!snap.exists) { setRecoverData({ none: true }); return; }
+                    const d = snap.data();
+                    setRecoverData({
+                        weekKey,
+                        status: d.status, updatedBy: d.updatedBy, updatedAt: d.updatedAt,
+                        fields: {
+                            publishedShifts: Array.isArray(d.publishedShifts) ? d.publishedShifts : null,
+                            draftShifts: Array.isArray(d.draftShifts) ? d.draftShifts : null,
+                            shifts: Array.isArray(d.shifts) ? d.shifts : null
+                        }
+                    });
+                } catch(e) { console.error(e); setRecoverData({ error: true }); }
+            };
+            const restoreFrom = async (arr, label) => {
+                if (!arr || !arr.length) return;
+                const ok = await window.askConfirm({ title: language==="es"?"¿Restaurar horario?":"Restore this schedule?", body: (language==="es"?"Esto fijará ":"This will set ") + arr.length + (language==="es"?" turnos como el horario publicado y borrador de ":" shifts as the published & draft schedule for ") + weekKey + " (from “" + label + "”).", danger: false });
+                if (!ok) return;
+                try {
+                    await db.collection("schedules").doc(weekKey).set({ publishedShifts: arr, draftShifts: arr, status: "published", hasUnpublishedChanges: false, updatedBy: staffName, updatedAt: new Date().toISOString() }, { merge: true });
+                    window.showToast(language==="es"?"Horario restaurado":"Schedule restored","success");
+                    setRecoverOpen(false); setRecoverData(null);
+                } catch(e) { console.error(e); window.showToast(language==="es"?"Error al restaurar":"Couldn't restore","error"); }
+            };
+
             const printSchedule = () => {
                 const locName = LOCATIONS.find(l=>l.id===schedLocation)?.name || schedLocation;
                 const html = `<html><head><title>${locName} Schedule</title><style>
@@ -5566,6 +5603,44 @@
                             ) : (
                                 <div className="bg-poke-50 rounded-xl p-2 text-center">
                                     <p className="text-sm font-bold text-poke-700">📍 {LOCATIONS.find(l=>l.id===myLocation)?.name || myLocation}</p>
+                                </div>
+                            )}
+
+                            {ownerAccess && (
+                                <div className="rounded-2xl border p-3" style={{background:"#fff7ed", borderColor:"#fed7aa"}}>
+                                    <div className="flex items-center justify-between cursor-pointer" onClick={()=>{ setRecoverOpen(o=>!o); if(!recoverOpen) setRecoverData(null); }}>
+                                        <p className="font-bold text-sm" style={{color:"#9a3412"}}>🛟 {language==="es"?"Recuperar horario":"Schedule recovery"}</p>
+                                        <span style={{color:"#9a3412"}}>{recoverOpen?"▲":"▼"}</span>
+                                    </div>
+                                    {recoverOpen && (
+                                        <div className="mt-2">
+                                            <p className="text-xs mb-2" style={{color:"#9a3412"}}>{language==="es"?"Escanea lo guardado para esta semana y ubicación:":"Scans what is saved for this week and location:"} <b>{weekKey}</b></p>
+                                            <button onClick={scanForRecovery} className="w-full py-2 rounded-xl font-bold text-xs mb-2" style={{background:"#ea580c",color:"white"}}>🔎 {language==="es"?"Escanear esta semana":"Scan this week"}</button>
+                                            {recoverData === "loading" && <p className="text-xs text-gray-500">{language==="es"?"Escaneando…":"Scanning…"}</p>}
+                                            {recoverData && recoverData.none && <p className="text-xs text-gray-600">{language==="es"?"No hay documento guardado para esta semana.":"No saved document for this week."}</p>}
+                                            {recoverData && recoverData.error && <p className="text-xs text-red-600">{language==="es"?"Error al leer.":"Couldn't read the document."}</p>}
+                                            {recoverData && recoverData.fields && (
+                                                <div className="space-y-2">
+                                                    <p className="text-[11px] text-gray-500">{language==="es"?"Última edición":"Last edited"}: {recoverData.updatedBy||"?"} · {recoverData.updatedAt?new Date(recoverData.updatedAt).toLocaleString():"?"}</p>
+                                                    {["shifts","publishedShifts","draftShifts"].map(f => {
+                                                        const arr = recoverData.fields[f];
+                                                        const names = summarizeShifts(arr);
+                                                        const fieldLabel = f==="shifts"?(language==="es"?"shifts (formato antiguo)":"shifts (legacy field)"):f;
+                                                        return (
+                                                            <div key={f} className="bg-white rounded-xl border border-gray-100 p-2">
+                                                                <p className="text-xs font-bold text-gray-800">{fieldLabel}: {arr?arr.length+(language==="es"?" turnos":" shifts"):(language==="es"?"vacío":"empty")}</p>
+                                                                {names.length>0 && <p className="text-[11px] text-gray-500 mt-0.5">{names.join(", ")}</p>}
+                                                                {arr && arr.length>0 && (
+                                                                    <button onClick={()=>restoreFrom(arr, fieldLabel)} className="mt-1 w-full py-1.5 rounded-lg font-bold text-[11px]" style={{background:"#16a34a",color:"white"}}>↩️ {language==="es"?"Restaurar desde este campo":"Restore from this field"}</button>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    <p className="text-[11px] text-gray-500">{language==="es"?"Consejo: restaura el campo cuyos nombres correspondan al personal de Kirkwood.":"Tip: restore the field whose names match your Kirkwood staff."}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
