@@ -1432,10 +1432,20 @@
             const [error, setError] = useState("");
             const [bioName, setBioName] = useState(null);
             const [bioBusy, setBioBusy] = useState(false);
+            const [autoTried, setAutoTried] = useState(false);
 
             useEffect(() => {
                 if (window.pdBio && window.pdBio.isEnabled()) setBioName(window.pdBio.enabledName());
             }, []);
+
+            // Auto-prompt Face ID as soon as the login screen opens (like a native app)
+            useEffect(() => {
+                if (bioName && !autoTried) {
+                    setAutoTried(true);
+                    const t = setTimeout(() => { handleBiometric(true); }, 400);
+                    return () => clearTimeout(t);
+                }
+            }, [bioName, autoTried]);
 
             const loginByName = (name) => {
                 const match = staffList.find(s => s.name === name);
@@ -1471,15 +1481,15 @@
                 }
             };
 
-            const handleBiometric = async () => {
+            const handleBiometric = async (silent) => {
                 if (bioBusy) return;
                 setBioBusy(true);
                 try {
                     const name = await window.pdBio.unlock();
                     if (name && staffList.some(s => s.name === name)) loginByName(name);
-                    else setError(language === "es" ? "Usa tu PIN" : "Use your PIN");
+                    else if (!silent) setError(language === "es" ? "Usa tu PIN" : "Use your PIN");
                 } catch (e) {
-                    setError(language === "es" ? "Face ID falló — usa tu PIN" : "Face ID failed — use your PIN");
+                    if (!silent) setError(language === "es" ? "Face ID falló — usa tu PIN" : "Face ID failed — use your PIN");
                 }
                 setBioBusy(false);
             };
@@ -1530,7 +1540,7 @@
                             </button>
                         </div>
                         {bioName && (
-                            <button onClick={handleBiometric} disabled={bioBusy}
+                            <button onClick={() => handleBiometric(false)} disabled={bioBusy}
                                 className="mt-4 w-full h-14 rounded-xl bg-white/10 border border-white/15 text-white font-bold flex items-center justify-center gap-2 hover:bg-white/20 active:scale-95 transition-all duration-150">
                                 <span style={{fontSize:22}}>🔓</span>
                                 {bioBusy ? (language==="es"?"Verificando…":"Verifying…") : (language==="es"?"Entrar con Face ID / Touch ID":"Unlock with Face ID / Touch ID")}
