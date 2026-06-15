@@ -4688,6 +4688,7 @@
             const [showSettings, setShowSettings] = useState(false);
             const [tempCloseTime, setTempCloseTime] = useState("20:00");
             const [timeOffMinDays, setTimeOffMinDays] = useState(14);
+            const [remCfg, setRemCfg] = useState({ master:true, dayBefore:true, dayBeforeHour:18, morning:true, morningHour:9, lead:true, leadMin:120 });
             const [tempTimeOffDays, setTempTimeOffDays] = useState(14);
             const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
             const [showAllEmployees, setShowAllEmployees] = useState(true);
@@ -4864,6 +4865,18 @@
                         setTimeOffMinDays(doc.data().timeOffMinDays);
                         setTempTimeOffDays(doc.data().timeOffMinDays);
                     }
+                    if (doc.exists) {
+                        const x = doc.data();
+                        setRemCfg({
+                            master: x.shiftRemindersEnabled !== false,
+                            dayBefore: x.reminderDayBeforeEnabled !== false,
+                            dayBeforeHour: typeof x.reminderDayBeforeHour === "number" ? x.reminderDayBeforeHour : 18,
+                            morning: x.reminderMorningEnabled !== false,
+                            morningHour: typeof x.reminderMorningHour === "number" ? x.reminderMorningHour : 9,
+                            lead: x.reminderLeadEnabled !== false,
+                            leadMin: typeof x.reminderLeadMin === "number" ? x.reminderLeadMin : 120
+                        });
+                    }
                 });
                 return () => unsub();
             }, []);
@@ -4937,7 +4950,14 @@
 
             const saveCloseTime = async () => {
                 const days = Math.max(0, Math.min(120, parseInt(tempTimeOffDays) || 0));
-                await db.collection("ops").doc("scheduleSettings").set({closeTime: tempCloseTime, timeOffMinDays: days, updatedBy: staffName, updatedAt: new Date().toISOString()}, {merge: true});
+                await db.collection("ops").doc("scheduleSettings").set({
+                    closeTime: tempCloseTime, timeOffMinDays: days,
+                    shiftRemindersEnabled: remCfg.master,
+                    reminderDayBeforeEnabled: remCfg.dayBefore, reminderDayBeforeHour: remCfg.dayBeforeHour,
+                    reminderMorningEnabled: remCfg.morning, reminderMorningHour: remCfg.morningHour,
+                    reminderLeadEnabled: remCfg.lead, reminderLeadMin: remCfg.leadMin,
+                    updatedBy: staffName, updatedAt: new Date().toISOString()
+                }, {merge: true});
                 setCloseTime(tempCloseTime);
                 setTimeOffMinDays(days);
                 setShowSettings(false);
@@ -5351,6 +5371,17 @@
 
             const copyWeek = async () => {
                 const nextWeekKey = schedLocation + "_" + getWeekStart(weekOffset + 1);
+                try {
+                    const existing = await db.collection("schedules").doc(nextWeekKey).get();
+                    if (existing.exists) {
+                        const d = existing.data();
+                        const has = (d.draftShifts && d.draftShifts.length) || (d.publishedShifts && d.publishedShifts.length) || (d.shifts && d.shifts.length);
+                        if (has) {
+                            const ok = await window.askConfirm({ title: language==="es"?"¿Sobrescribir la próxima semana?":"Overwrite next week?", body: language==="es"?"La próxima semana ya tiene un horario. Copiar lo reemplazará.":"Next week already has a schedule. Copying this week will replace it.", danger: true });
+                            if (!ok) return;
+                        }
+                    }
+                } catch(e) { console.error(e); }
                 const copiedShifts = shifts.map(s=>({...s,id:Date.now().toString()+Math.random()}));
                 await db.collection("schedules").doc(nextWeekKey).set({
                     draftShifts: copiedShifts,
@@ -5361,8 +5392,9 @@
                     weekStart: getWeekStart(weekOffset+1),
                     updatedBy: staffName,
                     updatedAt: new Date().toISOString()
-                });
+                }, { merge: true });
                 setWeekOffset(weekOffset+1);
+                window.showToast(language==="es"?"Copiado a la próxima semana":"Copied to next week","success");
             };
 
             const saveAsTemplate = async () => {
@@ -5579,8 +5611,10 @@
             };
 
             const myShifts = shifts.filter(s => s.employee === staffName);
-            // Everyone sees the full schedule in the Schedule tab (coworkers + open shifts); "My Shifts" tab still filters to just theirs
-            const visibleShifts = shifts;
+            // Everyone sees the full schedule in the Schedule tab (coworkers + open shifts); "My Shifts" tab still filters to just theirs.
+            // Only show shifts for staff who belong to the selected location (or open shifts) so stray cross-location shifts never appear.
+            const visLocNames = new Set(staffList.filter(s => s.location === schedLocation || s.location === "all").map(s => s.name));
+            const visibleShifts = shifts.filter(s => s.employee === "__OPEN__" || visLocNames.has(s.employee));
 
             return (
                 <div className="p-4 pb-24 animate-in">
@@ -6294,6 +6328,62 @@
                                                 ))}
                                             </div>
                                             <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{language==="es"?"Los empleados no podrán solicitar descanso antes de este plazo. Gerentes y dueños pueden anularlo. (0 = sin límite)":"Staff can't request time off sooner than this. Managers & owners can override. (0 = no limit)"}</p>
+                                        </div>
+                                    )}
+
+                                    {ownerAccess && (
+                                        <div className="pt-3 border-t" style={{borderColor:"var(--border-subtle)"}}>
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>🔔 {language==="es"?"Recordatorios de turno":"Shift reminders"}</label>
+                                                <button onClick={()=>setRemCfg(c=>({...c,master:!c.master}))} className="text-xs font-bold px-3 py-1 rounded-full" style={{background:remCfg.master?"#16a34a":"var(--bg-subtle)",color:remCfg.master?"white":"var(--text-secondary)"}}>{remCfg.master?(language==="es"?"Activado":"On"):(language==="es"?"Desactivado":"Off")}</button>
+                                            </div>
+                                            {remCfg.master && (
+                                                <div className="space-y-2 mt-2">
+                                                    <div className="rounded-xl p-2" style={{background:"var(--bg-subtle)"}}>
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-xs font-bold" style={{color:"var(--text-primary)"}}>🗓️ {language==="es"?"Día anterior (tarde)":"Day before (evening)"}</span>
+                                                            <button onClick={()=>setRemCfg(c=>({...c,dayBefore:!c.dayBefore}))} className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{background:remCfg.dayBefore?"#16a34a":"var(--bg-card)",color:remCfg.dayBefore?"white":"var(--text-muted)"}}>{remCfg.dayBefore?(language==="es"?"Sí":"On"):(language==="es"?"No":"Off")}</button>
+                                                        </div>
+                                                        {remCfg.dayBefore && (
+                                                            <div className="flex items-center gap-2 mt-1.5">
+                                                                <span className="text-[11px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Enviar a las":"Send at"}</span>
+                                                                <select value={remCfg.dayBeforeHour} onChange={e=>setRemCfg(c=>({...c,dayBeforeHour:Number(e.target.value)}))} className="text-xs px-2 py-1 rounded-lg border" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                                                                    {[15,16,17,18,19,20,21].map(h=><option key={h} value={h}>{fmtTime(h+":00")}</option>)}
+                                                                </select>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="rounded-xl p-2" style={{background:"var(--bg-subtle)"}}>
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-xs font-bold" style={{color:"var(--text-primary)"}}>📅 {language==="es"?"Resumen matutino":"Morning digest"}</span>
+                                                            <button onClick={()=>setRemCfg(c=>({...c,morning:!c.morning}))} className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{background:remCfg.morning?"#16a34a":"var(--bg-card)",color:remCfg.morning?"white":"var(--text-muted)"}}>{remCfg.morning?(language==="es"?"Sí":"On"):(language==="es"?"No":"Off")}</button>
+                                                        </div>
+                                                        {remCfg.morning && (
+                                                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                                                <span className="text-[11px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Enviar a las":"Send at"}</span>
+                                                                <select value={remCfg.morningHour} onChange={e=>setRemCfg(c=>({...c,morningHour:Number(e.target.value)}))} className="text-xs px-2 py-1 rounded-lg border" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
+                                                                    {[5,6,7,8,9,10,11].map(h=><option key={h} value={h}>{fmtTime(h+":00")}</option>)}
+                                                                </select>
+                                                                <span className="text-[11px]" style={{color:"var(--text-muted)"}}>{language==="es"?"(solo turnos que empiezan a esa hora o después)":"(later shifts only)"}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="rounded-xl p-2" style={{background:"var(--bg-subtle)"}}>
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-xs font-bold" style={{color:"var(--text-primary)"}}>⏰ {language==="es"?"Antes del turno":"Before the shift"}</span>
+                                                            <button onClick={()=>setRemCfg(c=>({...c,lead:!c.lead}))} className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{background:remCfg.lead?"#16a34a":"var(--bg-card)",color:remCfg.lead?"white":"var(--text-muted)"}}>{remCfg.lead?(language==="es"?"Sí":"On"):(language==="es"?"No":"Off")}</button>
+                                                        </div>
+                                                        {remCfg.lead && (
+                                                            <div className="flex gap-1.5 mt-1.5">
+                                                                {[60,120,180].map(m=>(
+                                                                    <button key={m} onClick={()=>setRemCfg(c=>({...c,leadMin:m}))} className="flex-1 text-[11px] font-bold py-1 rounded-lg" style={{background:remCfg.leadMin===m?"#0891b2":"var(--bg-card)",color:remCfg.leadMin===m?"white":"var(--text-secondary)"}}>{m/60} {language==="es"?(m===60?"hora":"horas"):(m===60?"hour":"hours")}</button>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[11px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Solo a quienes activaron notificaciones. Requiere la función del servidor desplegada.":"Only reaches staff who turned on notifications. Requires the server reminder function to be deployed."}</p>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
 
