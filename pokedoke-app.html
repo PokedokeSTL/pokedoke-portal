@@ -487,6 +487,46 @@
             window.__toastListeners.forEach(l => l(toast));
         };
 
+        // Convenience-grade biometric (Face ID / Touch ID) via WebAuthn passkey.
+        // Device-bound: stores a credential id + staff name in localStorage for THIS phone.
+        // The OS verifies the biometric; we trust the ceremony and load that identity. PIN remains the fallback.
+        window.pdBio = (function(){
+            const KEY = "pd_bio_v1";
+            const b64e = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+            const b64d = (s) => { s = s.replace(/-/g,'+').replace(/_/g,'/'); const bin = atob(s); const arr = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); return arr.buffer; };
+            const read = () => { try { return JSON.parse(localStorage.getItem(KEY)||"null"); } catch(e){ return null; } };
+            return {
+                isSupported(){ return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create); },
+                isEnabled(){ return !!read(); },
+                enabledName(){ const r = read(); return r ? r.name : null; },
+                async enable(staffName){
+                    if(!this.isSupported()) throw new Error("unsupported");
+                    const challenge = crypto.getRandomValues(new Uint8Array(32));
+                    const userId = crypto.getRandomValues(new Uint8Array(16));
+                    const cred = await navigator.credentials.create({ publicKey: {
+                        challenge, rp:{ name:"PokeDoke Staff", id: location.hostname },
+                        user:{ id:userId, name:staffName, displayName:staffName },
+                        pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],
+                        authenticatorSelection:{ authenticatorAttachment:"platform", userVerification:"required" },
+                        timeout:60000, attestation:"none"
+                    }});
+                    localStorage.setItem(KEY, JSON.stringify({ credId: b64e(cred.rawId), name: staffName }));
+                    return true;
+                },
+                async unlock(){
+                    const r = read(); if(!r) return null;
+                    const challenge = crypto.getRandomValues(new Uint8Array(32));
+                    await navigator.credentials.get({ publicKey:{
+                        challenge, rpId: location.hostname,
+                        allowCredentials:[{ type:"public-key", id: b64d(r.credId) }],
+                        userVerification:"required", timeout:60000
+                    }});
+                    return r.name; // OS verified biometric → return saved identity
+                },
+                disable(){ localStorage.removeItem(KEY); }
+            };
+        })();
+
         function ToastContainer() {
             const [toasts, setToasts] = useState([]);
             useEffect(() => {
@@ -1390,34 +1430,58 @@
         function HomePage({ onSelectStaff, language, setLanguage, staffList }) {
             const [pin, setPin] = useState("");
             const [error, setError] = useState("");
+            const [bioName, setBioName] = useState(null);
+            const [bioBusy, setBioBusy] = useState(false);
+
+            useEffect(() => {
+                if (window.pdBio && window.pdBio.isEnabled()) setBioName(window.pdBio.enabledName());
+            }, []);
+
+            const loginByName = (name) => {
+                const match = staffList.find(s => s.name === name);
+                if (!match) { onSelectStaff(name); return; }
+                try {
+                    const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+                    const docId = match.name.replace(/\s/g, "_");
+                    const ref = db.collection("employees").doc(docId);
+                    const nowIso = new Date().toISOString();
+                    ref.get().then(snap => {
+                        const data = snap.exists ? snap.data() : {};
+                        const patch = { lastLogin: nowIso, loginCount: (data.loginCount || 0) + 1 };
+                        if (!data.activatedAt) patch.activatedAt = nowIso;
+                        if (isStandalone) { patch.installed = true; if (!data.installedAt) patch.installedAt = nowIso; }
+                        if (!snap.exists) {
+                            patch.name = match.name; patch.role = match.role;
+                            patch.location = match.location || "cwe"; patch.pin = match.pin;
+                            patch.status = "active"; patch.createdAt = nowIso;
+                        }
+                        ref.set(patch, { merge: true }).catch(() => {});
+                    }).catch(() => {});
+                } catch (e) {}
+                onSelectStaff(match.name);
+            };
 
             const handlePinSubmit = () => {
                 const match = staffList.find(s => s.pin === pin);
                 if (match) {
-                    // Record activation + install status (best-effort, non-blocking)
-                    try {
-                        const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
-                        const docId = match.name.replace(/\s/g, "_");
-                        const ref = db.collection("employees").doc(docId);
-                        const nowIso = new Date().toISOString();
-                        ref.get().then(snap => {
-                            const data = snap.exists ? snap.data() : {};
-                            const patch = { lastLogin: nowIso, loginCount: (data.loginCount || 0) + 1 };
-                            if (!data.activatedAt) patch.activatedAt = nowIso;
-                            if (isStandalone) { patch.installed = true; if (!data.installedAt) patch.installedAt = nowIso; }
-                            if (!snap.exists) {
-                                patch.name = match.name; patch.role = match.role;
-                                patch.location = match.location || "cwe"; patch.pin = match.pin;
-                                patch.status = "active"; patch.createdAt = nowIso;
-                            }
-                            ref.set(patch, { merge: true }).catch(() => {});
-                        }).catch(() => {});
-                    } catch (e) {}
-                    onSelectStaff(match.name);
+                    loginByName(match.name);
                 } else {
                     setError(language === "es" ? "PIN incorrecto" : "Incorrect PIN");
                     setPin("");
                 }
+            };
+
+            const handleBiometric = async () => {
+                if (bioBusy) return;
+                setBioBusy(true);
+                try {
+                    const name = await window.pdBio.unlock();
+                    if (name && staffList.some(s => s.name === name)) loginByName(name);
+                    else setError(language === "es" ? "Usa tu PIN" : "Use your PIN");
+                } catch (e) {
+                    setError(language === "es" ? "Face ID falló — usa tu PIN" : "Face ID failed — use your PIN");
+                }
+                setBioBusy(false);
             };
 
             return (
@@ -1465,6 +1529,13 @@
                                 OK
                             </button>
                         </div>
+                        {bioName && (
+                            <button onClick={handleBiometric} disabled={bioBusy}
+                                className="mt-4 w-full h-14 rounded-xl bg-white/10 border border-white/15 text-white font-bold flex items-center justify-center gap-2 hover:bg-white/20 active:scale-95 transition-all duration-150">
+                                <span style={{fontSize:22}}>🔓</span>
+                                {bioBusy ? (language==="es"?"Verificando…":"Verifying…") : (language==="es"?"Entrar con Face ID / Touch ID":"Unlock with Face ID / Touch ID")}
+                            </button>
+                        )}
                     </div>
 
                     <button
@@ -11619,6 +11690,13 @@
         function Profile({ language, staffName, userPrefs, saveUserPref, onClose }) {
             const currentColor = userPrefs?.avatarColor || getAvatarColor(staffName, null).id;
             const currentEmoji = userPrefs?.avatarEmoji || "";
+            const bioSupported = window.pdBio ? window.pdBio.isSupported() : false;
+            const [bioOn, setBioOn] = useState(window.pdBio ? window.pdBio.isEnabled() : false);
+            const enableBio = async () => {
+                try { await window.pdBio.enable(staffName); setBioOn(true); window.showToast(language==="es"?"Face ID activado en este teléfono":"Face ID enabled on this phone","success"); }
+                catch(e){ window.showToast(language==="es"?"No se pudo activar Face ID":"Couldn't enable Face ID — your device may not support it","error"); }
+            };
+            const disableBio = () => { window.pdBio.disable(); setBioOn(false); window.showToast(language==="es"?"Face ID desactivado en este teléfono":"Face ID turned off on this phone","info"); };
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in" style={{background: "rgba(0,0,0,0.5)"}}>
                     <div className="card p-5 max-w-md w-full animate-scale" style={{maxHeight: "90vh", overflowY: "auto"}}>
@@ -11676,6 +11754,18 @@
                             ))}
                         </div>
                         <p className="text-xs italic mt-3 text-center" style={{color: "var(--text-muted)"}}>{language==="es"?"Tus cambios se guardan automáticamente":"Changes save automatically"}</p>
+
+                        {bioSupported && (
+                            <div className="mt-4 rounded-2xl p-3" style={{background:"var(--bg-subtle)", border:"1px solid var(--border-subtle)"}}>
+                                <p className="text-sm font-bold mb-1" style={{color:"var(--text-primary)"}}>🔓 Face ID / Touch ID</p>
+                                <p className="text-xs mb-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Entra más rápido en este teléfono. Tu PIN sigue funcionando como respaldo.":"Faster login on this phone. Your PIN still works as a backup."}</p>
+                                {bioOn ? (
+                                    <button onClick={disableBio} className="w-full py-2 rounded-xl font-bold text-sm" style={{background:"#fee2e2",color:"#b91c1c"}}>{language==="es"?"Desactivar en este teléfono":"Turn off on this phone"}</button>
+                                ) : (
+                                    <button onClick={enableBio} className="w-full py-2 rounded-xl font-bold text-sm" style={{background:"#0891b2",color:"white"}}>{language==="es"?"Activar en este teléfono":"Enable on this phone"}</button>
+                                )}
+                            </div>
+                        )}
 
                         <button onClick={onClose} className="w-full mt-5 py-3 rounded-xl font-bold" style={{background: "var(--bg-elevated)", color: "var(--text-primary)"}}>
                             {language==="es"?"Cerrar":"Close"}
@@ -12444,6 +12534,16 @@
             });
             const [userPrefs, setUserPrefs] = useState({});
             const [showProfile, setShowProfile] = useState(false);
+            const [showBioPrompt, setShowBioPrompt] = useState(false);
+            useEffect(() => {
+                if (!staffName) return;
+                try {
+                    if (window.pdBio && window.pdBio.isSupported() && !window.pdBio.isEnabled() && !localStorage.getItem("pd_bio_prompt_dismissed")) {
+                        const t = setTimeout(() => setShowBioPrompt(true), 700);
+                        return () => clearTimeout(t);
+                    }
+                } catch(e) {}
+            }, [staffName]);
             const [msgUnread, setMsgUnread] = useState(0);
 
             useEffect(() => {
@@ -12971,6 +13071,25 @@
                     <ConfirmModal />
                     <BackToTop />
                     {showProfile && <Profile language={language} staffName={staffName} userPrefs={userPrefs} saveUserPref={saveUserPref} onClose={()=>setShowProfile(false)} />}
+                    {showBioPrompt && (
+                        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 animate-in" style={{background:"rgba(0,0,0,0.5)"}}>
+                            <div className="card p-5 max-w-sm w-full animate-scale" style={{marginBottom:"env(safe-area-inset-bottom)"}}>
+                                <div className="text-center mb-3">
+                                    <div style={{fontSize:40}}>🔓</div>
+                                    <p className="font-display text-xl font-bold mt-1" style={{color:"var(--text-primary)"}}>{language==="es"?"¿Activar Face ID?":"Enable Face ID?"}</p>
+                                    <p className="text-sm mt-1" style={{color:"var(--text-muted)"}}>{language==="es"?"Entra más rápido en este teléfono la próxima vez. Tu PIN sigue funcionando.":"Log in faster on this phone next time. Your PIN still works."}</p>
+                                </div>
+                                <button onClick={async()=>{ try { await window.pdBio.enable(staffName); window.showToast(language==="es"?"Face ID activado en este teléfono":"Face ID enabled on this phone","success"); } catch(e){ window.showToast(language==="es"?"No se pudo activar":"Couldn't enable — device may not support it","error"); } try{localStorage.setItem("pd_bio_prompt_dismissed","1");}catch(e){} setShowBioPrompt(false); }}
+                                    className="w-full py-3 rounded-xl font-bold text-sm mb-2" style={{background:"#0891b2",color:"white"}}>
+                                    {language==="es"?"Activar Face ID":"Enable Face ID"}
+                                </button>
+                                <button onClick={()=>{ try{localStorage.setItem("pd_bio_prompt_dismissed","1");}catch(e){} setShowBioPrompt(false); }}
+                                    className="w-full py-2 rounded-xl font-bold text-sm" style={{background:"var(--bg-elevated)",color:"var(--text-muted)"}}>
+                                    {language==="es"?"Ahora no":"Not now"}
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
