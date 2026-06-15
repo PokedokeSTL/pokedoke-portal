@@ -11,6 +11,28 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="PokeDoke">
     <title>Pokedoke Staff Portal</title>
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.tailwindcss.com">
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <style>
+        /* Instant splash — paints immediately, before React/Babel finish. React replaces it on mount. */
+        #pdSplash {
+            position: fixed; inset: 0; z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, #164e63 0%, #0e7490 50%, #0891b2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            transition: opacity 0.3s ease;
+        }
+        #pdSplash .pd-logo { width: 88px; height: 88px; margin-bottom: 16px; border-radius: 22px; box-shadow: 0 10px 30px rgba(0,0,0,0.28); object-fit: cover; }
+        #pdSplash .pd-name { color: #fff; font-size: 24px; font-weight: 800; letter-spacing: 0.5px; }
+        #pdSplash .pd-sub { color: rgba(255,255,255,0.7); font-size: 13px; margin-top: 4px; }
+        #pdSplash .pd-spin {
+            margin-top: 22px; width: 34px; height: 34px; border-radius: 50%;
+            border: 3px solid rgba(255,255,255,0.25); border-top-color: #fff;
+            animation: pdspin 0.8s linear infinite;
+        }
+        @keyframes pdspin { to { transform: rotate(360deg); } }
+    </style>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -314,7 +336,14 @@
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <div id="root">
+        <div id="pdSplash">
+            <img class="pd-logo" src="/icon-192.png" alt="PokeDoke" />
+            <div class="pd-name">PokeDoke</div>
+            <div class="pd-sub">Loading…</div>
+            <div class="pd-spin"></div>
+        </div>
+    </div>
 
     <script type="text/babel">
         const { useState, useEffect, useCallback, useRef } = React;
