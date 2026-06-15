@@ -4669,6 +4669,7 @@
             const [schedLocation, setSchedLocation] = useState("cwe");
             const [recoverOpen, setRecoverOpen] = useState(false);
             const [recoverData, setRecoverData] = useState(null);
+            const [historyList, setHistoryList] = useState(null);
             const [weekOffset, setWeekOffset] = useState(0);
             const [shifts, setShifts] = useState([]);
             const [publishedShifts, setPublishedShifts] = useState([]);
@@ -5189,6 +5190,7 @@
 
             const publishSchedule = async (notifyScope) => {
                 notifyScope = notifyScope || "all";
+                await snapshotSchedule(weekKey, "before publish");
                 const prevPublished = publishedShifts;
                 // Copy draft → published, clear the unpublished-changes flag
                 await db.collection("schedules").doc(weekKey).set({
@@ -5222,6 +5224,7 @@
             };
 
             const unpublishSchedule = async () => {
+                await snapshotSchedule(weekKey, "before unpublish");
                 await db.collection("schedules").doc(weekKey).set({
                     status: "draft",
                     publishedShifts: [],
@@ -5343,6 +5346,7 @@
                 setCsvImporting(true);
                 try {
                     const finalShifts = mode === "replace" ? csvParsedShifts : [...shifts, ...csvParsedShifts];
+                    await snapshotSchedule(weekKey, "before CSV import");
                     setShifts(finalShifts);
                     await db.collection("schedules").doc(weekKey).set({
                         draftShifts: finalShifts,
@@ -5383,6 +5387,7 @@
                     }
                 } catch(e) { console.error(e); }
                 const copiedShifts = shifts.map(s=>({...s,id:Date.now().toString()+Math.random()}));
+                await snapshotSchedule(nextWeekKey, "before copy-week overwrite");
                 await db.collection("schedules").doc(nextWeekKey).set({
                     draftShifts: copiedShifts,
                     publishedShifts: [],
@@ -5525,6 +5530,7 @@
                     const snap = await ref.get();
                     if (snap.exists) {
                         const data = snap.data();
+                        await snapshotSchedule(targetKey, "before swap approval");
                         const basePub = data.publishedShifts || (data.status === "published" ? (data.shifts || []) : []);
                         const baseDraft = data.draftShifts || data.shifts || [];
                         const newPub = basePub.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
@@ -5538,6 +5544,24 @@
             };
 
             // ---- Schedule recovery: read the raw saved doc for the current week/location ----
+            // ---- Auto-snapshot: save a restorable copy of a schedule doc BEFORE it's overwritten ----
+            // Stored in the ops collection (open rules) as ops/schedHist_{weekKey}; keeps the last 12 versions.
+            const snapshotSchedule = async (targetKey, reason) => {
+                try {
+                    const snap = await db.collection("schedules").doc(targetKey).get();
+                    if (!snap.exists) return;
+                    const d = snap.data();
+                    const pub = Array.isArray(d.publishedShifts) ? d.publishedShifts : (d.status === "published" ? (d.shifts || []) : []);
+                    const draft = Array.isArray(d.draftShifts) ? d.draftShifts : (d.shifts || []);
+                    if (!pub.length && !draft.length) return; // nothing worth keeping
+                    const histRef = db.collection("ops").doc("schedHist_" + targetKey);
+                    const hSnap = await histRef.get();
+                    const versions = (hSnap.exists && Array.isArray(hSnap.data().versions)) ? hSnap.data().versions : [];
+                    versions.unshift({ ts: new Date().toISOString(), by: staffName, reason: reason || "", status: d.status || "draft", publishedShifts: pub, draftShifts: draft });
+                    await histRef.set({ versions: versions.slice(0, 12), weekKey: targetKey, updatedAt: new Date().toISOString() }, { merge: true });
+                } catch(e) { console.error("snapshot failed", e); }
+            };
+
             const summarizeShifts = (arr) => {
                 if (!arr || !arr.length) return [];
                 const counts = {};
@@ -5546,8 +5570,14 @@
             };
             const scanForRecovery = async () => {
                 setRecoverData("loading");
+                setHistoryList(null);
                 try {
                     const snap = await db.collection("schedules").doc(weekKey).get();
+                    // Load saved version history (best-effort)
+                    try {
+                        const h = await db.collection("ops").doc("schedHist_" + weekKey).get();
+                        setHistoryList(h.exists && Array.isArray(h.data().versions) ? h.data().versions : []);
+                    } catch(e) { setHistoryList([]); }
                     if (!snap.exists) { setRecoverData({ none: true }); return; }
                     const d = snap.data();
                     setRecoverData({
@@ -5566,8 +5596,21 @@
                 const ok = await window.askConfirm({ title: language==="es"?"¿Restaurar horario?":"Restore this schedule?", body: (language==="es"?"Esto fijará ":"This will set ") + arr.length + (language==="es"?" turnos como el horario publicado y borrador de ":" shifts as the published & draft schedule for ") + weekKey + " (from “" + label + "”).", danger: false });
                 if (!ok) return;
                 try {
+                    await snapshotSchedule(weekKey, "before restore");
                     await db.collection("schedules").doc(weekKey).set({ publishedShifts: arr, draftShifts: arr, status: "published", hasUnpublishedChanges: false, updatedBy: staffName, updatedAt: new Date().toISOString() }, { merge: true });
                     window.showToast(language==="es"?"Horario restaurado":"Schedule restored","success");
+                    setRecoverOpen(false); setRecoverData(null);
+                } catch(e) { console.error(e); window.showToast(language==="es"?"Error al restaurar":"Couldn't restore","error"); }
+            };
+            const restoreVersion = async (v) => {
+                const ok = await window.askConfirm({ title: language==="es"?"¿Restaurar esta versión?":"Restore this version?", body: (language==="es"?"Reemplazará el horario actual de ":"This replaces the current ") + weekKey + (language==="es"?" con la versión del ":" schedule with the version from ") + new Date(v.ts).toLocaleString() + ".", danger: true });
+                if (!ok) return;
+                try {
+                    await snapshotSchedule(weekKey, "before restore");
+                    const pub = v.publishedShifts || [];
+                    const draft = v.draftShifts || pub;
+                    await db.collection("schedules").doc(weekKey).set({ publishedShifts: pub, draftShifts: draft, status: v.status || "published", hasUnpublishedChanges: false, updatedBy: staffName, updatedAt: new Date().toISOString() }, { merge: true });
+                    window.showToast(language==="es"?"Versión restaurada":"Version restored","success");
                     setRecoverOpen(false); setRecoverData(null);
                 } catch(e) { console.error(e); window.showToast(language==="es"?"Error al restaurar":"Couldn't restore","error"); }
             };
@@ -5672,6 +5715,27 @@
                                                     })}
                                                     <p className="text-[11px] text-gray-500">{language==="es"?"Consejo: restaura el campo cuyos nombres correspondan al personal de Kirkwood.":"Tip: restore the field whose names match your Kirkwood staff."}</p>
                                                 </div>
+                                            )}
+                                            {historyList && historyList.length > 0 && (
+                                                <div className="mt-3 pt-2 border-t" style={{borderColor:"#fed7aa"}}>
+                                                    <p className="text-xs font-bold mb-1" style={{color:"#9a3412"}}>🕘 {language==="es"?"Versiones guardadas":"Saved versions"}</p>
+                                                    <div className="space-y-1.5">
+                                                        {historyList.map((v,i)=>{
+                                                            const names = summarizeShifts(v.publishedShifts && v.publishedShifts.length ? v.publishedShifts : v.draftShifts);
+                                                            return (
+                                                                <div key={i} className="bg-white rounded-xl border border-gray-100 p-2">
+                                                                    <p className="text-[11px] font-bold text-gray-800">{new Date(v.ts).toLocaleString()} · {v.by||"?"}</p>
+                                                                    {v.reason && <p className="text-[10px] text-gray-400">{v.reason}</p>}
+                                                                    {names.length>0 && <p className="text-[11px] text-gray-500 mt-0.5">{names.join(", ")}</p>}
+                                                                    <button onClick={()=>restoreVersion(v)} className="mt-1 w-full py-1.5 rounded-lg font-bold text-[11px]" style={{background:"#16a34a",color:"white"}}>↩️ {language==="es"?"Restaurar esta versión":"Restore this version"}</button>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {historyList && historyList.length === 0 && recoverData && !recoverData.none && (
+                                                <p className="text-[11px] text-gray-500 mt-2">{language==="es"?"Aún no hay versiones guardadas. Se crean automáticamente al publicar o sobrescribir de ahora en adelante.":"No saved versions yet — they're created automatically whenever you publish or overwrite from now on."}</p>
                                             )}
                                         </div>
                                     )}
