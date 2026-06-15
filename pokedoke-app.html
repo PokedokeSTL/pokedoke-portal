@@ -5483,17 +5483,23 @@
 
             const approveSwap = async (swap) => {
                 await db.collection("shiftSwaps").doc(swap.id).update({status:"approved", approvedBy:staffName, approvedAt:new Date().toISOString()});
-                // Swap approval is staff-facing; update both published and draft so it's visible immediately
-                const updatedPub = publishedShifts.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
-                const updatedDraft = shifts.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
-                setPublishedShifts(updatedPub);
-                setShifts(updatedDraft);
-                await db.collection("schedules").doc(swap.weekKey).set({
-                    publishedShifts: updatedPub,
-                    draftShifts: updatedDraft,
-                    updatedBy: staffName,
-                    updatedAt: new Date().toISOString()
-                }, {merge: true});
+                // Always update the swap's OWN week/location doc — never the schedule currently on screen,
+                // which may be a different location and would otherwise be overwritten.
+                const targetKey = swap.weekKey || weekKey;
+                const ref = db.collection("schedules").doc(targetKey);
+                try {
+                    const snap = await ref.get();
+                    if (snap.exists) {
+                        const data = snap.data();
+                        const basePub = data.publishedShifts || (data.status === "published" ? (data.shifts || []) : []);
+                        const baseDraft = data.draftShifts || data.shifts || [];
+                        const newPub = basePub.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
+                        const newDraft = baseDraft.map(s => s.id===swap.shift.id ? {...s, employee:swap.claimedBy} : s);
+                        await ref.set({ publishedShifts: newPub, draftShifts: newDraft, updatedBy: staffName, updatedAt: new Date().toISOString() }, {merge: true});
+                        // Reflect immediately only if we're actually viewing that same week + location
+                        if (targetKey === weekKey) { setPublishedShifts(newPub); setShifts(mgrAccess ? newDraft : newPub); }
+                    }
+                } catch(e) { console.error(e); window.showToast(language==="es"?"No se pudo aprobar el cambio":"Couldn't approve swap","error"); return; }
                 sendNotification([swap.offeredBy, swap.claimedBy], "✅ Shift Swap Approved", swap.claimedBy + " now has " + swap.offeredBy + "'s shift. Approved by " + staffName, {type:"swap"});
             };
 
