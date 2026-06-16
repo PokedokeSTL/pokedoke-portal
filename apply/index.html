@@ -4938,14 +4938,14 @@
             }, []);
 
             useEffect(() => {
-                if (!mgrAccess) return;
+                if (!ownerAccess) return;
                 const endDate = fmtLocalDate(new Date(new Date(weekStart+"T12:00:00").getTime() + 6*86400000));
                 db.collection("dailySales").where("date",">=",weekStart).where("date","<=",endDate).get().then(snap => {
                     let total = 0;
                     snap.forEach(d => { if (d.data().location === schedLocation || !mgrAccess) total += d.data().amount || 0; });
                     setWeekSalesTotal(total);
                 });
-            }, [weekStart, schedLocation, mgrAccess]);
+            }, [weekStart, schedLocation, ownerAccess]);
 
             const saveLaborBudget = async (pct) => {
                 setLaborBudgetPct(pct);
@@ -5786,7 +5786,7 @@
                                     <button onClick={printSchedule} className="py-2 bg-gray-700 text-white rounded-xl text-xs font-bold active:scale-95">🖨️ {language==="es"?"Imprimir":"Print"}</button>
                                     <input type="file" accept=".csv" ref={csvFileRef} onChange={handleCsvImport} className="hidden" />
                                     <button onClick={()=>csvFileRef.current?.click()} className="py-2 bg-blue-600 text-white rounded-xl text-xs font-bold active:scale-95">📤 {language==="es"?"Importar CSV":"Import CSV"}</button>
-                                    <button onClick={()=>{setTempCloseTime(closeTime);setShowSettings(true);}} className="col-span-2 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold active:scale-95">⚙️ {language==="es"?"Ajustes — Hora de Cierre":"Settings — Close Time"}: {fmtTime(closeTime)}</button>
+                                    {ownerAccess && <button onClick={()=>{setTempCloseTime(closeTime);setShowSettings(true);}} className="col-span-2 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold active:scale-95">⚙️ {language==="es"?"Ajustes — Hora de Cierre":"Settings — Close Time"}: {fmtTime(closeTime)}</button>}
                                 </div>
                             )}
 
@@ -6369,7 +6369,7 @@
                     })()}
 
                     {/* ===== SCHEDULE SETTINGS MODAL ===== */}
-                    {showSettings && (
+                    {showSettings && ownerAccess && (
                         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center animate-in" style={{background: "rgba(0,0,0,0.5)"}} onClick={()=>setShowSettings(false)}>
                             <div className="card p-5 max-w-md w-full animate-scale" style={{maxHeight: "90vh", overflowY: "auto", borderTopLeftRadius: 24, borderTopRightRadius: 24}} onClick={e=>e.stopPropagation()}>
                                 <div className="flex justify-between items-center mb-4">
