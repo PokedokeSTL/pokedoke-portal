@@ -12772,6 +12772,7 @@
 
         function App() {
             const [staffName, setStaffName] = useState(null);
+            const [staffList, setStaffList] = useState(DEFAULT_STAFF);
             const [language, setLanguage] = useState("en");
             const [darkMode, setDarkMode] = useState(() => {
                 try {
@@ -12865,7 +12866,6 @@
                 navigator.serviceWorker.addEventListener('message', handler);
                 return () => navigator.serviceWorker.removeEventListener('message', handler);
             }, []);
-            const [staffList, setStaffList] = useState(DEFAULT_STAFF);
             const { isAtPokedoke, checking: geoChecking, error: geoError } = useGeofence();
 
             // Load staff list from Firestore (falls back to DEFAULT_STAFF)
