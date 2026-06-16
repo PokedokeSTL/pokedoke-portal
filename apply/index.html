@@ -4744,9 +4744,9 @@
             const csvFileRef = React.useRef(null);
             const mgrAccess = isAdmin(staffName);
             const ownerAccess = isOwner(staffName);
-            // Time-off request lead time (owner-configurable in Schedule Settings; managers/owners can override)
+            // Time-off request lead time (owner-configurable in Schedule Settings; ONLY owners can override — managers are held to the rule)
             const toMinDate = (() => { const d = new Date(); d.setDate(d.getDate() + (timeOffMinDays || 0)); return window.fmtLocalDate(d); })();
-            const toMinForUser = mgrAccess ? "" : toMinDate;
+            const toMinForUser = ownerAccess ? "" : toMinDate;
             const toMinDisplay = new Date(toMinDate + "T00:00:00").toLocaleDateString(language === "es" ? "es-ES" : "en-US", { month: "short", day: "numeric", year: "numeric" });
             const toLeadLabel = (timeOffMinDays % 7 === 0 && timeOffMinDays > 0)
                 ? (timeOffMinDays / 7) + " " + (language === "es" ? (timeOffMinDays / 7 === 1 ? "semana" : "semanas") : (timeOffMinDays / 7 === 1 ? "week" : "weeks"))
@@ -4953,7 +4953,9 @@
             };
 
             const saveCloseTime = async () => {
-                const days = Math.max(0, Math.min(120, parseInt(tempTimeOffDays) || 0));
+                const parsed = parseInt(tempTimeOffDays, 10);
+                // If the field is blank/invalid, keep the current minimum — never silently disable the blackout by writing 0.
+                const days = isNaN(parsed) ? (typeof timeOffMinDays === "number" ? timeOffMinDays : 14) : Math.max(0, Math.min(120, parsed));
                 await db.collection("ops").doc("scheduleSettings").set({
                     closeTime: tempCloseTime, timeOffMinDays: days,
                     shiftRemindersEnabled: remCfg.master,
@@ -5458,7 +5460,7 @@
 
             const submitTimeOff = async () => {
                 if(!toStartDate||!toEndDate)return;
-                if (!mgrAccess && toStartDate < toMinDate) {
+                if (!ownerAccess && toStartDate < toMinDate) {
                     window.showToast(language === "es"
                         ? "Las solicitudes deben ser con " + toLeadLabel + " de anticipación (a partir del " + toMinDisplay + ")"
                         : "Requests must be at least " + toLeadLabel + " out (on or after " + toMinDisplay + ")", "error", 5000);
