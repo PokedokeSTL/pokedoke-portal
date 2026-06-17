@@ -4756,6 +4756,13 @@
                 : timeOffMinDays + " " + (language === "es" ? "días" : "days");
             const DAYS = language==="es"?["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]:["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
             const DAY_KEYS = ["mon","tue","wed","thu","fri","sat","sun"];
+            // Role dropdown options, derived from the roles your staff actually have (plus any existing custom value so editing never loses it)
+            const roleOpts = (cur) => {
+                const set = Array.from(new Set((staffList || []).map(s => s.role).filter(Boolean)));
+                set.sort();
+                if (cur && !set.includes(cur)) set.unshift(cur);
+                return set;
+            };
             const LOCATIONS = [{id:"cwe",name:"Central West End"},{id:"kirkwood",name:"Kirkwood"}];
 
             const staffRecord = staffList.find(s => s.name === staffName);
@@ -6277,7 +6284,10 @@
                                                         <input type="checkbox" checked={newShiftIsBD} onChange={e=>setNewShiftIsBD(e.target.checked)} className="w-4 h-4"/>
                                                         <span className={"text-xs font-bold "+(newShiftIsBD?"text-yellow-800":"text-gray-600")}>📉 BD — {language==="es"?"puede ser liberado temprano":"may be cut early if slow"}</span>
                                                     </label>
-                                                    <input type="text" value={newShiftRole} onChange={e=>setNewShiftRole(e.target.value)} placeholder={language==="es"?"Rol / Estación":"Role / Station"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
+                                                    <select value={newShiftRole} onChange={e=>setNewShiftRole(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white">
+                                                        <option value="">{language==="es"?"Rol / Estación…":"Role / Station…"}</option>
+                                                        {roleOpts(newShiftRole).map(r=> <option key={r} value={r}>{r}</option>)}
+                                                    </select>
                                                     <input type="text" value={newShiftNotes} onChange={e=>setNewShiftNotes(e.target.value)} placeholder={language==="es"?"Notas (ej: día de entrenamiento)":"Notes (e.g., training day)"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
                                                     <div className="flex gap-2">
                                                         <button onClick={()=>{if(newShiftEmp)saveShift(dayKey,newShiftEmp,newShiftStart,newShiftEnd,newShiftRole,newShiftNotes,newShiftIsBD);}} disabled={!newShiftEmp} className={"flex-1 py-2 rounded-xl text-sm font-bold "+(newShiftEmp?"bg-green-600 text-white":"bg-gray-200 text-gray-400")}>{language==="es"?"Agregar":"Add"}</button>
@@ -6369,7 +6379,10 @@
 
                                         <div>
                                             <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Rol":"Role"}</label>
-                                            <input type="text" value={newShiftRole} onChange={e=>setNewShiftRole(e.target.value)} placeholder={language==="es"?"Línea, Lavaplatos, etc.":"Line Server, Dishwasher, etc."} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                            <select value={newShiftRole} onChange={e=>setNewShiftRole(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}>
+                                                <option value="">{language==="es"?"Selecciona rol…":"Select role…"}</option>
+                                                {roleOpts(newShiftRole).map(r=> <option key={r} value={r}>{r}</option>)}
+                                            </select>
                                         </div>
 
                                         <div>
@@ -6543,7 +6556,10 @@
 
                                     <div>
                                         <label className="text-xs font-bold" style={{color: "var(--text-secondary)"}}>{language==="es"?"Rol":"Role"}</label>
-                                        <input type="text" value={editRole} onChange={e=>setEditRole(e.target.value)} placeholder={language==="es"?"Línea, Lavaplatos, etc.":"Line Server, Dishwasher, etc."} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
+                                        <select value={editRole} onChange={e=>setEditRole(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}>
+                                            <option value="">{language==="es"?"Selecciona rol…":"Select role…"}</option>
+                                            {roleOpts(editRole).map(r=> <option key={r} value={r}>{r}</option>)}
+                                        </select>
                                     </div>
 
                                     <div>
