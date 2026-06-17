@@ -12818,6 +12818,700 @@
         }
         // =================== END HR / HIRING MODULE ===================
 
+        // ===== Personnel Records: per-employee documentation, coaching & disciplinary =====
+        function PersonnelRecords({ language, staffName, staffList }) {
+            const L = (en, es) => language === "es" ? es : en;
+            const ownerAccess = isOwner(staffName);
+            const myLoc = (staffList.find(s => s.name === staffName) || {}).location || "all";
+            const canSeeAll = ownerAccess || myLoc === "all";
+
+            const [employees, setEmployees] = useState([]);
+            const [records, setRecords] = useState([]);
+            const [selectedEmp, setSelectedEmp] = useState(null);
+            const [search, setSearch] = useState("");
+            const [showInactive, setShowInactive] = useState(false);
+            const [showForm, setShowForm] = useState(false);
+            const [saving, setSaving] = useState(false);
+            const [uploadMsg, setUploadMsg] = useState("");
+            const [ackFor, setAckFor] = useState(null);
+            const [ackPin, setAckPin] = useState("");
+            const [viewRec, setViewRec] = useState(null);
+            const fileRef = useRef(null);
+            const [pendingFiles, setPendingFiles] = useState([]);
+
+            const TYPES = [
+                { id: "coaching",    icon: "💬", en: "Coaching",          es: "Asesoría",            color: "#0891b2", bg: "#ecfeff", disc: false },
+                { id: "kudos",       icon: "⭐", en: "Recognition",        es: "Reconocimiento",      color: "#16a34a", bg: "#f0fdf4", disc: false },
+                { id: "note",        icon: "📌", en: "Performance Note",   es: "Nota de Desempeño",   color: "#7c3aed", bg: "#f5f3ff", disc: false },
+                { id: "verbal",      icon: "🗣️", en: "Verbal Warning",     es: "Advertencia Verbal",  color: "#d97706", bg: "#fffbeb", disc: true },
+                { id: "written",     icon: "📝", en: "Written Warning",    es: "Advertencia Escrita", color: "#ea580c", bg: "#fff7ed", disc: true },
+                { id: "final",       icon: "🛑", en: "Final Warning",      es: "Advertencia Final",   color: "#dc2626", bg: "#fef2f2", disc: true },
+                { id: "termination", icon: "🚪", en: "Termination",        es: "Despido",             color: "#991b1b", bg: "#fef2f2", disc: true },
+                { id: "document",    icon: "📎", en: "Document / Other",   es: "Documento / Otro",    color: "#475569", bg: "#f8fafc", disc: false },
+            ];
+            const typeMeta = id => TYPES.find(t => t.id === id) || TYPES[TYPES.length - 1];
+            const isDisc = id => typeMeta(id).disc;
+
+            const blankForm = { type: "coaching", date: window.fmtLocalDate(), title: "", details: "", policyRef: "", actionPlan: "", consequences: "", followUpDate: "", employeeStatement: "" };
+            const [form, setForm] = useState(blankForm);
+
+            useEffect(() => {
+                const u = db.collection("employees").onSnapshot(snap => setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+                return () => u();
+            }, []);
+            useEffect(() => {
+                const u = db.collection("personnelRecords").orderBy("createdAt", "desc").onSnapshot(snap => setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+                return () => u();
+            }, []);
+
+            const visibleEmps = employees
+                .filter(e => ownerAccess ? true : !isOwner(e.name))            // managers can't open owner files
+                .filter(e => canSeeAll ? true : (e.location === myLoc))        // managers: own location only
+                .filter(e => showInactive ? true : e.status !== "inactive")
+                .filter(e => !search || (e.name || "").toLowerCase().includes(search.toLowerCase()))
+                .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+            const recsFor = emp => records.filter(r => emp && (r.employeeId === emp.id || r.employee === emp.name));
+            const empRecords = selectedEmp
+                ? recsFor(selectedEmp).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || "").localeCompare(a.createdAt || ""))
+                : [];
+
+            const openForm = () => { setForm({ ...blankForm, date: window.fmtLocalDate() }); setPendingFiles([]); setUploadMsg(""); setShowForm(true); };
+
+            const saveRecord = async () => {
+                if (!selectedEmp) return;
+                if (!form.title.trim() || !form.details.trim()) {
+                    window.showToast(L("Add a subject and details", "Agrega asunto y detalles"), "error"); return;
+                }
+                setSaving(true);
+                try {
+                    const rec = {
+                        employeeId: selectedEmp.id, employee: selectedEmp.name, location: selectedEmp.location || myLoc,
+                        type: form.type, date: form.date, title: form.title.trim(), details: form.details.trim(),
+                        policyRef: form.policyRef.trim(), actionPlan: form.actionPlan.trim(),
+                        consequences: form.consequences.trim(), followUpDate: form.followUpDate,
+                        employeeStatement: form.employeeStatement.trim(),
+                        author: staffName, createdAt: new Date().toISOString(),
+                        ack: { signed: false }, attachments: []
+                    };
+                    const docRef = await db.collection("personnelRecords").add(rec);
+                    if (pendingFiles.length) {
+                        const urls = [];
+                        for (let i = 0; i < pendingFiles.length; i++) {
+                            const f = pendingFiles[i];
+                            setUploadMsg(L("Uploading", "Subiendo") + " " + (i + 1) + "/" + pendingFiles.length + "…");
+                            const path = "personnelRecords/" + docRef.id + "/" + Date.now() + "_" + f.name.replace(/[^\w.\-]/g, "_");
+                            const snap = await storage.ref().child(path).put(f);
+                            const url = await snap.ref.getDownloadURL();
+                            urls.push({ name: f.name, url, uploadedAt: new Date().toISOString() });
+                        }
+                        await docRef.update({ attachments: urls });
+                    }
+                    setShowForm(false); setForm(blankForm); setPendingFiles([]); setUploadMsg("");
+                    window.showToast(L("Record saved", "Registro guardado"), "success");
+                } catch (e) {
+                    setUploadMsg("");
+                    window.showToast(L("Error saving record", "Error al guardar"), "error");
+                }
+                setSaving(false);
+            };
+
+            const submitAck = async () => {
+                if (!ackFor) return;
+                const emp = employees.find(e => e.id === ackFor.employeeId) || selectedEmp || {};
+                const empPin = emp.pin || (staffList.find(s => s.name === ackFor.employee) || {}).pin;
+                if (!empPin || ackPin !== empPin) {
+                    window.showToast(L("PIN doesn't match this employee", "El PIN no coincide con el empleado"), "error"); return;
+                }
+                await db.collection("personnelRecords").doc(ackFor.id).update({
+                    ack: { signed: true, signedAt: new Date().toISOString(), method: "pin", name: ackFor.employee }
+                });
+                setAckFor(null); setAckPin("");
+                window.showToast(L("Acknowledged by employee", "Reconocido por el empleado"), "success");
+            };
+
+            const deleteRecord = async (rec) => {
+                const ok = await window.askConfirm({
+                    title: L("Delete this record?", "¿Eliminar este registro?"),
+                    body: L("This permanently removes the documentation. This can't be undone.", "Esto elimina la documentación permanentemente. No se puede deshacer."),
+                    danger: true
+                });
+                if (!ok) return;
+                await db.collection("personnelRecords").doc(rec.id).delete();
+                setViewRec(null);
+                window.showToast(L("Record deleted", "Registro eliminado"), "success");
+            };
+
+            const locLabel = l => l === "cwe" ? "CWE" : l === "kirkwood" ? "Kirkwood" : l === "all" ? L("All", "Todas") : (l || "");
+            const fmtDate = d => d ? new Date(d + "T12:00:00").toLocaleDateString(language === "es" ? "es-ES" : "en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+
+            // ---------- EMPLOYEE DETAIL ----------
+            if (selectedEmp) {
+                const m = selectedEmp;
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <button onClick={() => setSelectedEmp(null)} className="text-sm text-poke-600 font-bold mb-3">← {L("All employees", "Todos los empleados")}</button>
+                        <div className="card p-4 mb-3">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <h2 className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>{m.name}</h2>
+                                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{m.role || ""} · {locLabel(m.location)}{m.status === "inactive" ? " · " + L("Inactive", "Inactivo") : ""}</p>
+                                </div>
+                                <span className="text-xs font-bold px-2 py-1 rounded-full" style={m.status === "inactive" ? { background: "#f3f4f6", color: "#6b7280" } : { background: "#dcfce7", color: "#166534" }}>{m.status === "inactive" ? L("Inactive", "Inactivo") : L("Active", "Activo")}</span>
+                            </div>
+                            <button onClick={openForm} className="mt-3 w-full py-2.5 bg-poke-600 text-white rounded-xl text-sm font-bold active:scale-95">＋ {L("New entry", "Nueva entrada")}</button>
+                        </div>
+
+                        <p className="font-bold text-sm mb-2" style={{ color: "var(--text-primary)" }}>📂 {L("Documentation history", "Historial de documentación")} ({empRecords.length})</p>
+                        {empRecords.length === 0 ? (
+                            <p className="text-center text-sm py-8" style={{ color: "var(--text-muted)" }}>{L("No records yet", "Sin registros")}</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {empRecords.map(r => { const tm = typeMeta(r.type); return (
+                                    <button key={r.id} onClick={() => setViewRec(r)} className="w-full text-left card p-3 active:scale-[0.99]">
+                                        <div className="flex justify-between items-start gap-2">
+                                            <div className="min-w-0">
+                                                <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: tm.bg, color: tm.color }}>{tm.icon} {L(tm.en, tm.es)}</span>
+                                                <p className="font-semibold text-sm mt-1 truncate" style={{ color: "var(--text-primary)" }}>{r.title}</p>
+                                                <p className="text-xs" style={{ color: "var(--text-muted)" }}>{fmtDate(r.date)} · {r.author}</p>
+                                            </div>
+                                            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                                {r.attachments && r.attachments.length > 0 && <span className="text-xs" style={{ color: "var(--text-muted)" }}>📎 {r.attachments.length}</span>}
+                                                {isDisc(r.type) && (r.ack && r.ack.signed
+                                                    ? <span className="text-[11px] font-bold text-green-600">✓ {L("Signed", "Firmado")}</span>
+                                                    : <span className="text-[11px] font-bold text-amber-600">{L("Unsigned", "Sin firmar")}</span>)}
+                                            </div>
+                                        </div>
+                                    </button>
+                                ); })}
+                            </div>
+                        )}
+
+                        {/* ---- New entry form ---- */}
+                        {showForm && (
+                            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => !saving && setShowForm(false)}>
+                                <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                                    <div className="p-4 border-b sticky top-0 bg-white flex justify-between items-center">
+                                        <p className="font-bold" style={{ color: "var(--text-primary)" }}>{L("New entry for", "Nueva entrada para")} {m.name}</p>
+                                        <button onClick={() => !saving && setShowForm(false)} className="text-2xl" style={{ color: "var(--text-muted)" }}>×</button>
+                                    </div>
+                                    <div className="p-4 space-y-3">
+                                        <div>
+                                            <label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Type", "Tipo")}</label>
+                                            <div className="grid grid-cols-2 gap-2 mt-1">
+                                                {TYPES.map(t => (
+                                                    <button key={t.id} onClick={() => setForm(f => ({ ...f, type: t.id }))} className={"py-2 px-2 rounded-xl text-xs font-bold border text-left " + (form.type === t.id ? "ring-2 ring-poke-500" : "")} style={{ background: t.bg, color: t.color, borderColor: form.type === t.id ? t.color : "transparent" }}>{t.icon} {L(t.en, t.es)}</button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div><label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Date", "Fecha")}</label><input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm mt-1" /></div>
+                                            <div><label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Follow-up date", "Fecha de seguimiento")}</label><input type="date" value={form.followUpDate} onChange={e => setForm(f => ({ ...f, followUpDate: e.target.value }))} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm mt-1" /></div>
+                                        </div>
+                                        <div><label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Subject", "Asunto")}</label><input type="text" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder={L("e.g. Late arrivals, register shortage", "ej. Llegadas tarde, faltante de caja")} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm mt-1" /></div>
+                                        <div><label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("What happened / details", "Qué pasó / detalles")}</label><textarea value={form.details} onChange={e => setForm(f => ({ ...f, details: e.target.value }))} rows={4} placeholder={L("Describe the situation factually — dates, times, specifics.", "Describe la situación con hechos — fechas, horas, detalles.")} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm mt-1" /></div>
+                                        <div><label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Policy referenced (optional)", "Política referida (opcional)")}</label><input type="text" value={form.policyRef} onChange={e => setForm(f => ({ ...f, policyRef: e.target.value }))} placeholder={L("e.g. Attendance, Standards of Conduct #18", "ej. Asistencia, Normas de Conducta #18")} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm mt-1" /></div>
+                                        <div><label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{isDisc(form.type) ? L("Expected improvement / action plan", "Mejora esperada / plan de acción") : L("Goals / next steps (optional)", "Metas / próximos pasos (opcional)")}</label><textarea value={form.actionPlan} onChange={e => setForm(f => ({ ...f, actionPlan: e.target.value }))} rows={2} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm mt-1" /></div>
+                                        {isDisc(form.type) && (
+                                            <div><label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Consequences if not corrected", "Consecuencias si no se corrige")}</label><textarea value={form.consequences} onChange={e => setForm(f => ({ ...f, consequences: e.target.value }))} rows={2} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm mt-1" /></div>
+                                        )}
+                                        <div><label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Employee statement (optional)", "Declaración del empleado (opcional)")}</label><textarea value={form.employeeStatement} onChange={e => setForm(f => ({ ...f, employeeStatement: e.target.value }))} rows={2} placeholder={L("The employee's side, in their words.", "La versión del empleado, en sus palabras.")} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm mt-1" /></div>
+                                        <div>
+                                            <label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Attachments (optional)", "Adjuntos (opcional)")}</label>
+                                            <input ref={fileRef} type="file" multiple className="hidden" onChange={e => setPendingFiles(Array.from(e.target.files || []))} />
+                                            <button onClick={() => fileRef.current && fileRef.current.click()} className="mt-1 w-full py-2 border border-dashed border-gray-300 rounded-xl text-sm text-gray-500">📎 {pendingFiles.length ? (pendingFiles.length + " " + L("file(s) selected", "archivo(s) seleccionados")) : L("Attach photos or documents", "Adjuntar fotos o documentos")}</button>
+                                        </div>
+                                        <button onClick={saveRecord} disabled={saving} className="w-full py-3 bg-poke-600 text-white rounded-xl font-bold text-sm active:scale-95" style={{ opacity: saving ? 0.6 : 1 }}>{saving ? (uploadMsg || L("Saving…", "Guardando…")) : L("Save record", "Guardar registro")}</button>
+                                        <p className="text-[11px] text-center" style={{ color: "var(--text-muted)" }}>{L("After saving, hand the device to the employee to acknowledge with their PIN.", "Después de guardar, entrega el dispositivo al empleado para que confirme con su PIN.")}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ---- Record detail ---- */}
+                        {viewRec && (() => { const tm = typeMeta(viewRec.type); return (
+                            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => setViewRec(null)}>
+                                <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                                    <div className="p-4 border-b sticky top-0 bg-white flex justify-between items-center">
+                                        <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: tm.bg, color: tm.color }}>{tm.icon} {L(tm.en, tm.es)}</span>
+                                        <button onClick={() => setViewRec(null)} className="text-2xl" style={{ color: "var(--text-muted)" }}>×</button>
+                                    </div>
+                                    <div className="p-4 space-y-3 text-sm" style={{ color: "var(--text-primary)" }}>
+                                        <div><p className="font-bold text-base">{viewRec.title}</p><p className="text-xs" style={{ color: "var(--text-muted)" }}>{fmtDate(viewRec.date)} · {viewRec.employee} · {L("by", "por")} {viewRec.author}</p></div>
+                                        <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Details", "Detalles")}</p><p className="whitespace-pre-wrap">{viewRec.details}</p></div>
+                                        {viewRec.policyRef && <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Policy", "Política")}</p><p>{viewRec.policyRef}</p></div>}
+                                        {viewRec.actionPlan && <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Action plan", "Plan de acción")}</p><p className="whitespace-pre-wrap">{viewRec.actionPlan}</p></div>}
+                                        {viewRec.consequences && <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Consequences", "Consecuencias")}</p><p className="whitespace-pre-wrap">{viewRec.consequences}</p></div>}
+                                        {viewRec.followUpDate && <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Follow-up", "Seguimiento")}</p><p>{fmtDate(viewRec.followUpDate)}</p></div>}
+                                        {viewRec.employeeStatement && <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Employee statement", "Declaración del empleado")}</p><p className="whitespace-pre-wrap italic">"{viewRec.employeeStatement}"</p></div>}
+                                        {viewRec.attachments && viewRec.attachments.length > 0 && (
+                                            <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Attachments", "Adjuntos")}</p>
+                                                <div className="space-y-1 mt-1">{viewRec.attachments.map((a, i) => <a key={i} href={a.url} target="_blank" rel="noreferrer" className="block text-poke-600 underline text-sm truncate">📎 {a.name}</a>)}</div>
+                                            </div>
+                                        )}
+                                        <div className="rounded-xl p-3" style={{ background: viewRec.ack && viewRec.ack.signed ? "#f0fdf4" : "#fffbeb" }}>
+                                            {viewRec.ack && viewRec.ack.signed ? (
+                                                <p className="text-xs font-bold text-green-700">✓ {L("Acknowledged by", "Reconocido por")} {viewRec.ack.name} · {new Date(viewRec.ack.signedAt).toLocaleString(language === "es" ? "es-ES" : "en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</p>
+                                            ) : (
+                                                <div>
+                                                    <p className="text-xs font-bold text-amber-700 mb-2">{L("Not yet acknowledged by the employee.", "Aún no reconocido por el empleado.")}</p>
+                                                    <button onClick={() => { setAckFor(viewRec); setAckPin(""); }} className="w-full py-2 bg-amber-500 text-white rounded-xl text-xs font-bold">✍️ {L("Employee acknowledge (enter PIN)", "El empleado confirma (ingresar PIN)")}</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {ownerAccess && <button onClick={() => deleteRecord(viewRec)} className="w-full py-2 border border-red-200 text-red-600 rounded-xl text-xs font-bold">🗑️ {L("Delete record", "Eliminar registro")}</button>}
+                                    </div>
+                                </div>
+                            </div>
+                        ); })()}
+
+                        {/* ---- Acknowledgment PIN ---- */}
+                        {ackFor && (
+                            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.6)" }} onClick={() => setAckFor(null)}>
+                                <div className="bg-white rounded-2xl p-5 w-full max-w-xs" onClick={e => e.stopPropagation()}>
+                                    <p className="font-bold text-center mb-1" style={{ color: "var(--text-primary)" }}>{L("Employee acknowledgment", "Reconocimiento del empleado")}</p>
+                                    <p className="text-xs text-center mb-3" style={{ color: "var(--text-muted)" }}>{L("Hand the device to", "Entrega el dispositivo a")} {ackFor.employee}. {L("Acknowledging confirms they discussed and received this — it is not necessarily agreement.", "Confirmar indica que lo discutieron y recibieron — no necesariamente que estén de acuerdo.")}</p>
+                                    <input type="password" inputMode="numeric" value={ackPin} onChange={e => setAckPin(e.target.value)} placeholder={L("Enter your PIN", "Ingresa tu PIN")} className="w-full px-3 py-3 border border-gray-200 rounded-xl text-center text-lg tracking-widest mb-3" />
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setAckFor(null)} className="flex-1 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold">{L("Cancel", "Cancelar")}</button>
+                                        <button onClick={submitAck} className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold">{L("Acknowledge", "Confirmar")}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+
+            // ---------- EMPLOYEE LIST ----------
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>📂 {L("Personnel Records", "Expedientes")}</h2>
+                    <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>{L("Coaching, write-ups, and documentation per employee.", "Asesorías, amonestaciones y documentación por empleado.")}{!canSeeAll ? " " + L("(Your location)", "(Tu ubicación)") : ""}</p>
+                    <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder={L("Search employees…", "Buscar empleados…")} className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm mb-2" />
+                    <label className="flex items-center gap-2 text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+                        <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} /> {L("Show inactive / former employees", "Mostrar empleados inactivos / anteriores")}
+                    </label>
+                    {visibleEmps.length === 0 ? (
+                        <p className="text-center text-sm py-8" style={{ color: "var(--text-muted)" }}>{L("No employees found", "Sin empleados")}</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {visibleEmps.map(e => {
+                                const rs = recsFor(e);
+                                const last = rs.slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
+                                const unsigned = rs.filter(r => isDisc(r.type) && !(r.ack && r.ack.signed)).length;
+                                return (
+                                    <button key={e.id} onClick={() => setSelectedEmp(e)} className="w-full text-left card p-3 flex justify-between items-center active:scale-[0.99]">
+                                        <div className="min-w-0">
+                                            <p className={"font-semibold text-sm " + (e.status === "inactive" ? "text-gray-400" : "")} style={e.status !== "inactive" ? { color: "var(--text-primary)" } : undefined}>{e.name}{e.status === "inactive" ? " · " + L("inactive", "inactivo") : ""}</p>
+                                            <p className="text-xs" style={{ color: "var(--text-muted)" }}>{(e.role || "")} · {locLabel(e.location)} · {rs.length} {L("record(s)", "registro(s)")}{last ? " · " + L("last", "último") + " " + fmtDate(last.date) : ""}</p>
+                                        </div>
+                                        {unsigned > 0 && <span className="text-[11px] font-bold px-2 py-1 rounded-full flex-shrink-0" style={{ background: "#fef3c7", color: "#92400e" }}>{unsigned} {L("unsigned", "sin firmar")}</span>}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // ===== Employee Handbook / Policies (owner-editable, staff acknowledge) =====
+        const HANDBOOK_SEED = [
+            { id: "welcome", title: "Welcome", titleEs: "Bienvenida", body:
+`Welcome to PokeDoke! We're glad you're here. Our success in serving great food and taking care of our guests depends on quality people like you. This handbook answers common questions about PokeDoke and our policies. It's a guide, not a contract. Please read it thoroughly, and ask a manager if anything is unclear.
+
+— The Shih Family`, bodyEs:
+`¡Bienvenido a PokeDoke! Nos alegra tenerte aquí. Nuestro éxito al servir buena comida y cuidar a nuestros clientes depende de gente de calidad como tú. Este manual responde preguntas comunes sobre PokeDoke y nuestras políticas. Es una guía, no un contrato. Por favor léelo con atención y pregunta a un gerente si algo no queda claro.
+
+— La Familia Shih` },
+            { id: "about", title: "About This Handbook & At-Will Employment", titleEs: "Acerca de este Manual y Empleo a Voluntad", body:
+`This handbook helps you understand how we operate. Policies may change from time to time. This handbook is NOT a contract and does not guarantee employment for any length of time. Either you or PokeDoke may end the employment relationship at any time, for any reason, with or without cause or notice (at-will employment). No manager or representative — other than an owner (Steve, Annie, or Leon Shih) — has authority to make any agreement for employment for a specified period or any promise that changes this at-will status, and any such agreement must be in writing. This handbook supersedes any prior handbooks or policies. Nothing in it — including any discipline it describes — changes your at-will status; discipline is at the company's discretion and we may skip steps as we see fit.`, bodyEs:
+`Este manual te ayuda a entender cómo operamos. Las políticas pueden cambiar de vez en cuando. Este manual NO es un contrato y no garantiza empleo por ningún período. Tanto tú como PokeDoke pueden terminar la relación laboral en cualquier momento, por cualquier motivo, con o sin causa y con o sin aviso (empleo a voluntad). Ningún gerente o representante —salvo un dueño (Steve, Annie o Leon Shih)— tiene autoridad para hacer un acuerdo de empleo por un período determinado ni una promesa que cambie esta condición de empleo a voluntad, y cualquier acuerdo así debe constar por escrito. Este manual reemplaza cualquier manual o política anterior. Nada en él —incluida cualquier disciplina que describa— cambia tu condición de empleo a voluntad; la disciplina queda a discreción de la empresa y podemos omitir pasos según lo consideremos.` },
+            { id: "hiring", title: "Hiring & Work Authorization", titleEs: "Contratación y Autorización de Empleo", body:
+`PokeDoke hires only those legally authorized to work in the United States. As required by law, you must provide documents establishing identity and work authorization and complete Form I-9 within three (3) business days of your hire date. Information provided must be valid and authentic; if a document is later found invalid, the law may require termination.`, bodyEs:
+`PokeDoke contrata únicamente a personas legalmente autorizadas para trabajar en los Estados Unidos. Como lo exige la ley, debes proporcionar documentos que establezcan tu identidad y autorización de trabajo y completar el Formulario I-9 dentro de los tres (3) días hábiles posteriores a tu fecha de contratación. La información debe ser válida y auténtica; si un documento resulta inválido, la ley puede requerir la terminación del empleo.` },
+            { id: "eeo", title: "Equal Opportunity & Non-Discrimination", titleEs: "Igualdad de Oportunidades y No Discriminación", body:
+`PokeDoke is an equal opportunity employer. We do not tolerate discrimination based on race, color, sex, age, national origin, religion, sexual orientation, gender identity, disability, pregnancy, or any other legally protected characteristic. Employment decisions (hiring, promotion, pay, training, discipline) are made for legitimate business reasons based on qualifications and other non-discriminatory factors.`, bodyEs:
+`PokeDoke es un empleador que ofrece igualdad de oportunidades. No toleramos la discriminación por raza, color, sexo, edad, origen nacional, religión, orientación sexual, identidad de género, discapacidad, embarazo ni ninguna otra característica protegida por la ley. Las decisiones de empleo (contratación, ascensos, pago, capacitación, disciplina) se toman por razones legítimas de negocio, basadas en calificaciones y otros factores no discriminatorios.` },
+            { id: "accommodation", title: "Reasonable Accommodation", titleEs: "Adaptaciones Razonables", body:
+`PokeDoke provides reasonable accommodations for employees' disabilities, sincerely held religious practices, and pregnancy or related conditions, where doing so does not cause undue hardship. If you need an accommodation, let a manager or an owner know — you don't need to share medical details beyond what's necessary — and we'll work with you in good faith.`, bodyEs:
+`PokeDoke ofrece adaptaciones razonables para discapacidades, prácticas religiosas sinceras y embarazo o condiciones relacionadas, siempre que no causen una dificultad excesiva. Si necesitas una adaptación, infórmaselo a un gerente o a un dueño —no necesitas compartir detalles médicos más allá de lo necesario— y trabajaremos contigo de buena fe.` },
+            { id: "age", title: "Age & Child-Labor Compliance", titleEs: "Edad y Cumplimiento de Trabajo Infantil", body:
+`PokeDoke complies with all federal and Missouri child-labor and wage-and-hour laws. Some duties and equipment have minimum-age requirements, and required work permits must be provided where applicable. [Owners: confirm whether you hire under-18 staff and adjust this section — including any minor break rules — accordingly.]`, bodyEs:
+`PokeDoke cumple con todas las leyes federales y de Missouri sobre trabajo de menores y sobre salarios y horas. Algunas tareas y equipos tienen requisitos de edad mínima, y se deben presentar los permisos de trabajo requeridos cuando apliquen. [Dueños: confirmen si contratan a menores de 18 años y ajusten esta sección —incluidas las reglas de descanso para menores— según corresponda.]` },
+            { id: "orientation", title: "Orientation Period & Evaluations", titleEs: "Período de Orientación y Evaluaciones", body:
+`New employees have an Orientation Period during which both you and PokeDoke determine whether the job is a good fit. During this time you'll train and be observed by management; please ask questions and seek help. After this period, employment continues on an at-will basis. All employees are continuously evaluated — feedback is given in real time, and written evaluations may be given periodically. Pay increases are based on performance and results and are not guaranteed. [Owners: confirm the orientation length — your prior handbook listed both "2 weeks" and "30 days." Pick one.]`, bodyEs:
+`Los nuevos empleados tienen un Período de Orientación durante el cual tú y PokeDoke determinan si el puesto es adecuado. Durante este tiempo te capacitarás y serás observado por la gerencia; por favor haz preguntas y pide ayuda. Después de este período, el empleo continúa siendo a voluntad. Todos los empleados son evaluados continuamente: la retroalimentación se da en tiempo real y las evaluaciones escritas pueden darse periódicamente. Los aumentos de pago se basan en el desempeño y los resultados y no están garantizados. [Dueños: confirmen la duración de la orientación; el manual anterior indicaba tanto "2 semanas" como "30 días". Elijan una.]` },
+            { id: "schedules", title: "Schedules & Time Off", titleEs: "Horarios y Tiempo Libre", body:
+`Schedules are built around the restaurant's needs and are posted weekly. Submit your availability and time-off requests through the staff portal (staff.pokedoke.com) by the posted deadline (currently Thursday before the next schedule). Time-off requests must be submitted at least the required number of days in advance (see the portal). You are responsible for working your shifts; arrive 5–10 minutes early and clock in at your shift start, ready to work. Schedule changes are allowed only if you arrange a replacement and get a manager's approval, recorded in the staff portal. We'll always try to accommodate requests, but time off is not guaranteed, especially around holidays and busy events.`, bodyEs:
+`Los horarios se elaboran según las necesidades del restaurante y se publican semanalmente. Envía tu disponibilidad y solicitudes de tiempo libre a través del portal del personal (staff.pokedoke.com) antes de la fecha límite publicada (actualmente el jueves antes del siguiente horario). Las solicitudes de tiempo libre deben enviarse con la anticipación mínima requerida (ver el portal). Eres responsable de cubrir tus turnos; llega de 5 a 10 minutos antes y marca tu entrada al inicio del turno, listo para trabajar. Los cambios de horario solo se permiten si consigues un reemplazo y obtienes la aprobación de un gerente, registrada en el portal. Siempre trataremos de acomodar las solicitudes, pero el tiempo libre no está garantizado, especialmente en días festivos y eventos concurridos.` },
+            { id: "overtime", title: "Overtime", titleEs: "Horas Extra", body:
+`In accordance with federal law, non-exempt employees are paid overtime at one and one-half times their regular rate for hours worked over 40 in a workweek.`, bodyEs:
+`De acuerdo con la ley federal, a los empleados no exentos se les paga tiempo extra a una tarifa de una vez y media su tarifa regular por las horas trabajadas que excedan de 40 en una semana laboral.` },
+            { id: "breaks", title: "Meal & Rest Breaks", titleEs: "Descansos para Comer y Descansar", body:
+`[Owners: confirm your actual break practice.] Missouri law does not require meal or rest breaks for adult employees. When breaks are provided, short rest breaks (generally under 20 minutes) are paid; bona fide meal periods (typically 30 minutes or more) during which you are fully relieved of duties are unpaid — clock out for those. If you employ workers under 16, additional break rules apply.`, bodyEs:
+`[Dueños: confirmen su práctica real de descansos.] La ley de Missouri no exige descansos para comer ni descansos breves para empleados adultos. Cuando se otorgan descansos, los descansos breves (generalmente de menos de 20 minutos) son pagados; los períodos de comida de buena fe (típicamente de 30 minutos o más) durante los cuales quedas totalmente libre de tus deberes no son pagados —marca tu salida durante esos. Si emplean a menores de 16 años, aplican reglas de descanso adicionales.` },
+            { id: "conduct", title: "Standards of Conduct", titleEs: "Normas de Conducta", body:
+`To keep an orderly, safe, and positive workplace, everyone must follow reasonable standards of conduct. Conduct including (but not limited to) the following may result in disciplinary action up to and including immediate termination:
+• Invalid work authorization (I-9).
+• Providing false or misleading information to PokeDoke.
+• No call / no show for a scheduled shift.
+• Clocking another employee in or out, or having someone clock you.
+• Leaving before your scheduled time without manager permission.
+• Theft or mishandling of customer, employee, or company property or funds; not following cash/card procedures.
+• Use of foul or abusive language; disorderly or indecent conduct.
+• Harassment of any kind toward a customer or employee.
+• Use, possession, distribution, or being under the influence of illegal drugs or alcohol at work (see Drug & Alcohol Policy).
+• Refusal to follow instructions; insubordination.
+• Threats or acts of violence.
+• Excessive tardiness (more than 15 minutes late) or habitual failure to clock in/out.
+• Disclosing confidential or proprietary information, including recipes.
+• Waste or destruction of company property.
+• Failing to follow cleanliness, grooming, uniform, or safety requirements.
+• Failure to report safety hazards, equipment defects, accidents, or injuries immediately.`, bodyEs:
+`Para mantener un lugar de trabajo ordenado, seguro y positivo, todos deben seguir normas razonables de conducta. Una conducta que incluya (pero no se limite a) lo siguiente puede resultar en acción disciplinaria hasta e incluyendo la terminación inmediata:
+• Autorización de trabajo inválida (I-9).
+• Proporcionar información falsa o engañosa a PokeDoke.
+• No llamar / no presentarse a un turno programado.
+• Marcar la entrada o salida de otro empleado, o que alguien marque por ti.
+• Irte antes de tu hora programada sin permiso de un gerente.
+• Robo o mal manejo de propiedad o fondos de clientes, empleados o de la empresa; no seguir los procedimientos de efectivo/tarjeta.
+• Uso de lenguaje grosero o abusivo; conducta desordenada o indecente.
+• Acoso de cualquier tipo hacia un cliente o empleado.
+• Uso, posesión, distribución o estar bajo la influencia de drogas ilegales o alcohol en el trabajo (ver Política de Drogas y Alcohol).
+• Negarse a seguir instrucciones; insubordinación.
+• Amenazas o actos de violencia.
+• Tardanza excesiva (más de 15 minutos tarde) o no marcar entrada/salida de forma habitual.
+• Divulgar información confidencial o propietaria, incluidas las recetas.
+• Desperdicio o destrucción de propiedad de la empresa.
+• No seguir los requisitos de limpieza, aseo personal, uniforme o seguridad.
+• No reportar de inmediato peligros de seguridad, defectos de equipo, accidentes o lesiones.` },
+            { id: "drug", title: "Drug & Alcohol Policy", titleEs: "Política de Drogas y Alcohol", body:
+`PokeDoke is committed to a safe, productive workplace and maintains a drug-free and alcohol-free workplace. Report to work fit for duty and free of the adverse effects of drugs or alcohol.
+
+• You may not use, possess, sell, or be under the influence of illegal drugs or alcohol while working, on company premises, or conducting company business.
+• Missouri has legalized medical and adult-use (recreational) marijuana. However, that does NOT permit being under the influence of marijuana at work. PokeDoke may still prohibit on-the-job use and impairment and may discipline employees who work while impaired. PokeDoke will not discriminate against an employee solely for their status as a registered medical-marijuana patient or for lawful off-duty use, but impairment or possession at work is not permitted.
+• Lawful use of prescribed medication is permitted; if a medication may affect your ability to work safely, consult your doctor and promptly disclose any work restrictions (not the underlying condition) to your supervisor.
+• Testing may be required on reasonable suspicion or following a workplace accident, applied consistently. [Owners: confirm your testing practices with counsel before relying on this section.]`, bodyEs:
+`PokeDoke está comprometido con un lugar de trabajo seguro y productivo, y mantiene un lugar de trabajo libre de drogas y alcohol. Preséntate a trabajar apto para tus funciones y libre de los efectos adversos de drogas o alcohol.
+
+• No puedes usar, poseer, vender ni estar bajo la influencia de drogas ilegales o alcohol mientras trabajas, estás en las instalaciones o realizas negocios de la empresa.
+• Missouri ha legalizado la marihuana medicinal y recreativa (para adultos). Sin embargo, esto NO permite estar bajo la influencia de marihuana en el trabajo. PokeDoke puede prohibir el uso y la intoxicación en el trabajo y disciplinar a los empleados que trabajen bajo sus efectos. PokeDoke no discriminará a un empleado únicamente por su condición de paciente registrado de marihuana medicinal ni por su uso legal fuera del trabajo, pero no se permite la intoxicación ni la posesión en el trabajo.
+• Se permite el uso legal de medicamentos recetados; si un medicamento puede afectar tu capacidad para trabajar de forma segura, consulta a tu médico y comunica con prontitud cualquier restricción laboral (no la condición médica) a tu supervisor.
+• Se pueden requerir pruebas por sospecha razonable o tras un accidente laboral, aplicadas de forma consistente. [Dueños: confirmen sus prácticas de pruebas con un abogado antes de basarse en esta sección.]` },
+            { id: "harassment", title: "Harassment & Sexual Harassment", titleEs: "Acoso y Acoso Sexual", body:
+`PokeDoke provides a workplace free of harassment of any kind. Harassment based on any legally protected characteristic — including unwelcome sexual advances, requests for sexual favors, offensive jokes or comments, unwanted touching, and offensive visual material — is prohibited and will result in discipline up to and including immediate termination. This applies to all employees and managers, and we will address harassment by guests or vendors as well.
+
+Reporting is everyone's responsibility. Report any conduct you believe may violate this policy — whether you experienced or witnessed it — as soon as possible. Report to the manager on duty; if that's not appropriate or there's no timely response, contact the [General Manager]; if still unresolved, contact an owner (Steve Shih). Reports can be made without fear of retaliation. Complaints are investigated promptly and kept as confidential as possible. Retaliation against anyone who reports or participates in an investigation is prohibited and itself grounds for discipline.`, bodyEs:
+`PokeDoke ofrece un lugar de trabajo libre de acoso de cualquier tipo. El acoso basado en cualquier característica protegida por la ley —incluidos avances sexuales no deseados, solicitudes de favores sexuales, bromas o comentarios ofensivos, contacto físico no deseado y material visual ofensivo— está prohibido y resultará en disciplina hasta e incluyendo la terminación inmediata. Esto aplica a todos los empleados y gerentes, y también abordaremos el acoso por parte de clientes o proveedores.
+
+Reportar es responsabilidad de todos. Reporta cualquier conducta que creas que pueda violar esta política —ya sea que la hayas vivido o presenciado— lo antes posible. Repórtalo al gerente en turno; si no es apropiado o no hay respuesta oportuna, contacta al [Gerente General]; si aún no se resuelve, contacta a un dueño (Steve Shih). Los reportes pueden hacerse sin temor a represalias. Las quejas se investigan con prontitud y se mantienen tan confidenciales como sea posible. Las represalias contra quien reporte o participe en una investigación están prohibidas y son por sí mismas motivo de disciplina.` },
+            { id: "absences", title: "Absences, Tardiness & Resignation", titleEs: "Ausencias, Tardanzas y Renuncia", body:
+`Employees are expected to work their scheduled hours. Excessive absenteeism or tardiness may result in discipline up to and including termination.
+• If you'll miss work, call and speak with a supervisor at least 2 hours before your shift. A no-call/no-show is treated as a voluntary resignation.
+• Submit planned time off through the staff portal as early as possible (see Schedules & Time Off).
+• Repeated tardiness is grounds for termination. Your scheduled time is when you must be ready to work, not when you arrive.
+• Resignation: we request two weeks' notice so we can plan. Giving proper notice keeps you eligible for rehire.`, bodyEs:
+`Se espera que los empleados trabajen sus horas programadas. El ausentismo o la tardanza excesivos pueden resultar en disciplina hasta e incluyendo la terminación.
+• Si vas a faltar, llama y habla con un supervisor al menos 2 horas antes de tu turno. No llamar/no presentarse se trata como una renuncia voluntaria.
+• Envía el tiempo libre planeado a través del portal del personal lo antes posible (ver Horarios y Tiempo Libre).
+• La tardanza repetida es motivo de terminación. Tu hora programada es cuando debes estar listo para trabajar, no cuando llegas.
+• Renuncia: pedimos un aviso de dos semanas para poder planear. Dar el aviso adecuado te mantiene elegible para ser recontratado.` },
+            { id: "health", title: "Employee Health & Food-Safety Reporting", titleEs: "Salud del Empleado y Reporte de Seguridad Alimentaria", body:
+`Food safety is everyone's responsibility. To protect our guests, tell a manager BEFORE your shift if you have any of these symptoms: vomiting, diarrhea, jaundice (yellowing of skin or eyes), sore throat with fever, or an open or infected cut or burn on your hands or arms that can't be properly covered. You must also report if you've been diagnosed with (or exposed to) Norovirus, Hepatitis A, Shigella, Shiga toxin-producing E. coli, or Salmonella. Depending on the symptom or illness, a manager may restrict your duties or send you home as required by the health code. Please don't come to work sick and handle food.`, bodyEs:
+`La seguridad alimentaria es responsabilidad de todos. Para proteger a nuestros clientes, avisa a un gerente ANTES de tu turno si tienes alguno de estos síntomas: vómito, diarrea, ictericia (color amarillo en la piel u ojos), dolor de garganta con fiebre, o una cortada o quemadura abierta o infectada en manos o brazos que no se pueda cubrir adecuadamente. También debes reportar si te han diagnosticado (o has estado expuesto a) Norovirus, Hepatitis A, Shigella, E. coli productora de toxina Shiga o Salmonella. Según el síntoma o la enfermedad, un gerente puede restringir tus tareas o enviarte a casa conforme lo exige el código sanitario. Por favor, no vengas a trabajar enfermo a manipular alimentos.` },
+            { id: "pay", title: "Pay, Tips & Final Paycheck", titleEs: "Pago, Propinas y Último Cheque", body:
+`Time clock: Clock in/out on the timekeeping system using your own ID/PIN only. Falsifying time records or clocking for someone else may result in termination.
+
+Tips: Tips are pooled and shared among tipped employees based on hours worked during the pay period, and are included with your paycheck.
+
+Paychecks: [Confirm current pay dates / direct deposit.] Your pay stub shows gross earnings and deductions (federal/state taxes, Social Security, Medicare) based on your W-4. Report address changes promptly for your W-2.
+
+Final paycheck (Missouri law): If PokeDoke ends your employment (involuntary termination), your final wages are due on your last day. If you resign, your final pay will be provided by the next regular payday.`, bodyEs:
+`Reloj de tiempo: Marca tu entrada/salida en el sistema usando solo tu propio ID/PIN. Falsificar registros de tiempo o marcar por otra persona puede resultar en terminación.
+
+Propinas: Las propinas se juntan y se reparten entre los empleados con propina según las horas trabajadas durante el período de pago, y se incluyen en tu cheque.
+
+Cheques: [Confirmen las fechas de pago actuales / depósito directo.] Tu recibo muestra los ingresos brutos y las deducciones (impuestos federales/estatales, Seguro Social, Medicare) según tu W-4. Reporta cambios de domicilio con prontitud para tu W-2.
+
+Último cheque (ley de Missouri): Si PokeDoke termina tu empleo (terminación involuntaria), tu pago final vence en tu último día. Si renuncias, tu pago final se entregará en el siguiente día de pago regular.` },
+            { id: "benefits", title: "Benefits", titleEs: "Beneficios", body:
+`Holidays: Due to the nature of the business you may be required to work holidays. We currently close for Thanksgiving Day, Christmas Day, and Easter.
+Workers' Compensation: Report any work injury — no matter how minor — to the manager on duty immediately, who will document what happened.
+Employee Meals: Employees receive a 50% discount on menu items during their shift (food only, for yourself).`, bodyEs:
+`Días festivos: Por la naturaleza del negocio, puede que tengas que trabajar en días festivos. Actualmente cerramos el Día de Acción de Gracias, Navidad y Pascua.
+Compensación al trabajador: Reporta cualquier lesión laboral —por menor que sea— de inmediato al gerente en turno, quien documentará lo sucedido.
+Comidas del empleado: Los empleados reciben un 50% de descuento en los artículos del menú durante su turno (solo comida, para ti).` },
+            { id: "vacation", title: "Paid Vacation / PTO", titleEs: "Vacaciones Pagadas / PTO", body:
+`Paid vacation is a discretionary benefit. Missouri does not require employers to provide paid vacation or paid sick leave, and PokeDoke offers it on the terms below.
+
+Eligibility — full-time only. Paid vacation is offered only to full-time employees. For vacation purposes, "full-time" means averaging at least 40 hours worked per week over the prior 12 months.
+
+Earning vacation. A full-time employee who has completed 12 months of continuous employment earns one week (40 hours) of paid vacation, measured at each work anniversary. Part-time employees — and anyone who did not average at least 40 hours per week over the prior 12 months — do not earn paid vacation for that period.
+
+Change in status. If your hours fall below the full-time average, you stop earning future vacation, but vacation you have already earned for the current year is not taken away.
+
+Use it within the year. Vacation must be used within the year it is earned and does not carry over to the next year.
+
+Vacation pay rate. A vacation week is paid at 40 hours times your regular hourly rate. It is based on your hourly rate only and does not include tips.
+
+Payout at separation. Unused vacation is not paid out when employment ends.
+
+Requesting vacation. Submit vacation requests through the staff portal at least 30 days in advance. Vacation may be limited during holidays and other peak periods and is subject to manager approval; we'll make reasonable efforts to honor requests, but business needs may require adjustments.`, bodyEs:
+`La vacación pagada es un beneficio discrecional. Missouri no exige que los empleadores ofrezcan vacaciones pagadas ni licencia por enfermedad pagada, y PokeDoke la ofrece según los términos a continuación.
+
+Elegibilidad — solo tiempo completo. La vacación pagada se ofrece únicamente a empleados de tiempo completo. Para efectos de vacaciones, "tiempo completo" significa promediar al menos 40 horas trabajadas por semana durante los 12 meses anteriores.
+
+Cómo se gana la vacación. Un empleado de tiempo completo que haya cumplido 12 meses de empleo continuo gana una semana (40 horas) de vacación pagada, calculada en cada aniversario de trabajo. Los empleados de medio tiempo —y cualquiera que no haya promediado al menos 40 horas por semana durante los 12 meses anteriores— no ganan vacación pagada por ese período.
+
+Cambio de estatus. Si tus horas bajan por debajo del promedio de tiempo completo, dejas de ganar vacación futura, pero la vacación que ya ganaste para el año en curso no se te quita.
+
+Úsala dentro del año. La vacación debe usarse dentro del año en que se gana y no se transfiere al siguiente año.
+
+Tarifa de pago de vacación. Una semana de vacación se paga como 40 horas por tu tarifa horaria regular. Se basa únicamente en tu tarifa horaria y no incluye propinas.
+
+Pago al terminar. La vacación no usada no se paga cuando termina el empleo.
+
+Solicitar vacación. Envía las solicitudes de vacación a través del portal del personal con al menos 30 días de anticipación. La vacación puede estar limitada durante días festivos y otros períodos de alta demanda y está sujeta a la aprobación del gerente; haremos esfuerzos razonables por conceder las solicitudes, pero las necesidades del negocio pueden requerir ajustes.` },
+            { id: "voting", title: "Voting Leave", titleEs: "Permiso para Votar", body:
+`Under Missouri law, if you don't have three consecutive non-working hours while the polls are open on an election day, you may take up to three hours of paid time off to vote, as long as you request it before election day. PokeDoke may specify which hours you take. Let a manager know in advance so we can arrange coverage.`, bodyEs:
+`Conforme a la ley de Missouri, si no tienes tres horas consecutivas fuera del trabajo mientras las urnas están abiertas el día de la elección, puedes tomar hasta tres horas pagadas para votar, siempre que lo solicites antes del día de la elección. PokeDoke puede indicar qué horas tomas. Avisa a un gerente con anticipación para organizar la cobertura.` },
+            { id: "jury", title: "Jury Duty", titleEs: "Servicio de Jurado", body:
+`If you're summoned for jury duty, tell your manager as soon as you receive the summons and bring documentation. We won't penalize, threaten, or retaliate against you for serving, and we won't require you to use vacation for it. [Owners: state whether jury duty is paid or unpaid — Missouri does not require employers to pay for jury leave.]`, bodyEs:
+`Si te citan para servicio de jurado, avisa a tu gerente en cuanto recibas la citación y trae la documentación. No te penalizaremos, amenazaremos ni tomaremos represalias por servir, y no te exigiremos usar tus vacaciones para ello. [Dueños: indiquen si el servicio de jurado es pagado o no — Missouri no exige que los empleadores paguen por esta licencia.]` },
+            { id: "military", title: "Military Leave", titleEs: "Licencia Militar", body:
+`PokeDoke complies with the federal USERRA law. Employees who serve in the uniformed services are entitled to unpaid military leave and to reemployment rights upon their return, in accordance with the law. Please notify management as far in advance as possible of upcoming service.`, bodyEs:
+`PokeDoke cumple con la ley federal USERRA. Los empleados que sirven en las fuerzas armadas tienen derecho a licencia militar no pagada y a derechos de reincorporación al regresar, conforme a la ley. Por favor avisa a la gerencia con la mayor anticipación posible sobre un servicio próximo.` },
+            { id: "social", title: "Social Media", titleEs: "Redes Sociales", body:
+`Enjoy your off-duty time, but be mindful that online activity can affect PokeDoke. Do not post content that harasses or creates a hostile environment for employees, discloses confidential or proprietary information (including recipes), or harms PokeDoke's reputation. Don't use company logos or trademarks without written consent, and don't discuss customers or partners without their consent. Use good judgment; ask a manager if unsure. Nothing in this policy is intended to restrict legally protected discussion of wages, hours, or working conditions.`, bodyEs:
+`Disfruta tu tiempo libre, pero ten presente que la actividad en línea puede afectar a PokeDoke. No publiques contenido que acose o cree un ambiente hostil para los empleados, que divulgue información confidencial o propietaria (incluidas las recetas), o que dañe la reputación de PokeDoke. No uses los logotipos o marcas de la empresa sin consentimiento por escrito, y no hables de clientes o socios sin su consentimiento. Usa buen juicio; pregunta a un gerente si tienes dudas. Nada en esta política pretende restringir la conversación legalmente protegida sobre salarios, horas o condiciones de trabajo.` },
+            { id: "expectations", title: "Service & Workplace Expectations", titleEs: "Expectativas de Servicio y de Trabajo", body:
+`Customers first. Our customers are the reason we're here — take care of them as a privilege, never an interruption.
+Handling complaints. Don't get defensive or explain the problem away. Remove the offending item, apologize, and fix it; involve a manager whenever you need to.
+Phones. Answer promptly and politely. Note that calls on company phones may be recorded.
+Meetings. Staff meetings count as a shift — attendance is mandatory and paid. Only management-approved absences are accepted.
+Teamwork. Help each other and pitch in across stations, whether a task is "yours" or not. It makes for a better shift and happier guests.
+Open door. If you have a work problem, complaint, or dispute, bring it to a manager or an owner (Steve, Annie, or Leon Shih). We take every concern seriously and will work to resolve it fairly.`, bodyEs:
+`Los clientes primero. Nuestros clientes son la razón por la que estamos aquí — atiéndelos como un privilegio, nunca como una interrupción.
+Manejo de quejas. No te pongas a la defensiva ni trates de justificar el problema. Retira el artículo en cuestión, ofrece una disculpa y resuélvelo; involucra a un gerente cuando lo necesites.
+Teléfonos. Contesta con prontitud y cortesía. Ten en cuenta que las llamadas en los teléfonos de la empresa pueden ser grabadas.
+Reuniones. Las reuniones de personal cuentan como un turno — la asistencia es obligatoria y pagada. Solo se aceptan ausencias aprobadas por la gerencia.
+Trabajo en equipo. Ayúdense unos a otros y colaboren en todas las estaciones, sea o no "tu" tarea. Hace que el turno sea mejor y los clientes estén más contentos.
+Puertas abiertas. Si tienes un problema, queja o disputa de trabajo, llévalo a un gerente o a un dueño (Steve, Annie o Leon Shih). Tomamos cada inquietud en serio y trabajaremos para resolverla de forma justa.` },
+            { id: "safety", title: "Safety, Sanitation & Dress Code", titleEs: "Seguridad, Higiene y Código de Vestimenta", body:
+`Safety: Wipe spills immediately; walk, don't run; wear non-slip closed-toe shoes; report defective equipment; never operate equipment you aren't trained on; use care with slicers and knives (wear cut-resistant gloves; never catch a falling knife); call out when carrying hot or sharp items; lift with your legs. Report all accidents to the manager on duty.
+
+Sanitation: Food safety is non-negotiable. Wash hands frequently (after the restroom, eating, touching your face/hair, coughing/sneezing); sanitize surfaces and utensils; prevent cross-contamination (store raw meats below ready-to-eat foods; raw poultry on the bottom shelf); keep cold foods below 41°F and hot foods above 140°F; keep chemicals away from food.
+
+Dress code: Clean, non-slip closed-toe shoes and clean socks; clean, well-fitting pants in good repair; PokeDoke-provided work shirts kept clean; clean, well-groomed hair pulled back; minimal cologne/jewelry; only PokeDoke-approved hats. Ask the manager on duty with any questions.`, bodyEs:
+`Seguridad: Limpia los derrames de inmediato; camina, no corras; usa zapatos antideslizantes de punta cerrada; reporta el equipo defectuoso; nunca operes equipo para el que no estés capacitado; ten cuidado con rebanadoras y cuchillos (usa guantes resistentes a cortes; nunca atrapes un cuchillo que cae); avisa cuando lleves objetos calientes o filosos; levanta con las piernas. Reporta todos los accidentes al gerente en turno.
+
+Higiene: La seguridad alimentaria no es negociable. Lávate las manos con frecuencia (después del baño, comer, tocarte la cara/cabello, toser/estornudar); sanitiza superficies y utensilios; evita la contaminación cruzada (guarda las carnes crudas debajo de los alimentos listos para comer; el pollo crudo en el estante inferior); mantén los alimentos fríos por debajo de 41°F y los calientes por encima de 140°F; mantén los químicos lejos de los alimentos.
+
+Código de vestimenta: Zapatos antideslizantes de punta cerrada limpios y calcetines limpios; pantalones limpios, bien ajustados y en buen estado; las camisas de trabajo de PokeDoke limpias; cabello limpio y arreglado, recogido; mínimo de perfume/joyería; solo gorras aprobadas por PokeDoke. Pregunta al gerente en turno si tienes dudas.` },
+            { id: "emergencies", title: "Accidents & Emergencies", titleEs: "Accidentes y Emergencias", body:
+`Report all accidents, however minor, to the manager on duty. In an emergency (injury, choking), notify a manager and call 911 first; anyone CPR-certified should assist.
+Robbery: Do NOT resist. The safety of employees and customers comes first — cooperate fully.
+Fire: Know the location of fire extinguishers and suppression systems. If the alarm sounds, help guests to the nearest exit and out of the building immediately.`, bodyEs:
+`Reporta todos los accidentes, por menores que sean, al gerente en turno. En una emergencia (lesión, asfixia), avisa a un gerente y llama al 911 primero; cualquier persona certificada en RCP debe ayudar.
+Robo: NO te resistas. La seguridad de empleados y clientes es lo primero; coopera plenamente.
+Incendio: Conoce la ubicación de los extintores y los sistemas de supresión. Si suena la alarma, ayuda a los clientes a salir por la salida más cercana de inmediato.` },
+            { id: "confidential", title: "Confidentiality, Solicitation & Cell Phones", titleEs: "Confidencialidad, Solicitación y Teléfonos", body:
+`Confidential & proprietary information: Our recipes, procedures, and business practices are valuable and confidential. Do not disclose them to anyone outside PokeDoke unless directed in writing by management. Protect customer payment information at all times.
+Solicitation: No solicitation or distribution of literature during working time. Non-employees may not solicit on company property.
+Cell phones: Non-management staff may not use personal cell phones while on the clock (calls, texting, music, internet). Limited emergency use requires manager permission and vibrate-only mode. Never use a phone for business while driving. Violations may result in discipline.`, bodyEs:
+`Información confidencial y propietaria: Nuestras recetas, procedimientos y prácticas de negocio son valiosas y confidenciales. No las divulgues a nadie fuera de PokeDoke a menos que la gerencia lo indique por escrito. Protege la información de pago de los clientes en todo momento.
+Solicitación: No se permite solicitar ni distribuir material durante el tiempo de trabajo. Las personas ajenas no pueden solicitar en la propiedad de la empresa.
+Teléfonos celulares: El personal que no es gerente no puede usar teléfonos personales mientras está en turno (llamadas, mensajes, música, internet). El uso limitado de emergencia requiere permiso del gerente y modo de solo vibración. Nunca uses el teléfono para asuntos de trabajo mientras conduces. Las violaciones pueden resultar en disciplina.` },
+            { id: "property", title: "Return of Company Property", titleEs: "Devolución de Propiedad de la Empresa", body:
+`Company property — uniforms, shirts, keys, fobs, and any equipment or materials issued to you — remains PokeDoke's property and must be returned on or before your last day. Where permitted by law, the cost of unreturned items may be deducted from your final pay, but never in an amount that would drop your wages below the minimum wage.`, bodyEs:
+`La propiedad de la empresa —uniformes, camisas, llaves, controles de acceso y cualquier equipo o material que se te haya entregado— sigue siendo propiedad de PokeDoke y debe devolverse en o antes de tu último día. Cuando la ley lo permita, el costo de los artículos no devueltos puede deducirse de tu pago final, pero nunca por un monto que reduzca tu salario por debajo del salario mínimo.` },
+            { id: "ack", title: "Acknowledgment", titleEs: "Reconocimiento", body:
+`By acknowledging this handbook, I confirm that I have received and read the PokeDoke Employee Handbook, understand the Standards of Conduct and the policies it contains, and agree to abide by them. I understand this handbook is not a contract, that my employment is at-will (either I or PokeDoke may end it at any time, with or without cause or notice), and that PokeDoke may change these policies at any time.`, bodyEs:
+`Al reconocer este manual, confirmo que he recibido y leído el Manual del Empleado de PokeDoke, entiendo las Normas de Conducta y las políticas que contiene, y acepto cumplirlas. Entiendo que este manual no es un contrato, que mi empleo es a voluntad (tanto yo como PokeDoke podemos terminarlo en cualquier momento, con o sin causa y con o sin aviso), y que PokeDoke puede cambiar estas políticas en cualquier momento.` },
+        ];
+
+        function Handbook({ language, staffName, staffList }) {
+            const L = (en, es) => language === "es" ? es : en;
+            const ownerAccess = isOwner(staffName);
+            const [doc, setDoc] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [acks, setAcks] = useState([]);
+            const [search, setSearch] = useState("");
+            const [openId, setOpenId] = useState(null);
+            const [edit, setEdit] = useState(false);
+            const [draft, setDraft] = useState(null);
+            const [showLog, setShowLog] = useState(false);
+            const [saving, setSaving] = useState(false);
+
+            useEffect(() => {
+                const u = db.collection("ops").doc("handbook").onSnapshot(d => { setDoc(d.exists ? d.data() : null); setLoading(false); });
+                return () => u();
+            }, []);
+            useEffect(() => {
+                const u = db.collection("handbookAck").onSnapshot(snap => setAcks(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+                return () => u();
+            }, []);
+
+            const version = doc ? (doc.version || 1) : 0;
+            const sections = doc ? (doc.sections || []) : [];
+            const myAck = acks.find(a => a.name === staffName);
+            const acknowledged = myAck && myAck.version === version;
+
+            const sTitle = s => (language === "es" && s.titleEs) ? s.titleEs : s.title;
+            const sBody = s => (language === "es" && s.bodyEs) ? s.bodyEs : s.body;
+            const filtered = !search ? sections : sections.filter(s => (sTitle(s) + " " + sBody(s)).toLowerCase().includes(search.toLowerCase()));
+
+            const loadStarter = async () => {
+                setSaving(true);
+                await db.collection("ops").doc("handbook").set({ sections: HANDBOOK_SEED, version: 1, updatedAt: new Date().toISOString(), updatedBy: staffName });
+                setSaving(false);
+                window.showToast(L("Starter handbook loaded", "Manual inicial cargado"), "success");
+            };
+            const resetStarter = async () => {
+                const ok = await window.askConfirm({
+                    title: L("Reset to starter content?", "¿Restablecer al contenido inicial?"),
+                    body: L("This replaces the current handbook with the latest built-in starter version (now bilingual). Any edits you've made will be lost.", "Esto reemplaza el manual actual con la versión inicial integrada (ahora bilingüe). Se perderán los cambios que hayas hecho."),
+                    danger: true
+                });
+                if (!ok) return;
+                await loadStarter();
+            };
+            const acknowledge = async () => {
+                await db.collection("handbookAck").doc(staffName.replace(/\s/g, "_")).set({ name: staffName, version, signedAt: new Date().toISOString() });
+                window.showToast(L("Thank you — acknowledgment recorded", "Gracias — reconocimiento registrado"), "success");
+            };
+            const startEdit = () => { setDraft(JSON.parse(JSON.stringify(sections))); setEdit(true); };
+            const saveEdit = async () => {
+                setSaving(true);
+                await db.collection("ops").doc("handbook").set({ sections: draft, version: version + 1, updatedAt: new Date().toISOString(), updatedBy: staffName }, { merge: true });
+                setSaving(false); setEdit(false);
+                window.showToast(L("Handbook updated — staff will be asked to re-acknowledge", "Manual actualizado — se pedirá reconocer de nuevo"), "success");
+            };
+            const upd = (i, k, v) => setDraft(d => d.map((s, idx) => idx === i ? { ...s, [k]: v } : s));
+            const move = (i, dir) => setDraft(d => { const a = d.slice(); const j = i + dir; if (j < 0 || j >= a.length) return d; const t = a[i]; a[i] = a[j]; a[j] = t; return a; });
+            const del = i => setDraft(d => d.filter((_, idx) => idx !== i));
+            const addSection = () => setDraft(d => [...d, { id: "sec_" + Date.now(), title: "New section", titleEs: "", body: "", bodyEs: "" }]);
+
+            if (loading) return <div className="p-4"><p className="text-center text-sm py-10" style={{ color: "var(--text-muted)" }}>{L("Loading…", "Cargando…")}</p></div>;
+
+            // No handbook yet
+            if (!doc) {
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <h2 className="font-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>📖 {L("Handbook", "Manual")}</h2>
+                        {ownerAccess ? (
+                            <div className="card p-4 mt-3">
+                                <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{L("No handbook is published yet. Load a cleaned-up starter version (based on your handbook, with corrections) that you can then edit.", "Aún no hay manual publicado. Carga una versión inicial corregida que luego puedes editar.")}</p>
+                                <button onClick={loadStarter} disabled={saving} className="w-full py-3 bg-poke-600 text-white rounded-xl font-bold text-sm">{saving ? L("Loading…", "Cargando…") : L("Load starter handbook", "Cargar manual inicial")}</button>
+                            </div>
+                        ) : (
+                            <p className="text-center text-sm py-10" style={{ color: "var(--text-muted)" }}>{L("The handbook isn't available yet. Check back soon.", "El manual aún no está disponible.")}</p>
+                        )}
+                    </div>
+                );
+            }
+
+            // Owner edit mode
+            if (edit) {
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <div className="flex justify-between items-center mb-3">
+                            <h2 className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>✏️ {L("Edit handbook", "Editar manual")}</h2>
+                            <button onClick={() => setEdit(false)} className="text-sm text-gray-500">{L("Cancel", "Cancelar")}</button>
+                        </div>
+                        <div className="space-y-3">
+                            {draft.map((s, i) => (
+                                <div key={i} className="card p-3 space-y-2">
+                                    <div className="flex gap-1 justify-end">
+                                        <button onClick={() => move(i, -1)} className="text-xs px-2 py-1 bg-gray-100 rounded">↑</button>
+                                        <button onClick={() => move(i, 1)} className="text-xs px-2 py-1 bg-gray-100 rounded">↓</button>
+                                        <button onClick={() => del(i)} className="text-xs px-2 py-1 bg-red-50 text-red-600 rounded">🗑️</button>
+                                    </div>
+                                    <input value={s.title} onChange={e => upd(i, "title", e.target.value)} placeholder={L("Title (English)", "Título (Inglés)")} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-bold" />
+                                    <input value={s.titleEs || ""} onChange={e => upd(i, "titleEs", e.target.value)} placeholder={L("Title (Spanish, optional)", "Título (Español, opcional)")} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" />
+                                    <textarea value={s.body} onChange={e => upd(i, "body", e.target.value)} rows={5} placeholder={L("Body (English)", "Contenido (Inglés)")} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" />
+                                    <textarea value={s.bodyEs || ""} onChange={e => upd(i, "bodyEs", e.target.value)} rows={3} placeholder={L("Body (Spanish, optional)", "Contenido (Español, opcional)")} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" />
+                                </div>
+                            ))}
+                            <button onClick={addSection} className="w-full py-2 border border-dashed border-gray-300 rounded-xl text-sm text-gray-500">＋ {L("Add section", "Agregar sección")}</button>
+                            <button onClick={saveEdit} disabled={saving} className="w-full py-3 bg-poke-600 text-white rounded-xl font-bold text-sm">{saving ? L("Saving…", "Guardando…") : L("Save & publish", "Guardar y publicar")}</button>
+                            <p className="text-[11px] text-center" style={{ color: "var(--text-muted)" }}>{L("Saving bumps the version; everyone will be asked to acknowledge again.", "Al guardar sube la versión; todos deberán reconocer de nuevo.")}</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Owner acknowledgment log
+            if (showLog) {
+                const signedNames = new Set(acks.filter(a => a.version === version).map(a => a.name));
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <div className="flex justify-between items-center mb-3">
+                            <h2 className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>✅ {L("Acknowledgments", "Reconocimientos")} (v{version})</h2>
+                            <button onClick={() => setShowLog(false)} className="text-sm text-poke-600 font-bold">{L("Back", "Volver")}</button>
+                        </div>
+                        <div className="space-y-2">
+                            {staffList.filter(s => !isOwner(s.name)).map(s => {
+                                const a = acks.find(x => x.name === s.name);
+                                const ok = signedNames.has(s.name);
+                                return (
+                                    <div key={s.id || s.name} className="card p-3 flex justify-between items-center">
+                                        <div><p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{s.name}</p>
+                                            <p className="text-xs" style={{ color: "var(--text-muted)" }}>{ok ? (L("Signed", "Firmado") + " " + new Date(a.signedAt).toLocaleDateString()) : a ? L("Signed an older version", "Firmó una versión anterior") : L("Not signed", "Sin firmar")}</p></div>
+                                        <span className="text-xs font-bold px-2 py-1 rounded-full" style={ok ? { background: "#dcfce7", color: "#166534" } : { background: "#fef3c7", color: "#92400e" }}>{ok ? "✓" : "—"}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            }
+
+            // Reader view (everyone)
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="font-display text-2xl font-bold mb-1" style={{ color: "var(--text-primary)" }}>📖 {L("Employee Handbook", "Manual del Empleado")}</h2>
+                    <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>{L("Version", "Versión")} {version}{doc.updatedAt ? " · " + new Date(doc.updatedAt).toLocaleDateString() : ""}</p>
+
+                    {ownerAccess && (
+                        <div className="flex gap-2 mb-3">
+                            <button onClick={startEdit} className="flex-1 py-2 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-700">✏️ {L("Edit", "Editar")}</button>
+                            <button onClick={() => setShowLog(true)} className="flex-1 py-2 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-700">✅ {L("Who's signed", "Quién firmó")}</button>
+                            <button onClick={resetStarter} className="py-2 px-3 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-500" title={L("Reset to starter", "Restablecer")}>↻</button>
+                        </div>
+                    )}
+
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder={L("Search the handbook…", "Buscar en el manual…")} className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm mb-3" />
+
+                    <div className="space-y-2">
+                        {filtered.map(s => (
+                            <div key={s.id} className="card overflow-hidden">
+                                <button onClick={() => setOpenId(openId === s.id ? null : s.id)} className="w-full text-left p-3 flex justify-between items-center">
+                                    <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{sTitle(s)}</span>
+                                    <span style={{ color: "var(--text-muted)" }}>{openId === s.id ? "▲" : "▼"}</span>
+                                </button>
+                                {openId === s.id && <div className="px-3 pb-3 text-sm whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>{sBody(s)}</div>}
+                            </div>
+                        ))}
+                        {filtered.length === 0 && <p className="text-center text-sm py-6" style={{ color: "var(--text-muted)" }}>{L("No matches", "Sin resultados")}</p>}
+                    </div>
+
+                    <div className="mt-4 card p-4" style={{ background: acknowledged ? "#f0fdf4" : "#fffbeb" }}>
+                        {acknowledged ? (
+                            <p className="text-sm font-bold text-green-700 text-center">✓ {L("You acknowledged this handbook on", "Reconociste este manual el")} {new Date(myAck.signedAt).toLocaleDateString()}</p>
+                        ) : (
+                            <div>
+                                <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{myAck ? L("The handbook has been updated since you last acknowledged. Please review and acknowledge again.", "El manual se actualizó desde tu último reconocimiento. Por favor revísalo y reconoce de nuevo.") : L("Please read the handbook, then acknowledge below.", "Por favor lee el manual y luego reconoce abajo.")}</p>
+                                <button onClick={acknowledge} className="w-full py-3 bg-poke-600 text-white rounded-xl font-bold text-sm active:scale-95">✍️ {L("I have read and acknowledge", "He leído y reconozco")}</button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
         function App() {
             const [staffName, setStaffName] = useState(null);
             const [staffList, setStaffList] = useState(DEFAULT_STAFF);
@@ -13211,6 +13905,24 @@
                                             <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Vacantes y candidatos" : "Postings & applicants"}</div>
                                         </button>
                                     )}
+                                    {staffIsAdmin && (
+                                        <button
+                                            onClick={() => setActiveTab("records")}
+                                            className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                        >
+                                            <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-2xl mb-3">📂</div>
+                                            <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Expedientes" : "Records"}</div>
+                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Asesorías y amonestaciones" : "Coaching & write-ups"}</div>
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => setActiveTab("handbook")}
+                                        className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                    >
+                                        <div className="w-12 h-12 bg-sky-50 rounded-xl flex items-center justify-center text-2xl mb-3">📖</div>
+                                        <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Manual" : "Handbook"}</div>
+                                        <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Políticas de la empresa" : "Company policies"}</div>
+                                    </button>
                                     <button
                                         onClick={() => setActiveTab("allergens")}
                                         className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
@@ -13290,6 +14002,8 @@
                         {activeTab === "sales" && staffIsAdmin && <SalesInput language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "activity" && staffIsOwner && <ActivityLog language={language} staffName={staffName} onNavigate={navigateTo} />}
                         {activeTab === "hiring" && staffIsOwner && <Hiring language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} />}
+                        {activeTab === "records" && staffIsAdmin && <PersonnelRecords language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "handbook" && <Handbook language={language} staffName={staffName} staffList={staffList} />}
                     </div>
 
                     {/* Bottom Navigation */}
