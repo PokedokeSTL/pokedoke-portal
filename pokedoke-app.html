@@ -4725,6 +4725,9 @@
             const [toStartDate, setToStartDate] = useState("");
             const [toEndDate, setToEndDate] = useState("");
             const [toReason, setToReason] = useState("");
+            const [toAllDay, setToAllDay] = useState(true);
+            const [toStartTime, setToStartTime] = useState("");
+            const [toEndTime, setToEndTime] = useState("");
             const [swapOffers, setSwapOffers] = useState([]);
             const [wages, setWages] = useState({});
             const [allAvailability, setAllAvailability] = useState([]);
@@ -5459,16 +5462,40 @@
             };
 
             const submitTimeOff = async () => {
-                if(!toStartDate||!toEndDate)return;
+                if(!toStartDate)return;
+                if(toAllDay && !toEndDate)return;
+                if(!toAllDay && (!toStartTime || !toEndTime)){
+                    window.showToast(language==="es"?"Indica la hora de inicio y fin":"Enter a start and end time","error");
+                    return;
+                }
                 if (!ownerAccess && toStartDate < toMinDate) {
                     window.showToast(language === "es"
                         ? "Las solicitudes deben ser con " + toLeadLabel + " de anticipación (a partir del " + toMinDisplay + ")"
                         : "Requests must be at least " + toLeadLabel + " out (on or after " + toMinDisplay + ")", "error", 5000);
                     return;
                 }
-                await db.collection("timeOffRequests").add({employee:staffName, startDate:toStartDate, endDate:toEndDate, reason:toReason, status:"pending", requestedAt:new Date().toISOString()});
-                setToStartDate(""); setToEndDate(""); setToReason("");
+                const rec = {employee:staffName, startDate:toStartDate, endDate:(toAllDay?(toEndDate||toStartDate):toStartDate), reason:toReason, allDay:toAllDay, status:"pending", requestedAt:new Date().toISOString()};
+                if(!toAllDay){ rec.startTime=toStartTime; rec.endTime=toEndTime; }
+                await db.collection("timeOffRequests").add(rec);
+                setToStartDate(""); setToEndDate(""); setToReason(""); setToStartTime(""); setToEndTime(""); setToAllDay(true);
                 window.showToast(language === "es" ? "Solicitud enviada" : "Request submitted", "success");
+            };
+
+            // Employee cancels their own request (plans changed). Notifies managers so the schedule can be adjusted.
+            const cancelTimeOff = async (req) => {
+                const ok = await window.askConfirm({
+                    title: language==="es"?"¿Cancelar solicitud?":"Cancel request?",
+                    body: language==="es"?"Se eliminará tu solicitud de descanso.":"This will remove your time-off request.",
+                    danger:true
+                });
+                if(!ok) return;
+                await db.collection("timeOffRequests").doc(req.id).delete();
+                const mgrs = staffList.filter(s=>isAdmin(s.name) && s.name!==staffName).map(s=>s.name);
+                if(mgrs.length) sendNotification(mgrs,
+                    language==="es"?"🚫 Descanso cancelado":"🚫 Time off cancelled",
+                    staffName+(language==="es"?" canceló su descanso ":" cancelled time off ")+req.startDate+(req.endDate&&req.endDate!==req.startDate?(" → "+req.endDate):""),
+                    {type:"timeoff"});
+                window.showToast(language==="es"?"Solicitud cancelada":"Request cancelled","success");
             };
 
             // Who can review a request: must be a manager/owner, not the requester,
@@ -6148,7 +6175,7 @@
                                                     <div key={req.id} className="flex items-start justify-between gap-2 py-1">
                                                         <div className="flex-1 min-w-0">
                                                             <p className="text-xs font-bold" style={{color: "#92400e"}}>
-                                                                🏖️ {req.employee} — {language==="es"?"Solicitud de descanso":"Time Off Request"}
+                                                                🏖️ {req.employee} — {language==="es"?"Solicitud de descanso":"Time Off Request"}{req.allDay===false?(" ("+(req.startTime||"")+"–"+(req.endTime||"")+")"):""}
                                                             </p>
                                                             {req.reason && <p className="text-xs italic mt-0.5" style={{color: "#a16207"}}>"{req.reason}"</p>}
                                                         </div>
@@ -6673,12 +6700,28 @@
                                             : "Requests must be made at least " + toLeadLabel + " in advance. The earliest date you can request is " + toMinDisplay + "."}
                                     </div>
                                 )}
-                                <div className="grid grid-cols-2 gap-2">
-                                    <div><label className="text-xs text-gray-500">{language==="es"?"Desde":"From"}</label><input type="date" min={toMinForUser} value={toStartDate} onChange={e=>setToStartDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
-                                    <div><label className="text-xs text-gray-500">{language==="es"?"Hasta":"To"}</label><input type="date" min={toStartDate||toMinForUser} value={toEndDate} onChange={e=>setToEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div className="flex gap-2">
+                                    <button onClick={()=>setToAllDay(true)} className={"flex-1 py-2 rounded-xl text-xs font-bold "+(toAllDay?"bg-poke-600 text-white":"bg-gray-100 text-gray-500")}>{language==="es"?"Día(s) completo(s)":"Full day(s)"}</button>
+                                    <button onClick={()=>setToAllDay(false)} className={"flex-1 py-2 rounded-xl text-xs font-bold "+(!toAllDay?"bg-poke-600 text-white":"bg-gray-100 text-gray-500")}>{language==="es"?"Parte del día":"Partial day"}</button>
                                 </div>
+                                {toAllDay ? (
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div><label className="text-xs text-gray-500">{language==="es"?"Desde":"From"}</label><input type="date" min={toMinForUser} value={toStartDate} onChange={e=>setToStartDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                        <div><label className="text-xs text-gray-500">{language==="es"?"Hasta":"To"}</label><input type="date" min={toStartDate||toMinForUser} value={toEndDate} onChange={e=>setToEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        <div><label className="text-xs text-gray-500">{language==="es"?"Fecha":"Date"}</label><input type="date" min={toMinForUser} value={toStartDate} onChange={e=>setToStartDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div><label className="text-xs text-gray-500">{language==="es"?"Hora inicio":"Start time"}</label><input type="time" value={toStartTime} onChange={e=>setToStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                            <div><label className="text-xs text-gray-500">{language==="es"?"Hora fin":"End time"}</label><input type="time" value={toEndTime} onChange={e=>setToEndTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                        </div>
+                                    </div>
+                                )}
                                 <input type="text" value={toReason} onChange={e=>setToReason(e.target.value)} placeholder={language==="es"?"Razón (opcional)":"Reason (optional)"} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/>
-                                <button onClick={submitTimeOff} disabled={!toStartDate||!toEndDate} className={"w-full py-3 rounded-xl font-bold text-sm "+(toStartDate&&toEndDate?"bg-poke-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>{language==="es"?"Enviar Solicitud":"Submit Request"}</button>
+                                {(() => { const ready = toAllDay ? (toStartDate&&toEndDate) : (toStartDate&&toStartTime&&toEndTime); return (
+                                <button onClick={submitTimeOff} disabled={!ready} className={"w-full py-3 rounded-xl font-bold text-sm "+(ready?"bg-poke-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>{language==="es"?"Enviar Solicitud":"Submit Request"}</button>
+                                ); })()}
                             </div>
                             <p className="font-bold text-gray-800 text-sm">{language==="es"?"Solicitudes":"Requests"}</p>
                             {timeOffRequests.filter(r=>mgrAccess||r.employee===staffName).sort((a,b)=>(b.requestedAt||"").localeCompare(a.requestedAt||"")).map(req=>(
@@ -6686,7 +6729,7 @@
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <p className="font-semibold text-sm text-gray-800">{req.employee}</p>
-                                            <p className="text-xs text-gray-500">{req.startDate} → {req.endDate}{req.reason?" · "+req.reason:""}</p>
+                                            <p className="text-xs text-gray-500">{req.allDay===false ? (req.startDate+" · "+(req.startTime||"")+"–"+(req.endTime||"")) : (req.startDate+" → "+req.endDate)}{req.reason?" · "+req.reason:""}</p>
                                             {req.requestedAt && <p className="text-[11px] text-gray-400 mt-0.5">🕒 {language==="es"?"Enviado":"Submitted"}: {new Date(req.requestedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"})}</p>}
                                             {ownerAccess && req.reviewedAt && <p className="text-[11px] text-gray-400">{req.status==="approved"?"✅":"❌"} {language==="es"?"Revisado por":"Reviewed by"} {req.reviewedBy} · {new Date(req.reviewedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</p>}
                                         </div>
@@ -6708,6 +6751,9 @@
                                                     : (language==="es"?"Pendiente de aprobación de un gerente o dueño":"Awaiting approval from a manager or owner"))
                                                 : (language==="es"?"Solo un dueño puede aprobar la solicitud de un gerente":"Only an owner can approve a manager's request")
                                         }</p>
+                                    )}
+                                    {req.employee===staffName && (req.status==="pending"||req.status==="approved") && (
+                                        <button onClick={()=>cancelTimeOff(req)} className="w-full mt-2 py-1.5 border border-red-200 text-red-600 rounded-xl text-xs font-bold active:scale-95">🗑️ {language==="es"?"Cancelar mi solicitud":"Cancel my request"}</button>
                                     )}
                                 </div>
                             ))}
