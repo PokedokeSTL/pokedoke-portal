@@ -9613,15 +9613,13 @@
                 return s.location === myLoc || s.location === "all" || myLoc === "all";
             });
 
+            const owner = isOwner(staffName);
             const CHANNELS = [];
-            if (canSeeEveryone) {
-                CHANNELS.push({ id: "cwe", label: es ? "Equipo CWE" : "CWE Team", emoji: "📍" });
-                CHANNELS.push({ id: "kirkwood", label: es ? "Equipo Kirkwood" : "Kirkwood Team", emoji: "📍" });
-                CHANNELS.push({ id: "managers", label: es ? "Gerentes" : "Managers", emoji: "👔" });
-            } else {
-                if (myLoc === "cwe" || myLoc === "all") CHANNELS.push({ id: "cwe", label: es ? "Equipo CWE" : "CWE Team", emoji: "📍" });
-                if (myLoc === "kirkwood" || myLoc === "all") CHANNELS.push({ id: "kirkwood", label: es ? "Equipo Kirkwood" : "Kirkwood Team", emoji: "📍" });
-            }
+            // Team channels follow each person's assigned store. Only owners / "Both (Floater)" staff (location "all") belong to both.
+            if (myLoc === "cwe" || myLoc === "all") CHANNELS.push({ id: "cwe", label: es ? "Equipo CWE" : "CWE Team", emoji: "📍" });
+            if (myLoc === "kirkwood" || myLoc === "all") CHANNELS.push({ id: "kirkwood", label: es ? "Equipo Kirkwood" : "Kirkwood Team", emoji: "📍" });
+            // The private Managers channel is the only admin-gated one.
+            if (admin) CHANNELS.push({ id: "managers", label: es ? "Gerentes" : "Managers", emoji: "👔" });
 
             const [openConv, setOpenConv] = useState(null);
             const [messages, setMessages] = useState([]);
@@ -9641,6 +9639,8 @@
             const [uploading, setUploading] = useState(false);
             const [seenByMsg, setSeenByMsg] = useState(null);
             const [showBgPicker, setShowBgPicker] = useState(false);
+            const [showMembers, setShowMembers] = useState(false);
+            const [showArchived, setShowArchived] = useState(false);
             const [vpHeight, setVpHeight] = useState(null);
             const [vpTop, setVpTop] = useState(0);
             const fileRef = useRef(null);
@@ -9725,6 +9725,43 @@
                 if (conv.channelKey === "kirkwood") return staffList.filter(s => s.name !== staffName && (s.location === "kirkwood" || s.location === "all")).map(s => s.name);
                 if (conv.channelKey === "managers") return staffList.filter(s => s.name !== staffName && isAdmin(s.name)).map(s => s.name);
                 return [];
+            };
+
+            const channelMemberNames = (key) => {
+                if (key === "cwe") return staffList.filter(s => s.location === "cwe" || s.location === "all").map(s => s.name);
+                if (key === "kirkwood") return staffList.filter(s => s.location === "kirkwood" || s.location === "all").map(s => s.name);
+                if (key === "managers") return staffList.filter(s => isAdmin(s.name)).map(s => s.name);
+                return [];
+            };
+            const currentMembers = () => {
+                if (!openConv) return [];
+                if (openConv.kind === "channel") return channelMemberNames(openConv.channelKey);
+                return openConv.members || [];
+            };
+            const setArchived = async (conv, val) => {
+                if (!conv) return;
+                try {
+                    if (val) await db.collection("messages").doc(conv.id).set({ archivedBy: { [staffName]: true } }, { merge: true });
+                    else await db.collection("messages").doc(conv.id).update({ ["archivedBy." + staffName]: firebase.firestore.FieldValue.delete() });
+                } catch (e) {}
+            };
+            const deleteGroup = async (conv) => {
+                if (!conv || conv.kind !== "group") return;
+                const ok = await window.askConfirm({
+                    title: es ? "¿Eliminar grupo?" : "Delete group?",
+                    body: es ? "Esto elimina el grupo y sus mensajes para todos. No se puede deshacer." : "This permanently deletes the group and its messages for everyone. This can't be undone.",
+                    danger: true
+                });
+                if (!ok) return;
+                try {
+                    const msgs = await db.collection("messages").doc(conv.id).collection("msgs").get();
+                    let batch = db.batch(), n = 0;
+                    for (const d of msgs.docs) { batch.delete(d.ref); if (++n % 400 === 0) { await batch.commit(); batch = db.batch(); } }
+                    await batch.commit().catch(() => {});
+                    await db.collection("messages").doc(conv.id).delete();
+                    setShowMembers(false); setOpenConv(null);
+                    window.showToast(es ? "Grupo eliminado" : "Group deleted", "info");
+                } catch (e) { window.showToast(es ? "No se pudo eliminar" : "Couldn't delete the group", "error"); }
             };
 
             const sendMessage = async (opts) => {
@@ -9823,7 +9860,10 @@
                     names = Array.from(new Set(names)).filter(n => n !== staffName);
                     if (names.length === 0) { window.showToast(es ? "Nadie está programado hoy" : "No one is scheduled today", "info"); return; }
                     const label = (es ? "Equipo de hoy " : "Today's crew ") + t.toLocaleDateString(es ? "es-ES" : "en-US", { month: "short", day: "numeric" });
-                    await createGroup(label, names);
+                    setGroupName(label);
+                    setGroupMembers(names);
+                    setShowCompose(false);
+                    setShowNewGroup(true);
                 } catch (err) { window.showToast(es ? "No se pudo cargar el horario" : "Couldn't load the schedule", "error"); }
             };
 
@@ -9843,9 +9883,9 @@
                 const d = channelDocs[c.id] || {};
                 return { kind: "channel", id: "channel_" + c.id, channelKey: c.id, title: c.label, emoji: c.emoji, lastMessage: d.lastMessage, readAt: d.reads && d.reads[staffName], pinned: d.pinned };
             });
-            const groupConvs = convDocs.filter(d => d.type === "group").map(d => ({ kind: "group", id: d.id, title: d.name, members: d.members, lastMessage: d.lastMessage, readAt: d.reads && d.reads[staffName] }))
+            const groupConvs = convDocs.filter(d => d.type === "group").map(d => ({ kind: "group", id: d.id, title: d.name, members: d.members, createdBy: d.createdBy, archivedBy: d.archivedBy, lastMessage: d.lastMessage, readAt: d.reads && d.reads[staffName] }))
                 .sort((a, b) => ((b.lastMessage && b.lastMessage.at) || "").localeCompare((a.lastMessage && a.lastMessage.at) || ""));
-            const dmConvs = convDocs.filter(d => d.type === "dm").map(d => { const other = (d.members || []).find(n => n !== staffName); return { kind: "dm", id: d.id, title: other, members: d.members, lastMessage: d.lastMessage, readAt: d.reads && d.reads[staffName] }; })
+            const dmConvs = convDocs.filter(d => d.type === "dm").map(d => { const other = (d.members || []).find(n => n !== staffName); return { kind: "dm", id: d.id, title: other, members: d.members, archivedBy: d.archivedBy, lastMessage: d.lastMessage, readAt: d.reads && d.reads[staffName] }; })
                 .sort((a, b) => ((b.lastMessage && b.lastMessage.at) || "").localeCompare((a.lastMessage && a.lastMessage.at) || ""));
 
             const query = search.trim().toLowerCase();
@@ -9977,10 +10017,12 @@
             };
 
             // ===== Conversation view =====
+            const openConvDoc = openConv ? convDocs.find(d => d.id === openConv.id) : null;
+            const openArchived = !!(openConvDoc && openConvDoc.archivedBy && openConvDoc.archivedBy[staffName]);
             if (openConv) {
                 const subtitle = isDM ? (es ? "Mensaje directo" : "Direct message")
-                    : isGroup ? ((openConv.members || []).length + " " + (es ? "miembros" : "members"))
-                    : (es ? "Todo el equipo de esta ubicación" : "Everyone on this location's team");
+                    : isGroup ? ((openConv.members || []).length + " " + (es ? "miembros · toca para ver" : "members · tap to view"))
+                    : (channelMemberNames(openConv.channelKey).length + " " + (es ? "miembros · toca para ver" : "members · tap to view"));
                 return (
                     <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "var(--bg-primary)", top: vpHeight ? vpTop + "px" : 0, height: vpHeight ? vpHeight + "px" : "100dvh" }}>
                         <div className="p-4 bg-gradient-to-r from-poke-700 to-poke-600 text-white shadow-lg" style={{ paddingTop: "max(16px, env(safe-area-inset-top))" }}>
@@ -9989,7 +10031,7 @@
                                 {es ? "Mensajes" : "Messages"}
                             </button>
                             <div className="flex items-center gap-3 mt-1">
-                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                <div onClick={() => { if (!isDM) setShowMembers(true); }} className={"flex items-center gap-3 flex-1 min-w-0" + (isDM ? "" : " cursor-pointer active:opacity-80")}>
                                     {isDM
                                         ? <Avatar name={openConv.title} prefs={{}} size={36} />
                                         : <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-none" style={{ background: "#cffafe" }}>{isChannel ? openConv.emoji : "👥"}</div>}
@@ -9998,6 +10040,9 @@
                                         <p className="text-xs text-poke-200 truncate">{subtitle}</p>
                                     </div>
                                 </div>
+                                <button onClick={() => setShowMembers(true)} className="flex-none flex items-center justify-center rounded-full active:scale-90 transition" style={{ width: 36, height: 36, background: "rgba(255,255,255,0.15)", color: "white" }} aria-label={es ? "Miembros" : "Members"} title={es ? "Miembros" : "Members"}>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+                                </button>
                                 <button onClick={() => setShowBgPicker(v => !v)} className="flex-none flex items-center justify-center rounded-full active:scale-90 transition" style={{ width: 36, height: 36, background: "rgba(255,255,255,0.15)", color: "white" }} aria-label={es ? "Color de fondo" : "Background color"} title={es ? "Color de fondo" : "Background color"}>
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1.3" /><circle cx="17.5" cy="10.5" r="1.3" /><circle cx="8.5" cy="7.5" r="1.3" /><circle cx="6.5" cy="12.5" r="1.3" /><path d="M12 2C6.5 2 2 6 2 11c0 4.4 3.6 7 7 7 1.1 0 1.6-.6 1.6-1.5 0-.5-.3-.9-.5-1.2-.3-.4-.5-.7-.5-1.3 0-1 .8-1.8 1.8-1.8H13c3 0 5-2 5-5 0-3.6-2.7-6.2-6-6.2z" /></svg>
                                 </button>
@@ -10024,15 +10069,53 @@
                             <div ref={messagesEndRef} />
                         </div>
                         {composer()}
+                        {showMembers && (
+                            <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center animate-in" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => setShowMembers(false)}>
+                                <div className="card w-full max-w-md p-5 animate-scale" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <h2 className="font-display text-lg font-bold" style={{ color: "var(--text-primary)" }}>{isChannel ? (es ? "Miembros del canal" : "Channel members") : isGroup ? (es ? "Miembros del grupo" : "Group members") : (es ? "Conversación" : "Conversation")} ({currentMembers().length})</h2>
+                                        <button onClick={() => setShowMembers(false)} className="text-2xl" style={{ color: "var(--text-muted)" }}>×</button>
+                                    </div>
+                                    <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>{openConv.title}{isChannel ? " · " + (es ? "se ajusta automáticamente por ubicación" : "set automatically by location") : ""}</p>
+                                    <div className="space-y-1">
+                                        {currentMembers().map(n => {
+                                            const st = staffList.find(s => s.name === n) || {};
+                                            return (
+                                                <div key={n} className="flex items-center gap-3 p-2 rounded-xl" style={{ background: "var(--bg-subtle)" }}>
+                                                    <Avatar name={n} prefs={{}} size={34} />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>{n}{n === staffName ? (es ? " (tú)" : " (you)") : ""}</p>
+                                                        <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{(st.role || "") + (isOwner(n) ? " · " + (es ? "Dueño" : "Owner") : "")}</p>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {currentMembers().length === 0 && <p className="text-sm text-center py-4" style={{ color: "var(--text-muted)" }}>{es ? "Sin miembros" : "No members"}</p>}
+                                    </div>
+                                    {!isChannel && (
+                                        <button onClick={() => { const arch = !openArchived; setArchived(openConv, arch); setShowMembers(false); if (arch) { setOpenConv(null); window.showToast(es ? "Conversación archivada" : "Conversation archived", "info"); } else { window.showToast(es ? "Restaurada" : "Restored", "info"); } }} className="w-full mt-4 py-2.5 rounded-xl text-sm font-bold" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>
+                                            {openArchived ? "↩︎ " + (es ? "Restaurar conversación" : "Unarchive conversation") : "🗄 " + (es ? "Archivar conversación" : "Archive conversation")}
+                                        </button>
+                                    )}
+                                    {isGroup && (owner || openConv.createdBy === staffName) && (
+                                        <button onClick={() => deleteGroup(openConv)} className="w-full mt-2 py-2.5 rounded-xl text-sm font-bold" style={{ background: "#fef2f2", color: "#dc2626" }}>
+                                            🗑 {es ? "Eliminar grupo para todos" : "Delete group for everyone"}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 );
             }
 
             // ===== Inbox =====
+            const archivedOf = (c) => !!(c.archivedBy && c.archivedBy[staffName]);
             const visibleChannels = channelConvs.filter(matchSearch);
-            const visibleGroups = groupConvs.filter(matchSearch);
-            const visibleDMs = dmConvs.filter(matchSearch);
-            const nothing = visibleChannels.length === 0 && visibleGroups.length === 0 && visibleDMs.length === 0;
+            const visibleGroups = groupConvs.filter(matchSearch).filter(c => !archivedOf(c));
+            const visibleDMs = dmConvs.filter(matchSearch).filter(c => !archivedOf(c));
+            const archivedConvs = [...groupConvs, ...dmConvs].filter(c => archivedOf(c) && matchSearch(c));
+            const nothing = visibleChannels.length === 0 && visibleGroups.length === 0 && visibleDMs.length === 0 && !(showArchived && archivedConvs.length);
 
             return (
                 <div className="p-4 pb-24 animate-in">
@@ -10058,6 +10141,15 @@
 
                     {visibleDMs.length > 0 && <p className="text-[11px] font-bold tracking-wide mt-4 mb-1" style={{ color: "var(--text-muted)" }}>{es ? "DIRECTOS" : "DIRECT"}</p>}
                     <div className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>{visibleDMs.map(ConvRow)}</div>
+
+                    {archivedConvs.length > 0 && (
+                        <button onClick={() => setShowArchived(v => !v)} className="mt-4 text-xs font-bold" style={{ color: "var(--text-muted)" }}>
+                            {(showArchived ? (es ? "▾ Ocultar archivados" : "▾ Hide archived") : (es ? "▸ Mostrar archivados" : "▸ Show archived")) + " (" + archivedConvs.length + ")"}
+                        </button>
+                    )}
+                    {showArchived && archivedConvs.length > 0 && (
+                        <div className="divide-y mt-1" style={{ borderColor: "var(--border-subtle)", opacity: 0.65 }}>{archivedConvs.map(ConvRow)}</div>
+                    )}
 
                     {nothing && (
                         <div className="text-center py-12" style={{ color: "var(--text-muted)" }}>
