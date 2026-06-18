@@ -6063,7 +6063,7 @@
                                                                             onDragOver={(e)=>{e.preventDefault();e.currentTarget.style.background="#ecfeff";}}
                                                                             onDragLeave={(e)=>{e.currentTarget.style.background="";}}
                                                                             onDrop={(e)=>{e.preventDefault();e.currentTarget.style.background="";if(draggedShift){const updated=shifts.map(s=>s.id===draggedShift.id?{...s,day:dk,employee:emp.name}:s);setShifts(updated);writeDraft(updated);}setDraggedShift(null);}}
-                                                                            onClick={()=>cellShifts.length===0&&setGridAddCell({employee:emp.name, dayKey:dk})}
+                                                                            onClick={()=>setGridAddCell({employee:emp.name, dayKey:dk})}
                                                                             title={empTO?(empTO.status==="approved"?"Approved time off":"PENDING time off request") + (empTO.reason?": "+empTO.reason:""):""}
                                                                             style={{
                                                                                 padding: 4,
@@ -6072,7 +6072,7 @@
                                                                                 verticalAlign: "top",
                                                                                 minHeight: 60,
                                                                                 background: hasConflict ? "#fef2f2" : hasPendingTO ? "#fef3c7" : isAvailableDay === false ? "#fefce8" : "transparent",
-                                                                                cursor: cellShifts.length === 0 ? "pointer" : "default",
+                                                                                cursor: "pointer",
                                                                                 position: "relative"
                                                                             }}>
                                                                             {hasConflict && cellShifts.length===0 && (
@@ -6118,6 +6118,9 @@
                                                                                 </div>
                                                                                 );
                                                                             })}
+                                                                            {mgrAccess && cellShifts.length > 0 && (
+                                                                                <div style={{textAlign: "center", color: "#94a3b8", fontSize: 10, fontWeight: 700, padding: "2px 0", marginTop: 1}}>＋ {language==="es"?"agregar":"add"}</div>
+                                                                            )}
                                                                             {/* Plus icon on hover (CSS will show it) */}
                                                                             {cellShifts.length === 0 && !hasConflict && isAvailableDay !== false && (
                                                                                 <div style={{textAlign: "center", color: "#cbd5e0", fontSize: 18, padding: "8px 0"}}>+</div>
