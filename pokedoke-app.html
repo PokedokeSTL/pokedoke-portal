@@ -9347,8 +9347,8 @@
                                     <p className="font-bold text-gray-800 text-sm mb-2">📱 {language==="es"?"Estado de la App":"App Status"}</p>
                                     <div className="space-y-1 text-sm">
                                         <p><span className="text-gray-400">{language==="es"?"Invitado":"Invited"}:</span> {selectedEmp.invitedAt ? new Date(selectedEmp.invitedAt).toLocaleDateString() : "—"}</p>
-                                        <p><span className="text-gray-400">{language==="es"?"Primer inicio de sesión":"First login"}:</span> {selectedEmp.activatedAt ? new Date(selectedEmp.activatedAt).toLocaleDateString() : (language==="es"?"Aún no":"Not yet")}</p>
-                                        <p><span className="text-gray-400">{language==="es"?"Último inicio":"Last login"}:</span> {selectedEmp.lastLogin ? pdTimeAgo(selectedEmp.lastLogin, language) + " (" + new Date(selectedEmp.lastLogin).toLocaleDateString() + ")" : "—"}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Primer inicio de sesión":"First login"}:</span> {selectedEmp.activatedAt ? new Date(selectedEmp.activatedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}) : (language==="es"?"Aún no":"Not yet")}</p>
+                                        <p><span className="text-gray-400">{language==="es"?"Último inicio":"Last login"}:</span> {selectedEmp.lastLogin ? pdTimeAgo(selectedEmp.lastLogin, language) + " · " + new Date(selectedEmp.lastLogin).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}) : "—"}</p>
                                         <p><span className="text-gray-400">{language==="es"?"App instalada":"App installed"}:</span> {selectedEmp.installed ? (language==="es"?"Sí":"Yes") + (selectedEmp.installedAt ? " (" + new Date(selectedEmp.installedAt).toLocaleDateString() + ")" : "") : (language==="es"?"No":"No")}</p>
                                     </div>
                                 </div>
@@ -9506,7 +9506,7 @@
                                             ? <p className="text-[11px] mt-0.5 font-semibold text-gray-500">{reasonLabel(emp.deactivation?.reason, language)}{emp.deactivation && <span className={emp.deactivation.rehirable?"text-green-600":"text-red-500"}> · {emp.deactivation.rehirable?(language==="es"?"Recontratable ✅":"Rehirable ✅"):(language==="es"?"No recontratable ❌":"Not rehirable ❌")}</span>}</p>
                                             : <p className="text-[11px] mt-0.5 font-semibold">
                                                 {emp.installed
-                                                    ? <span className="text-poke-600">📱 {language==="es"?"App instalada":"App installed"}</span>
+                                                    ? <span className="text-poke-600">📱 {language==="es"?"App instalada":"App installed"}{emp.lastLogin?" · "+pdTimeAgo(emp.lastLogin,language):""}</span>
                                                     : (emp.lastLogin || emp.activatedAt)
                                                         ? <span className="text-green-600">🟢 {language==="es"?"Activo":"Active"}{emp.lastLogin?" · "+pdTimeAgo(emp.lastLogin,language):""}</span>
                                                         : emp.invitedAt
