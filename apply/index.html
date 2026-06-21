@@ -4698,6 +4698,7 @@
             const [showAllEmployees, setShowAllEmployees] = useState(true);
             const [gridAddCell, setGridAddCell] = useState(null); // {employee, dayKey} when adding via grid
             const gridHeadRef = useRef(null);
+            const todayCardRef = useRef(null);
             const [gridHeaderH, setGridHeaderH] = useState(46);
             const [publishPrompt, setPublishPrompt] = useState(false);
 
@@ -4791,6 +4792,14 @@
             };
             const weekStart = getWeekStart(weekOffset);
             const weekKey = schedLocation + "_" + weekStart;
+            const todayMonIdx = (new Date().getDay() + 6) % 7; // 0=Mon … 6=Sun, matches DAY_KEYS order
+            // Auto-jump to today's card when the schedule opens on the current week
+            useEffect(() => {
+                if (weekOffset === 0 && schedTab === "view" && todayCardRef.current) {
+                    const t = setTimeout(() => { try { todayCardRef.current && todayCardRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {} }, 250);
+                    return () => clearTimeout(t);
+                }
+            }, [weekOffset, schedTab]);
             const getDateForDay = (dayIdx) => {
                 const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + dayIdx);
                 return d.toLocaleDateString(language==="es"?"es-US":"en-US",{month:"short",day:"numeric"});
@@ -6166,13 +6175,14 @@
                                 const dayShifts = visibleShifts.filter(s=>s.day===dayKey).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
                                 const dayTimeOff = mgrAccess ? getTimeOffForDay(dayIdx) : getTimeOffForDay(dayIdx).filter(r=>r.employee===staffName);
                                 return (
-                                    <div key={dayKey} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
+                                    <div key={dayKey} ref={(weekOffset===0 && dayIdx===todayMonIdx) ? todayCardRef : undefined} className={"bg-white rounded-2xl border shadow-sm overflow-hidden " + ((weekOffset===0 && dayIdx===todayMonIdx) ? "border-green-300 ring-1 ring-green-200" : "border-gray-100")}
                                          onDragOver={mgrAccess?(e)=>{e.preventDefault();e.currentTarget.classList.add("bg-poke-50");}:undefined}
                                          onDragLeave={mgrAccess?(e)=>{e.currentTarget.classList.remove("bg-poke-50");}:undefined}
                                          onDrop={mgrAccess?(e)=>{e.preventDefault();e.currentTarget.classList.remove("bg-poke-50");if(draggedShift)moveShift(draggedShift.id,dayKey);setDraggedShift(null);}:undefined}>
                                         <div className="p-3 bg-gradient-to-r from-poke-50 to-white border-b flex justify-between items-center">
                                             <div>
                                                 <span className="font-bold text-poke-700 text-sm">{DAYS[dayIdx]}</span>
+                                                {weekOffset===0 && dayIdx===todayMonIdx && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-2" style={{background:"#22c55e",color:"#fff"}}>{language==="es"?"HOY":"TODAY"}</span>}
                                                 <span className="text-xs text-gray-400 ml-2">{getDateForDay(dayIdx)}</span>
                                             </div>
                                             <span className="text-xs text-gray-400">{dayShifts.length} {language==="es"?"turnos":"shifts"}</span>
