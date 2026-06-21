@@ -4799,7 +4799,7 @@
                     const t = setTimeout(() => { try { todayCardRef.current && todayCardRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {} }, 250);
                     return () => clearTimeout(t);
                 }
-            }, [weekOffset, schedTab]);
+            }, [weekOffset, schedTab, schedLocation]);
             const getDateForDay = (dayIdx) => {
                 const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + dayIdx);
                 return d.toLocaleDateString(language==="es"?"es-US":"en-US",{month:"short",day:"numeric"});
@@ -5543,13 +5543,52 @@
                 window.showToast(language==="es"?"Turno ofrecido — sigue siendo tu responsabilidad hasta que sea tomado":"Shift offered — still your responsibility until claimed","info",5000);
             };
 
+            // "HH:MM" ranges overlap?
+            const hmOverlap = (aS, aE, bS, bE) => (aS || "") < (bE || "") && (bS || "") < (aE || "");
             const claimSwap = async (swapId) => {
-                await db.collection("shiftSwaps").doc(swapId).update({claimedBy:staffName, status:"pending_approval", claimedAt:new Date().toISOString()});
-                const swap = swapOffers.find(s=>s.id===swapId);
-                if (swap) {
-                    const mgrs = staffList.filter(s=>isAdmin(s.name)).map(s=>s.name);
-                    sendNotification([swap.offeredBy, ...mgrs], "🔄 Shift Swap Claimed", staffName + " wants to take " + swap.offeredBy + "'s shift. Manager approval needed.", {type:"swap"});
-                }
+                const swap = swapOffers.find(s => s.id === swapId);
+                if (!swap) return;
+                const mgrs = staffList.filter(s => isAdmin(s.name)).map(s => s.name);
+                const pendApproval = async () => {
+                    await db.collection("shiftSwaps").doc(swapId).update({ claimedBy: staffName, status: "pending_approval", claimedAt: new Date().toISOString() });
+                    sendNotification([swap.offeredBy, ...mgrs], "🔄 Shift Swap Claimed", staffName + " wants to take " + swap.offeredBy + "'s shift. Manager approval needed.", { type: "swap" });
+                };
+                // Auto-approve only if: same position, no overlap with the claimer's existing shifts, and not into overtime (>40h that week)
+                let auto = false;
+                try {
+                    const wk = swap.weekKey || weekKey;
+                    const snap = await db.collection("schedules").doc(wk).get();
+                    const data = snap.exists ? snap.data() : {};
+                    const existing = data.publishedShifts || (data.status === "published" ? (data.shifts || []) : []) || [];
+                    const myShifts = existing.filter(s => s.employee === staffName && s.id !== swap.shift.id);
+                    const claimer = staffList.find(s => s.name === staffName);
+                    const shiftRole = (swap.shift.role || "").trim();
+                    const samePos = !shiftRole || (claimer && (claimer.role || "") === shiftRole);
+                    const overlap = myShifts.some(s => s.day === swap.shift.day && hmOverlap(s.startTime, s.endTime, swap.shift.startTime, swap.shift.endTime));
+                    const weekly = myShifts.reduce((sum, s) => sum + calcHours(s.startTime, s.endTime), 0) + calcHours(swap.shift.startTime, swap.shift.endTime);
+                    auto = samePos && !overlap && weekly <= 40;
+                } catch (e) { auto = false; }
+
+                if (!auto) { await pendApproval(); return; }
+                // Auto-approve: assign the shift to the claimer in the swap's own week doc, then mark approved
+                try {
+                    const targetKey = swap.weekKey || weekKey;
+                    const ref = db.collection("schedules").doc(targetKey);
+                    const snap = await ref.get();
+                    if (snap.exists) {
+                        const data = snap.data();
+                        await snapshotSchedule(targetKey, "before auto swap approval");
+                        const basePub = data.publishedShifts || (data.status === "published" ? (data.shifts || []) : []);
+                        const baseDraft = data.draftShifts || data.shifts || [];
+                        const newPub = basePub.map(s => s.id === swap.shift.id ? { ...s, employee: staffName } : s);
+                        const newDraft = baseDraft.map(s => s.id === swap.shift.id ? { ...s, employee: staffName } : s);
+                        await ref.set({ publishedShifts: newPub, draftShifts: newDraft, updatedBy: "Auto-approved", updatedAt: new Date().toISOString() }, { merge: true });
+                        if (targetKey === weekKey) { setPublishedShifts(newPub); setShifts(mgrAccess ? newDraft : newPub); }
+                    }
+                    await db.collection("shiftSwaps").doc(swapId).update({ claimedBy: staffName, status: "approved", claimedAt: new Date().toISOString(), approvedBy: "Auto-approved", approvedAt: new Date().toISOString(), autoApproved: true });
+                    sendNotification([swap.offeredBy, staffName, ...mgrs], "✅ Shift Swap Auto-Approved", staffName + " took " + swap.offeredBy + "'s shift — same position, no overtime or overlap.", { type: "swap" });
+                    window.showToast(language === "es" ? "¡Listo! Aprobado automáticamente" : "Done — auto-approved!", "success");
+                } catch (e) { await pendApproval(); }
             };
 
             // Take back an offered shift — only allowed while still unclaimed (open)
@@ -9674,6 +9713,8 @@
             const [vpTop, setVpTop] = useState(0);
             const fileRef = useRef(null);
             const messagesEndRef = useRef(null);
+            const composeRef = useRef(null);
+            useEffect(() => { if (composeRef.current && !newMessage) composeRef.current.style.height = "auto"; }, [newMessage]);
 
             const BG_PRESETS = [
                 { key: "default", color: "var(--bg-subtle)", swatch: "#e5e7eb" },
@@ -10032,8 +10073,8 @@
                             <button onClick={() => setUrgent(!urgent)} className="flex-none flex items-center justify-center rounded-full active:scale-90 transition" style={{ width: 38, height: 38, color: urgent ? "#dc2626" : "var(--text-muted)" }} aria-label={es ? "Urgente" : "Urgent"}>
                                 <svg width="21" height="21" viewBox="0 0 24 24" fill={urgent ? "#fee2e2" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13.5" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
                             </button>
-                            <div className="flex-1 flex items-center gap-1 pl-4 pr-1" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: 22, minHeight: 42 }}>
-                                <input value={newMessage} onChange={e => setNewMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendMessage())} placeholder={es ? "Mensaje..." : "Message..."} className="flex-1 bg-transparent outline-none py-2" style={{ color: "var(--text-primary)", fontSize: 16 }} />
+                            <div className="flex-1 flex items-end gap-1 pl-4 pr-1" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: 22, minHeight: 42 }}>
+                                <textarea ref={composeRef} rows={1} value={newMessage} onChange={e => { setNewMessage(e.target.value); const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={es ? "Mensaje..." : "Message..."} className="flex-1 bg-transparent outline-none py-2 resize-none" style={{ color: "var(--text-primary)", fontSize: 16, lineHeight: "20px", maxHeight: 120, overflowY: "auto" }} />
                                 {hasText && (
                                     <button onClick={() => sendMessage()} className="flex-none flex items-center justify-center rounded-full animate-scale active:scale-90 transition" style={{ width: 32, height: 32, background: "#0891b2", color: "white" }} aria-label={es ? "Enviar" : "Send"}>
                                         <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M3.4 20.4l17.45-7.48a1 1 0 0 0 0-1.84L3.4 3.6a1 1 0 0 0-1.4.92V9.5c0 .5.37.93.87.99L15 12 2.87 13.51c-.5.06-.87.49-.87.99v4.98a1 1 0 0 0 1.4.92z" /></svg>
@@ -13774,8 +13815,86 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 return () => unsubs.forEach(u => u());
             }, [staffName]);
 
+            // Load this + next week's published shifts (both stores) for the "next shift" card + today's coverage count
+            const [schedDocs, setSchedDocs] = useState({});
+            useEffect(() => {
+                if (!staffName) return;
+                const today = new Date();
+                const dow = today.getDay() === 0 ? 7 : today.getDay();
+                const mon0 = new Date(today); mon0.setDate(today.getDate() - dow + 1);
+                const mon1 = new Date(mon0); mon1.setDate(mon0.getDate() + 7);
+                const weeks = [window.fmtLocalDate(mon0), window.fmtLocalDate(mon1)];
+                const unsubs = [];
+                ["cwe", "kirkwood"].forEach(loc => weeks.forEach(ws => {
+                    const docId = loc + "_" + ws;
+                    unsubs.push(db.collection("schedules").doc(docId).onSnapshot(doc => {
+                        const data = doc.exists ? doc.data() : null;
+                        const useShifts = data && data.status === "published" ? (data.publishedShifts || data.shifts || []) : [];
+                        setSchedDocs(prev => ({ ...prev, [docId]: { loc, ws, shifts: useShifts } }));
+                    }));
+                }));
+                return () => unsubs.forEach(u => u());
+            }, [staffName]);
+
             const staffIsAdmin = isAdmin(staffName);
             const staffIsOwner = isOwner(staffName);
+            // Derive the person's next upcoming shift + today's coverage from the loaded schedule docs
+            const _homeSched = (() => {
+                const dk = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+                const now = new Date();
+                const todayStr = window.fmtLocalDate(now);
+                const curHM = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+                const fmtHM = (t) => { if (!t) return ""; const [h, m] = String(t).split(":").map(Number); const p = h >= 12 ? "pm" : "am"; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? h12 + p : h12 + ":" + String(m).padStart(2, "0") + p; };
+                const mine = [];
+                const openShifts = [];
+                const cov = { cwe: new Set(), kirkwood: new Set() };
+                const myStaff = staffList.find(s => s.name === staffName);
+                const myLoc = (myStaff && myStaff.location) || "all";
+                Object.entries(schedDocs).forEach(([docId, { loc, ws, shifts }]) => {
+                    (shifts || []).forEach(s => {
+                        const di = dk.indexOf(s.day); if (di < 0) return;
+                        const d = new Date(ws + "T12:00:00"); d.setDate(d.getDate() + di);
+                        const dateStr = window.fmtLocalDate(d);
+                        if (dateStr === todayStr && s.employee && s.employee !== "__OPEN__" && cov[loc]) cov[loc].add(s.employee);
+                        if (s.employee === staffName && (dateStr > todayStr || (dateStr === todayStr && (s.endTime || "23:59") >= curHM))) {
+                            mine.push({ ...s, _locName: loc === "cwe" ? "CWE" : "Kirkwood", _date: dateStr });
+                        }
+                        if (s.employee === "__OPEN__" && (myLoc === "all" || loc === myLoc) && (dateStr > todayStr || (dateStr === todayStr && (s.endTime || "23:59") >= curHM))) {
+                            openShifts.push({ ...s, _docId: docId, _locName: loc === "cwe" ? "CWE" : "Kirkwood", _date: dateStr });
+                        }
+                    });
+                });
+                mine.sort((a, b) => (a._date + (a.startTime || "")).localeCompare(b._date + (b.startTime || "")));
+                openShifts.sort((a, b) => (a._date + (a.startTime || "")).localeCompare(b._date + (b.startTime || "")));
+                const relDayLabel = (dateStr) => {
+                    const t0 = new Date(todayStr + "T12:00:00"); const d2 = new Date(dateStr + "T12:00:00");
+                    const diff = Math.round((d2 - t0) / 86400000);
+                    if (diff === 0) return language === "es" ? "Hoy" : "Today";
+                    if (diff === 1) return language === "es" ? "Mañana" : "Tomorrow";
+                    return d2.toLocaleDateString(language === "es" ? "es-US" : "en-US", { weekday: "long", month: "short", day: "numeric" });
+                };
+                return { nextShift: mine[0] || null, todayCov: { cwe: cov.cwe.size, kirkwood: cov.kirkwood.size }, fmtHM, relDayLabel, openShifts };
+            })();
+            // Pick up an open shift straight from the home screen (open pickups are auto-assigned, same as in the schedule)
+            const claimOpenFromHome = async (sh) => {
+                const ok = await window.askConfirm({ title: language === "es" ? "¿Tomar este turno?" : "Pick up this shift?", body: _homeSched.relDayLabel(sh._date) + " · " + _homeSched.fmtHM(sh.startTime) + " — " + _homeSched.fmtHM(sh.endTime) + " · " + sh._locName + (sh.role ? " · " + sh.role : "") });
+                if (!ok) return;
+                try {
+                    const ref = db.collection("schedules").doc(sh._docId);
+                    const snap = await ref.get();
+                    if (!snap.exists) { window.showToast(language === "es" ? "Ese turno ya no está" : "That shift is no longer available", "error"); return; }
+                    const data = snap.data();
+                    const basePub = data.publishedShifts || (data.status === "published" ? (data.shifts || []) : []);
+                    const baseDraft = data.draftShifts || data.shifts || [];
+                    const target = basePub.find(s => s.id === sh.id);
+                    if (!target || target.employee !== "__OPEN__") { window.showToast(language === "es" ? "Ese turno ya fue tomado" : "That shift was already taken", "error"); return; }
+                    const newPub = basePub.map(s => s.id === sh.id ? { ...s, employee: staffName } : s);
+                    const newDraft = baseDraft.map(s => s.id === sh.id ? { ...s, employee: staffName } : s);
+                    await ref.set({ publishedShifts: newPub, draftShifts: newDraft, updatedBy: staffName, updatedAt: new Date().toISOString() }, { merge: true });
+                    sendNotification(staffList.filter(s => isAdmin(s.name)).map(s => s.name), "🙋 Open Shift Claimed", staffName + " picked up an open shift", { type: "openshift" });
+                    window.showToast(language === "es" ? "¡Turno tuyo!" : "Got it — the shift is yours!", "success");
+                } catch (e) { window.showToast(language === "es" ? "No se pudo tomar el turno" : "Couldn't pick up the shift", "error"); }
+            };
             const canViewRecipes = canAccessRecipes(staffName, isAtPokedoke);
 
             // Request push notification permission when staff logs in
@@ -13899,6 +14018,52 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                                     <span className="text-white/90 text-xs font-bold bg-white/20 px-2 py-1 rounded-lg">📍 {shift._locName}{shift.role?" · "+shift.role:""}</span>
                                                 </div>
                                             ))}
+                                        </div>
+                                    </button>
+                                )}
+
+                                {/* Your next shift — shown when not already working today */}
+                                {todayShifts.length === 0 && (
+                                    <button onClick={() => setActiveTab("schedule")} className="w-full mb-4 text-left">
+                                        <div className="rounded-2xl p-4 bg-white border border-gray-100 shadow-sm">
+                                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{language === "es" ? "TU PRÓXIMO TURNO" : "YOUR NEXT SHIFT"}</p>
+                                            {_homeSched.nextShift ? (
+                                                <div className="flex items-center justify-between mt-1 gap-2">
+                                                    <p className="font-bold text-gray-800 text-base font-display">{_homeSched.relDayLabel(_homeSched.nextShift._date)} · {_homeSched.fmtHM(_homeSched.nextShift.startTime)} — {_homeSched.fmtHM(_homeSched.nextShift.endTime)}</p>
+                                                    <span className="text-xs font-bold bg-gray-100 px-2 py-1 rounded-lg text-gray-600 flex-none">📍 {_homeSched.nextShift._locName}{_homeSched.nextShift.role ? " · " + _homeSched.nextShift.role : ""}</span>
+                                                </div>
+                                            ) : (
+                                                <p className="font-bold text-gray-700 text-base mt-1">{language === "es" ? "No tienes turnos próximos" : "No upcoming shifts"}</p>
+                                            )}
+                                        </div>
+                                    </button>
+                                )}
+                                {/* Open shifts up for grabs — pick up directly */}
+                                {_homeSched.openShifts.length > 0 && (
+                                    <div className="rounded-2xl p-4 bg-white border border-gray-100 shadow-sm mb-4">
+                                        <p className="text-[10px] font-bold uppercase tracking-wider text-blue-500 mb-2">{language === "es" ? "TURNOS DISPONIBLES" : "OPEN SHIFTS — UP FOR GRABS"}</p>
+                                        <div className="space-y-2">
+                                            {_homeSched.openShifts.slice(0, 3).map((sh, i) => (
+                                                <div key={i} className="flex items-center justify-between gap-2">
+                                                    <div className="min-w-0">
+                                                        <p className="font-bold text-gray-800 text-sm truncate">{_homeSched.relDayLabel(sh._date)} · {_homeSched.fmtHM(sh.startTime)} — {_homeSched.fmtHM(sh.endTime)}</p>
+                                                        <p className="text-xs text-gray-400 truncate">📍 {sh._locName}{sh.role ? " · " + sh.role : ""}</p>
+                                                    </div>
+                                                    <button onClick={() => claimOpenFromHome(sh)} className="flex-none text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: "#0891b2", color: "white" }}>{language === "es" ? "Tomar" : "Pick up"}</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {_homeSched.openShifts.length > 3 && (
+                                            <button onClick={() => setActiveTab("schedule")} className="text-xs font-bold text-poke-600 mt-2">+{_homeSched.openShifts.length - 3} {language === "es" ? "más en el horario →" : "more in the schedule →"}</button>
+                                        )}
+                                    </div>
+                                )}
+                                {/* Today's coverage — managers & owners only, taps through to the schedule */}
+                                {staffIsAdmin && (
+                                    <button onClick={() => setActiveTab("schedule")} className="w-full mb-4 text-left">
+                                        <div className="rounded-2xl px-4 py-3 bg-white border border-gray-100 shadow-sm flex items-center justify-between gap-2">
+                                            <p className="text-sm font-bold text-gray-700">👥 {language === "es" ? "Hoy" : "Today"}: {_homeSched.todayCov.cwe} {language === "es" ? "en CWE" : "on at CWE"} · {_homeSched.todayCov.kirkwood} {language === "es" ? "en Kirkwood" : "at Kirkwood"}</p>
+                                            <span className="text-xs text-poke-600 font-bold flex-none">{language === "es" ? "Ver →" : "View →"}</span>
                                         </div>
                                     </button>
                                 )}
