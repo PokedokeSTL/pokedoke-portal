@@ -94,6 +94,18 @@
             --shadow-lg: 0 10px 25px -5px rgba(0,0,0,0.5);
             --shadow-xl: 0 20px 40px -10px rgba(0,0,0,0.6);
         }
+        /* ===== Dark-mode safety net =====
+           Themes hardcoded card surfaces/borders and the text INSIDE cards.
+           Pastel alert banners (bg-*-50) and inline-colored text are intentionally left untouched,
+           so this can't turn light text onto a light banner. */
+        :root.dark .bg-white { background-color: var(--bg-card) !important; }
+        :root.dark .bg-gray-50, :root.dark .bg-gray-100 { background-color: var(--bg-subtle) !important; }
+        :root.dark .border-gray-50, :root.dark .border-gray-100, :root.dark .border-gray-200 { border-color: var(--border-subtle) !important; }
+        :root.dark .card .text-gray-900, :root.dark .card .text-gray-800, :root.dark .card .text-gray-700,
+        :root.dark .bg-white .text-gray-900, :root.dark .bg-white .text-gray-800, :root.dark .bg-white .text-gray-700,
+        :root.dark .bg-white.text-gray-900, :root.dark .bg-white.text-gray-800, :root.dark .bg-white.text-gray-700 { color: var(--text-primary) !important; }
+        :root.dark .card .text-gray-600, :root.dark .card .text-gray-500, :root.dark .card .text-gray-400,
+        :root.dark .bg-white .text-gray-600, :root.dark .bg-white .text-gray-500, :root.dark .bg-white .text-gray-400 { color: var(--text-muted) !important; }
         body {
             margin: 0;
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -6016,12 +6028,15 @@
                                                         <th style={{position: "sticky", left: 0, top: 0, background: "var(--bg-subtle)", padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)", minWidth: 210, zIndex: 30}}>
                                                             {language==="es"?"EMPLEADO":"EMPLOYEE"}
                                                         </th>
-                                                        {DAY_KEYS.map((dk,di)=>(
-                                                            <th key={dk} style={{position: "sticky", top: 0, background: "var(--bg-subtle)", padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", borderRight: "1px solid var(--border-subtle)", zIndex: 20}}>
-                                                                <div>{DAYS[di].slice(0,3).toUpperCase()}</div>
-                                                                <div style={{fontSize: 10, fontWeight: 500, color: "var(--text-muted)", marginTop: 2}}>{getDateForDay(di)}</div>
+                                                        {DAY_KEYS.map((dk,di)=>{
+                                                            const isTodayCol = weekOffset===0 && di===todayMonIdx;
+                                                            return (
+                                                            <th key={dk} style={{position: "sticky", top: 0, background: isTodayCol ? "#dcfce7" : "var(--bg-subtle)", padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: isTodayCol ? "#15803d" : "var(--text-muted)", borderRight: "1px solid var(--border-subtle)", zIndex: 20}}>
+                                                                <div>{DAYS[di].slice(0,3).toUpperCase()}{isTodayCol?" •":""}</div>
+                                                                <div style={{fontSize: 10, fontWeight: 500, color: isTodayCol ? "#16a34a" : "var(--text-muted)", marginTop: 2}}>{getDateForDay(di)}</div>
                                                             </th>
-                                                        ))}
+                                                            );
+                                                        })}
                                                         <th style={{position: "sticky", top: 0, background: "var(--bg-subtle)", padding: "10px 8px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", minWidth: 60, zIndex: 20}}>
                                                             {language==="es"?"HRS":"HRS"}
                                                         </th>
