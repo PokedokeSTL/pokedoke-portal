@@ -106,6 +106,14 @@
         :root.dark .bg-white.text-gray-900, :root.dark .bg-white.text-gray-800, :root.dark .bg-white.text-gray-700 { color: var(--text-primary) !important; }
         :root.dark .card .text-gray-600, :root.dark .card .text-gray-500, :root.dark .card .text-gray-400,
         :root.dark .bg-white .text-gray-600, :root.dark .bg-white .text-gray-500, :root.dark .bg-white .text-gray-400 { color: var(--text-muted) !important; }
+        /* Schedule shift-row highlights: pastel bg-*-50 stays light in dark mode and hides the
+           adaptive (light) name text. Re-tint ONLY the schedule rows so other pastel banners
+           (inventory, checklists, alerts) are untouched. Colored left borders already read fine. */
+        :root.dark .pd-shift-row.bg-red-50 { background-color: rgba(248,113,113,0.14) !important; }
+        :root.dark .pd-shift-row.bg-orange-50 { background-color: rgba(251,146,60,0.14) !important; }
+        :root.dark .pd-shift-row.bg-yellow-50 { background-color: rgba(250,204,21,0.14) !important; }
+        :root.dark .pd-shift-row.bg-blue-50 { background-color: rgba(96,165,250,0.14) !important; }
+        :root.dark .pd-shift-row.bg-poke-50 { background-color: rgba(34,211,238,0.14) !important; }
         body {
             margin: 0;
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -4781,7 +4789,7 @@
             const staffRecord = staffList.find(s => s.name === staffName);
             const myLocation = staffRecord?.location || "cwe";
             const canSeeAllLocations = ownerAccess || myLocation === "all";
-            const canToggleLocation = canSeeAllLocations || mgrAccess;
+            const canToggleLocation = canSeeAllLocations;
 
             useEffect(() => {
                 if (!canToggleLocation && myLocation !== "all") setSchedLocation(myLocation);
@@ -6295,7 +6303,7 @@
                                                          draggable={mgrAccess}
                                                          onDragStart={mgrAccess?(e)=>{e.stopPropagation();setDraggedShift(shift);}:undefined}
                                                          onClick={mgrAccess?()=>openEditShift(shift):undefined}
-                                                         className={"p-3 flex items-center justify-between "+(mgrAccess?"cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition-colors ":"")+(hasConflict?"bg-red-50 border-l-4 border-red-400 ":isOT?"bg-orange-50 border-l-4 border-orange-400 ":availStatus===false?"bg-yellow-50 border-l-4 border-yellow-400 ":isOpen?"bg-blue-50 border-l-4 border-blue-400 ":isMine?"bg-poke-50":"")}>
+                                                         className={"pd-shift-row p-3 flex items-center justify-between "+(mgrAccess?"cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition-colors ":"")+(hasConflict?"bg-red-50 border-l-4 border-red-400 ":isOT?"bg-orange-50 border-l-4 border-orange-400 ":availStatus===false?"bg-yellow-50 border-l-4 border-yellow-400 ":isOpen?"bg-blue-50 border-l-4 border-blue-400 ":isMine?"bg-poke-50":"")}>
                                                         <div className="flex-1 min-w-0">
                                                             <p className={"font-semibold text-sm "+(isMine?"text-poke-700":isOpen?"text-blue-700":"text-gray-800")}>
                                                                 {isOpen?"🆕 "+(language==="es"?"TURNO ABIERTO":"OPEN SHIFT"):(isMine?"✓ ":"")+shift.employee}
@@ -8135,7 +8143,7 @@
                 );
             };
 
-            if (loading) return <div className="text-center text-gray-500 py-4">{language === "es" ? "Cargando..." : "Loading..."}</div>;
+            if (loading) return <Skeleton count={3}/>;
 
             if (historyDates.length === 0) {
                 return (
@@ -8305,7 +8313,7 @@
                 setTimeout(() => win.print(), 300);
             };
 
-            if (loading) return <div className="text-center text-gray-500 py-4">{language === "es" ? "Cargando..." : "Loading..."}</div>;
+            if (loading) return <Skeleton count={3}/>;
 
             if (historyDates.length === 0) {
                 return (
@@ -8593,7 +8601,7 @@
         }
 
         // Admin Panel Component
-        function AdminPanel({ language, staffList, setStaffList, goAddEmployee }) {
+        function AdminPanel({ language, staffList, setStaffList, goAddEmployee, staffName }) {
             const [editingId, setEditingId] = useState(null);
             const [editPin, setEditPin] = useState("");
             const [editRole, setEditRole] = useState("");
@@ -8610,6 +8618,9 @@
             const [adminNote, setAdminNote] = useState("");
 
             const showSaved = () => { setSavedMsg(true); setTimeout(() => setSavedMsg(null), 1500); };
+            const _adminMyLoc = (staffList||[]).find(s=>s.name===staffName)?.location || "all";
+            const _adminSeesAll = isOwner(staffName) || _adminMyLoc === "all";
+            const visibleStaff = _adminSeesAll ? staffList : staffList.filter(p => p.location === _adminMyLoc);
 
             // Load maintenance requests
             useEffect(() => {
@@ -8665,7 +8676,7 @@
             const handleAddStaff = async () => {
                 if (!newName.trim() || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) return;
                 const maxId = Math.max(...staffList.map(s => s.id), 0);
-                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin };
+                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: _adminMyLoc === "all" ? "cwe" : _adminMyLoc };
                 const updated = [...staffList, newStaff];
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
@@ -8811,7 +8822,7 @@
                                 <span className="text-2xl">👥</span>
                                 <div className="text-left">
                                     <h3 className="font-bold text-blue-700">{language === "es" ? "Personal" : "Staff"}</h3>
-                                    <p className="text-xs text-blue-500">{staffList.length} {language === "es" ? "empleados" : "members"}</p>
+                                    <p className="text-xs text-blue-500">{visibleStaff.length} {language === "es" ? "empleados" : "members"}</p>
                                 </div>
                             </div>
                             <span className="text-gray-400 text-xl">{staffExpanded ? "▼" : "▶"}</span>
@@ -8820,7 +8831,7 @@
                         {staffExpanded && (
                             <div className="mt-2">
                                 <div className="space-y-2 mb-4">
-                                    {staffList.map(person => (
+                                    {visibleStaff.map(person => (
                                         <div key={person.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                                             {editingId === person.id ? (
                                                 <div className="p-3 bg-blue-50 space-y-2">
@@ -10844,7 +10855,8 @@
 
             // form state
             const [today, setToday] = useState(window.fmtLocalDate());
-            const [loc, setLoc] = useState("cwe");
+            const _salesMyLoc = (staffList||[]).find(s=>s.name===staffName)?.location || "cwe";
+            const [loc, setLoc] = useState(_salesMyLoc === "all" ? "cwe" : _salesMyLoc);
             const [fFood, setFFood] = useState("");
             const [fDrink, setFDrink] = useState("");
             const [fRetail, setFRetail] = useState("");
@@ -10930,6 +10942,7 @@
 
             // Reusable money input
             const recent = sales.slice(0, 14);
+            const recentMine = _salesMyLoc === "all" ? recent : recent.filter(s => s.location === _salesMyLoc);
 
             // ===== MANAGER VIEW: drawer close only (no sales, no over/short) =====
             if (!ownerAccess) {
@@ -10945,10 +10958,14 @@
                             </div>
                             <div className="flex-1 min-w-0">
                                 <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{L("Location","Ubicación")}</label>
+                                {_salesMyLoc === "all" ? (
                                 <select value={loc} onChange={e=>setLoc(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16,boxSizing:"border-box",maxWidth:"100%"}}>
                                     <option value="cwe">Central West End</option>
                                     <option value="kirkwood">Kirkwood</option>
                                 </select>
+                                ) : (
+                                <div className="w-full px-3 py-2 border rounded-xl text-sm mt-1 font-bold" style={{background:"var(--bg-subtle)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",boxSizing:"border-box"}}>📍 {loc==="cwe"?"Central West End":"Kirkwood"}</div>
+                                )}
                             </div>
                         </div>
 
@@ -10970,11 +10987,11 @@
                         <button onClick={saveDrawer} disabled={saving} className="w-full py-3 rounded-xl font-bold text-sm active:scale-95 transition mb-5" style={{background:"#0891b2",color:"white",opacity:saving?0.6:1}}>💾 {saving?L("Saving…","Guardando…"):L("Save Drawer Close","Guardar Cierre")}</button>
 
                         <p className="font-bold text-sm mb-2" style={{color:"var(--text-primary)"}}>📋 {L("Recent Closes","Cierres Recientes")}</p>
-                        {loading ? <Skeleton count={3}/> : recent.filter(s=>s.cashCounted!=null||s.depositAmount!=null).length===0 ? (
+                        {loading ? <Skeleton count={3}/> : recentMine.filter(s=>s.cashCounted!=null||s.depositAmount!=null).length===0 ? (
                             <p className="text-center text-sm py-6" style={{color:"var(--text-muted)"}}>{L("No drawer closes yet","Sin cierres registrados")}</p>
                         ) : (
                             <div className="space-y-2">
-                                {recent.filter(s=>s.cashCounted!=null||s.depositAmount!=null).map(s => (
+                                {recentMine.filter(s=>s.cashCounted!=null||s.depositAmount!=null).map(s => (
                                     <div key={s.id} className="card p-3 flex justify-between items-center">
                                         <div>
                                             <p className="font-semibold text-sm" style={{color:"var(--text-primary)"}}>{new Date(s.date+"T12:00:00").toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})}</p>
@@ -12440,7 +12457,7 @@
                                 <h2 className="text-base font-bold text-gray-800 mb-1">{es ? "Posiciones Abiertas" : "Open Positions"}</h2>
                                 <p className="text-xs text-gray-400 mb-4">{es ? "Toca una posición para postularte." : "Tap a position to apply."}</p>
                                 {loading ? (
-                                    <div className="text-center text-gray-400 text-sm py-8">{es ? "Cargando..." : "Loading..."}</div>
+                                    <Skeleton count={4}/>
                                 ) : postings.length === 0 ? (
                                     <div className="text-center py-10">
                                         <div className="text-4xl mb-3">🍃</div>
@@ -12612,7 +12629,7 @@
 
             // Gate: require Firebase owner sign-in before showing any applicant data
             if (!authReady) {
-                return <div className="p-8 text-center text-gray-400 text-sm animate-in">{es ? "Cargando..." : "Loading..."}</div>;
+                return <div className="p-8"><Skeleton count={4}/></div>;
             }
             if (!authUser) {
                 return (
@@ -12681,7 +12698,7 @@
                                 ))}
                             </div>
 
-                            {loading ? <div className="text-center text-gray-400 text-sm py-8">{es ? "Cargando..." : "Loading..."}</div>
+                            {loading ? <Skeleton count={4}/>
                                 : filteredApps.length === 0 ? (
                                     <div className="text-center py-12">
                                         <div className="text-4xl mb-3">📭</div>
@@ -13571,7 +13588,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const del = i => setDraft(d => d.filter((_, idx) => idx !== i));
             const addSection = () => setDraft(d => [...d, { id: "sec_" + Date.now(), title: "New section", titleEs: "", body: "", bodyEs: "" }]);
 
-            if (loading) return <div className="p-4"><p className="text-center text-sm py-10" style={{ color: "var(--text-muted)" }}>{L("Loading…", "Cargando…")}</p></div>;
+            if (loading) return <div className="p-4"><Skeleton count={5}/></div>;
 
             // No handbook yet
             if (!doc) {
@@ -13888,7 +13905,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     if (diff === 1) return language === "es" ? "Mañana" : "Tomorrow";
                     return d2.toLocaleDateString(language === "es" ? "es-US" : "en-US", { weekday: "long", month: "short", day: "numeric" });
                 };
-                return { nextShift: mine[0] || null, todayCov: { cwe: cov.cwe.size, kirkwood: cov.kirkwood.size }, fmtHM, relDayLabel, openShifts };
+                return { nextShift: mine[0] || null, todayCov: { cwe: cov.cwe.size, kirkwood: cov.kirkwood.size }, myLoc, fmtHM, relDayLabel, openShifts };
             })();
             // Pick up an open shift straight from the home screen (open pickups are auto-assigned, same as in the schedule)
             const claimOpenFromHome = async (sh) => {
@@ -14077,7 +14094,14 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 {staffIsAdmin && (
                                     <button onClick={() => setActiveTab("schedule")} className="w-full mb-4 text-left">
                                         <div className="rounded-2xl px-4 py-3 bg-white border border-gray-100 shadow-sm flex items-center justify-between gap-2">
-                                            <p className="text-sm font-bold text-gray-700">👥 {language === "es" ? "Hoy" : "Today"}: {_homeSched.todayCov.cwe} {language === "es" ? "en CWE" : "on at CWE"} · {_homeSched.todayCov.kirkwood} {language === "es" ? "en Kirkwood" : "at Kirkwood"}</p>
+                                            <p className="text-sm font-bold text-gray-700">👥 {language === "es" ? "Hoy" : "Today"}: {(() => {
+                                                const ml = _homeSched.myLoc;
+                                                const cwePart = _homeSched.todayCov.cwe + " " + (language === "es" ? "en CWE" : "on at CWE");
+                                                const kirkPart = _homeSched.todayCov.kirkwood + " " + (language === "es" ? "en Kirkwood" : "at Kirkwood");
+                                                if (ml === "cwe") return cwePart;
+                                                if (ml === "kirkwood") return kirkPart;
+                                                return cwePart + " · " + kirkPart;
+                                            })()}</p>
                                             <span className="text-xs text-poke-600 font-bold flex-none">{language === "es" ? "Ver →" : "View →"}</span>
                                         </div>
                                     </button>
@@ -14296,7 +14320,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         {activeTab === "messages" && <Messages language={language} staffName={staffName} staffList={staffList} userPrefs={userPrefs} saveUserPref={saveUserPref} />}
                         {activeTab === "recipes" && canViewRecipes && <Recipes language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
-                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} goAddEmployee={()=>{ setEmpAutoAdd(true); setActiveTab("employees"); }} />}
+                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} goAddEmployee={()=>{ setEmpAutoAdd(true); setActiveTab("employees"); }} staffName={staffName} />}
                         {activeTab === "timeclock" && <TimeClock language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "checklists" && <Checklists language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "allergens" && <Allergens language={language} />}
