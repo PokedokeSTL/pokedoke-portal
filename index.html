@@ -1746,7 +1746,7 @@
         }
 
         // Operations Component
-        function Operations({ language, staffList, staffName }) {
+        function Operations({ language, staffList, staffName, focus, onFocusConsumed }) {
             const [passwordEntered, setPasswordEntered] = useState(false);
             const [password, setPassword] = useState("");
             const [allCounts, setAllCounts] = useState({}); // { cwe:{itemId:n}, kirkwood:{...} }
@@ -1758,6 +1758,13 @@
             const inventory = allCounts[invLoc] || {};
             const setInventory = (next) => setAllCounts(prev => ({ ...prev, [invLoc]: (typeof next === "function" ? next(prev[invLoc] || {}) : next) }));
             const [activeTab, setActiveTab] = useState("checklist");
+            useEffect(() => {
+                if (focus && focus.sub) {
+                    setActiveTab(focus.sub);
+                    if (focus.loc && opsCanSwitchLoc) setInvLoc(focus.loc);
+                    if (onFocusConsumed) onFocusConsumed();
+                }
+            }, [focus]);
             const [lastUpdated, setLastUpdated] = useState({});
             const [editMode, setEditMode] = useState(false);
             const [editingIdx, setEditingIdx] = useState(null);
@@ -2033,7 +2040,7 @@
                     await persistCounts(newInv);
 
                     setAuditCounts({});
-                    await db.collection("ops").doc("latestAlert").set({type:"audit",by:staffName,date:new Date().toISOString(),totalItems:results.length,itemsWithVariance:results.filter(r=>r.variance!==0).length,belowPar:results.filter(r=>r.physicalCount<(parLevels[r.id]||0)).length});
+                    await db.collection("ops").doc("latestAlert").set({type:"audit",by:staffName,location:invLoc,date:new Date().toISOString(),totalItems:results.length,itemsWithVariance:results.filter(r=>r.variance!==0).length,belowPar:results.filter(r=>r.physicalCount<(parLevels[r.id]||0)).length});
                     window.showToast(language === "es" ? "✅ Auditoría guardada. Inventario actualizado con conteos físicos." : "✅ Audit saved. Inventory updated to physical counts.", "success");
                 } catch(e) { console.error(e); }
                 setAuditSaving(false);
@@ -3762,7 +3769,7 @@
                                     <button onClick={async()=>{try{
                                         await db.collection("quickCounts").doc(invLoc+"_"+window.fmtLocalDate()).set({counts:quickCounts,countedBy:staffName,location:invLoc,date:new Date().toISOString()});
                                         const lowItems=Object.entries(quickCounts).filter(([k,v])=>v==="low"||v==="out");
-                                        await db.collection("ops").doc("latestAlert").set({type:"quickcheck",by:staffName,date:new Date().toISOString(),lowCount:lowItems.length,outCount:Object.values(quickCounts).filter(v=>v==="out").length});
+                                        await db.collection("ops").doc("latestAlert").set({type:"quickcheck",by:staffName,location:invLoc,date:new Date().toISOString(),lowCount:lowItems.length,outCount:Object.values(quickCounts).filter(v=>v==="out").length});
                                         window.showToast(language==="es"?"¡Guardado!":"Saved!", "success");
                                     }catch(e){console.error(e);}}}
                                         className="w-full py-4 bg-poke-600 text-white font-bold rounded-2xl shadow-lg active:scale-95 transition">💾 {language==="es"?"Guardar Revisión":"Save Quick Check"}</button>
@@ -13783,9 +13790,13 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             });
             const [empAutoAdd, setEmpAutoAdd] = useState(false);
             const [scheduleFocus, setScheduleFocus] = useState(null);
+            const [opsFocus, setOpsFocus] = useState(null);
             const navigateTo = (target) => {
                 if (!target || !target.tab) return;
-                if (target.sub) setScheduleFocus({ sub: target.sub, id: target.id || null, ts: Date.now() });
+                if (target.sub) {
+                    if (target.tab === "operations") setOpsFocus({ sub: target.sub, loc: target.loc || null, ts: Date.now() });
+                    else setScheduleFocus({ sub: target.sub, id: target.id || null, ts: Date.now() });
+                }
                 setActiveTab(target.tab);
             };
 
@@ -14002,7 +14013,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                     const timeSince = Math.round((Date.now() - new Date(inventoryAlert.date).getTime()) / 3600000);
                                     const timeLabel = timeSince < 1 ? (language==="es"?"hace un momento":"just now") : timeSince < 24 ? timeSince+"h "+(language==="es"?"atrás":"ago") : Math.round(timeSince/24)+"d "+(language==="es"?"atrás":"ago");
                                     return (
-                                        <button onClick={()=>setActiveTab("operations")} className="w-full mb-4 text-left">
+                                        <button onClick={()=>{ setOpsFocus({sub:"inventory", loc: inventoryAlert.location || null, ts: Date.now()}); setActiveTab("operations"); }} className="w-full mb-4 text-left">
                                             <div className={"rounded-2xl p-4 border shadow-sm " + (
                                                 (inventoryAlert.outCount > 0 || inventoryAlert.belowPar > 0) ? "bg-red-50 border-red-200" :
                                                 inventoryAlert.lowCount > 0 ? "bg-yellow-50 border-yellow-200" :
@@ -14311,7 +14322,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         )}
 
                         {activeTab === "training" && <TrainingHub staffName={staffName} language={language} />}
-                        {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} />}
+                        {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} focus={opsFocus} onFocusConsumed={()=>setOpsFocus(null)} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} staffList={staffList} focus={scheduleFocus} />}
                         {activeTab === "dashboard" && staffIsOwner && <Dashboard language={language} staffName={staffName} staffList={staffList} />}
