@@ -5634,6 +5634,36 @@
                 }
             };
 
+            // Manager declines a claimed swap — the claim is removed and the offer goes back to open
+            // so a qualified person can still take it (the team isn't left short by a bad match).
+            const declineSwap = async (swap) => {
+                const mgrs = staffList.filter(s => isAdmin(s.name)).map(s => s.name);
+                await db.collection("shiftSwaps").doc(swap.id).update({ status: "open", claimedBy: null, claimedAt: null, declinedClaimer: swap.claimedBy || null, declinedBy: staffName, declinedAt: new Date().toISOString() });
+                sendNotification([swap.claimedBy, swap.offeredBy].filter(Boolean), "❌ Shift Swap Declined", staffName + " declined " + (swap.claimedBy||"the claim") + " taking " + swap.offeredBy + "'s shift. It's open again.", { type: "swap" });
+                window.showToast(language === "es" ? "Reclamo rechazado — el turno vuelve a estar disponible" : "Claim declined — the shift is open again", "success");
+            };
+
+            // Claimer withdraws their own pending claim — the offer returns to open.
+            const unclaimSwap = async (swapId) => {
+                try {
+                    let offeredBy = null;
+                    await db.runTransaction(async (tx) => {
+                        const ref = db.collection("shiftSwaps").doc(swapId);
+                        const snap = await tx.get(ref);
+                        if (!snap.exists) return;
+                        const d = snap.data();
+                        if (d.status !== "pending_approval" || d.claimedBy !== staffName) throw new Error("nope");
+                        offeredBy = d.offeredBy;
+                        tx.update(ref, { status: "open", claimedBy: null, claimedAt: null });
+                    });
+                    const mgrs = staffList.filter(s => isAdmin(s.name)).map(s => s.name);
+                    sendNotification([offeredBy, ...mgrs].filter(Boolean), "↩️ Shift Claim Withdrawn", staffName + " withdrew their claim on " + (offeredBy||"a") + "'s shift. It's open again.", { type: "swap" });
+                    window.showToast(language === "es" ? "Reclamo retirado — el turno vuelve a estar disponible" : "Claim withdrawn — the shift is open again", "success");
+                } catch (e) {
+                    window.showToast(language === "es" ? "Ya no se puede retirar — puede que ya esté aprobado" : "Can't withdraw — it may already be approved", "error", 5000);
+                }
+            };
+
             const approveSwap = async (swap) => {
                 await db.collection("shiftSwaps").doc(swap.id).update({status:"approved", approvedBy:staffName, approvedAt:new Date().toISOString()});
                 // Always update the swap's OWN week/location doc — never the schedule currently on screen,
@@ -6871,6 +6901,14 @@
                                 <div key={swap.id} ref={el=>{ if(el && highlightId===swap.id) el.scrollIntoView({behavior:"smooth",block:"center"}); }} className={"bg-white rounded-xl border p-3 "+(swap.status==="approved"?"border-green-200":swap.status==="open"?"border-yellow-200":"border-blue-200")} style={highlightId===swap.id?{boxShadow:"0 0 0 3px #06b6d4",transition:"box-shadow 0.3s"}:undefined}>
                                     <p className="font-semibold text-sm text-gray-800">{swap.offeredBy} {language==="es"?"ofrece":"offers"}:</p>
                                     <p className="text-xs text-gray-500">{swap.shift?.day} · {swap.shift?.startTime}-{swap.shift?.endTime} · {swap.shift?.role}</p>
+                                    {swap.status==="pending_approval" && (()=>{
+                                        const claimerRole = (staffList.find(s=>s.name===swap.claimedBy)?.role)||"";
+                                        const shiftRole = swap.shift?.role||"";
+                                        if (shiftRole && claimerRole && claimerRole!==shiftRole) {
+                                            return <p className="text-xs font-bold mt-1.5 px-2 py-1 rounded-lg" style={{background:"#fef3c7",color:"#92400e"}}>⚠️ {language==="es"?(swap.claimedBy+" es "+claimerRole+" — el turno necesita "+shiftRole+". No cubre esta posición."):(swap.claimedBy+" is "+claimerRole+" — shift needs "+shiftRole+". Won't cover this position.")}</p>;
+                                        }
+                                        return null;
+                                    })()}
                                     <div className="flex items-center gap-2 mt-2">
                                         {swap.status==="open" && swap.offeredBy!==staffName && (
                                             <button onClick={()=>claimSwap(swap.id)} className="flex-1 py-1.5 bg-poke-600 text-white rounded-xl text-xs font-bold">{language==="es"?"🙋 Reclamar":"🙋 Claim"}</button>
@@ -6882,6 +6920,12 @@
                                         {swap.status==="pending_approval" && <span className="text-xs text-blue-600 font-bold">🙋 {swap.claimedBy} — {language==="es"?"esperando":"awaiting"}</span>}
                                         {swap.status==="pending_approval" && mgrAccess && (
                                             <button onClick={()=>approveSwap(swap)} className="py-1.5 px-3 bg-green-600 text-white rounded-xl text-xs font-bold">✅</button>
+                                        )}
+                                        {swap.status==="pending_approval" && mgrAccess && (
+                                            <button onClick={()=>declineSwap(swap)} className="py-1.5 px-3 bg-red-100 text-red-700 rounded-xl text-xs font-bold">❌ {language==="es"?"Rechazar":"Decline"}</button>
+                                        )}
+                                        {swap.status==="pending_approval" && swap.claimedBy===staffName && (
+                                            <button onClick={()=>unclaimSwap(swap.id)} className="py-1.5 px-3 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold whitespace-nowrap">↩️ {language==="es"?"Retirar":"Take back"}</button>
                                         )}
                                         {swap.status==="approved" && <span className="text-xs text-green-600 font-bold">✅ {language==="es"?"Aprobado":"Approved"} → {swap.claimedBy}</span>}
                                     </div>
