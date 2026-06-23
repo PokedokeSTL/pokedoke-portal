@@ -6900,7 +6900,17 @@
                             {swapOffers.filter(s=>s.status==="open"||s.status==="pending_approval"||(mgrAccess)).map(swap=>(
                                 <div key={swap.id} ref={el=>{ if(el && highlightId===swap.id) el.scrollIntoView({behavior:"smooth",block:"center"}); }} className={"bg-white rounded-xl border p-3 "+(swap.status==="approved"?"border-green-200":swap.status==="open"?"border-yellow-200":"border-blue-200")} style={highlightId===swap.id?{boxShadow:"0 0 0 3px #06b6d4",transition:"box-shadow 0.3s"}:undefined}>
                                     <p className="font-semibold text-sm text-gray-800">{swap.offeredBy} {language==="es"?"ofrece":"offers"}:</p>
-                                    <p className="text-xs text-gray-500">{swap.shift?.day} · {swap.shift?.startTime}-{swap.shift?.endTime} · {swap.shift?.role}</p>
+                                    <p className="text-xs text-gray-500">{(()=>{
+                                        const dk = swap.shift?.day;
+                                        const idx = DAY_KEYS.indexOf(dk);
+                                        const wkStart = swap.weekKey ? swap.weekKey.split("_").slice(1).join("_") : null;
+                                        if (wkStart && idx >= 0) {
+                                            const dt = new Date(wkStart + "T12:00:00");
+                                            dt.setDate(dt.getDate() + idx);
+                                            return dt.toLocaleDateString(language==="es"?"es-ES":"en-US", {weekday:"short", month:"short", day:"numeric"});
+                                        }
+                                        return idx >= 0 ? DAYS[idx] : (dk || "");
+                                    })()} · {swap.shift?.startTime}-{swap.shift?.endTime} · {swap.shift?.role}</p>
                                     {swap.status==="pending_approval" && (()=>{
                                         const claimerRole = (staffList.find(s=>s.name===swap.claimedBy)?.role)||"";
                                         const shiftRole = swap.shift?.role||"";
