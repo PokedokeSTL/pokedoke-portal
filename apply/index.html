@@ -4723,6 +4723,7 @@
             const [tempTimeOffDays, setTempTimeOffDays] = useState(14);
             const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
             const [showAllEmployees, setShowAllEmployees] = useState(true);
+            const [openShiftsCollapsed, setOpenShiftsCollapsed] = useState(false);
             const [gridAddCell, setGridAddCell] = useState(null); // {employee, dayKey} when adding via grid
             const gridHeadRef = useRef(null);
             const todayCardRef = useRef(null);
@@ -6091,9 +6092,9 @@
                                                     {/* Open shifts row — always visible for drag targets */}
                                                     {mgrAccess && (
                                                         <tr>
-                                                            <td style={{position: "sticky", left: 0, top: gridHeaderH, background: "#dbeafe", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "2px solid #93c5fd", zIndex: 25}}>
-                                                                <div style={{fontWeight: 700, fontSize: 13, color: "#1e40af"}}>🆕 {language==="es"?"Turnos Abiertos":"Open Shifts"}</div>
-                                                                <div style={{fontSize: 10, color: "#3b82f6"}}>{openShifts.length} {language==="es"?"sin asignar":"unassigned"}</div>
+                                                            <td onClick={()=>setOpenShiftsCollapsed(!openShiftsCollapsed)} title={language==="es"?"Mostrar/ocultar turnos abiertos":"Show/hide open shifts"} style={{position: "sticky", left: 0, top: gridHeaderH, background: "#dbeafe", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "2px solid #93c5fd", zIndex: 25, cursor: "pointer"}}>
+                                                                <div style={{fontWeight: 700, fontSize: 13, color: "#1e40af", display:"flex", alignItems:"center", gap:6}}><span style={{fontSize:11}}>{openShiftsCollapsed?"▸":"▾"}</span>🆕 {language==="es"?"Turnos Abiertos":"Open Shifts"}</div>
+                                                                <div style={{fontSize: 10, color: "#3b82f6", marginLeft:17}}>{openShifts.length} {language==="es"?"sin asignar":"unassigned"}{openShiftsCollapsed?(language==="es"?" · toca para ver":" · tap to show"):""}</div>
                                                             </td>
                                                             {DAY_KEYS.map(dk=>{
                                                                 const cellShifts = openShifts.filter(s=>s.day===dk).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
@@ -6103,8 +6104,10 @@
                                                                         onDragLeave={(e)=>{e.currentTarget.style.background="#eff6ff";}}
                                                                         onDrop={(e)=>{e.preventDefault();e.currentTarget.style.background="#eff6ff";if(draggedShift){const updated=shifts.map(s=>s.id===draggedShift.id?{...s,day:dk,employee:"__OPEN__"}:s);setShifts(updated);writeDraft(updated);}setDraggedShift(null);}}
                                                                         onClick={()=>setGridAddCell({employee:"__OPEN__", dayKey:dk})}
-                                                                        style={{position: "sticky", top: gridHeaderH, padding: 4, borderRight: "1px solid var(--border-subtle)", borderBottom: "2px solid #93c5fd", verticalAlign: "top", minHeight: 60, background: "#eff6ff", cursor: "pointer", zIndex: 15}}>
-                                                                        {cellShifts.map(shift=>(
+                                                                        style={{position: "sticky", top: gridHeaderH, padding: 4, borderRight: "1px solid var(--border-subtle)", borderBottom: "2px solid #93c5fd", verticalAlign: "top", minHeight: openShiftsCollapsed ? 0 : 60, background: "#eff6ff", cursor: "pointer", zIndex: 15}}>
+                                                                        {openShiftsCollapsed
+                                                                            ? (cellShifts.length>0 && <div style={{textAlign:"center", fontSize:11, fontWeight:700, color:"#3b82f6"}}>{cellShifts.length}</div>)
+                                                                            : cellShifts.map(shift=>(
                                                                             <div key={shift.id}
                                                                                 draggable
                                                                                 onDragStart={(e)=>{e.stopPropagation();setDraggedShift(shift);}}
