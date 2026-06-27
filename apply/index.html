@@ -4723,7 +4723,7 @@
             const [tempTimeOffDays, setTempTimeOffDays] = useState(14);
             const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
             const [showAllEmployees, setShowAllEmployees] = useState(true);
-            const [openShiftsCollapsed, setOpenShiftsCollapsed] = useState(false);
+            const [openShiftsCollapsed, setOpenShiftsCollapsed] = useState(true);
             // Height of the sticky app header, so the location toggle can pin just beneath it while scrolling.
             const [appHeaderH, setAppHeaderH] = useState(92);
             useEffect(() => {
@@ -6103,8 +6103,8 @@
                                                     {mgrAccess && (
                                                         <tr>
                                                             <td onClick={()=>setOpenShiftsCollapsed(!openShiftsCollapsed)} title={language==="es"?"Mostrar/ocultar turnos abiertos":"Show/hide open shifts"} style={{position: "sticky", left: 0, top: gridHeaderH, background: "#dbeafe", padding: "8px 12px", borderRight: "1px solid var(--border-subtle)", borderBottom: "2px solid #93c5fd", zIndex: 25, cursor: "pointer"}}>
-                                                                <div style={{fontWeight: 700, fontSize: 13, color: "#1e40af", display:"flex", alignItems:"center", gap:6}}><span style={{fontSize:11}}>{openShiftsCollapsed?"▸":"▾"}</span>🆕 {language==="es"?"Turnos Abiertos":"Open Shifts"}</div>
-                                                                <div style={{fontSize: 10, color: "#3b82f6", marginLeft:17}}>{openShifts.length} {language==="es"?"sin asignar":"unassigned"}{openShiftsCollapsed?(language==="es"?" · toca para ver":" · tap to show"):""}</div>
+                                                                <div style={{fontWeight: 700, fontSize: 13, color: "#1e40af", display:"flex", alignItems:"center", gap:6}}><span style={{display:"inline-flex", alignItems:"center", justifyContent:"center", width:18, height:18, borderRadius:5, background:"#1e40af", color:"#fff", fontSize:11, lineHeight:1}}>{openShiftsCollapsed?"▸":"▾"}</span>🆕 {language==="es"?"Turnos Abiertos":"Open Shifts"}</div>
+                                                                <div style={{fontSize: 10, color: "#3b82f6", marginLeft:24, fontWeight:600}}>{openShifts.length} {language==="es"?"sin asignar":"unassigned"} · {openShiftsCollapsed?(language==="es"?"toca para ver":"tap to show"):(language==="es"?"toca para ocultar":"tap to hide")}</div>
                                                             </td>
                                                             {DAY_KEYS.map(dk=>{
                                                                 const cellShifts = openShifts.filter(s=>s.day===dk).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
