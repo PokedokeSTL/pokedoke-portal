@@ -4723,7 +4723,7 @@
             const [tempTimeOffDays, setTempTimeOffDays] = useState(14);
             const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
             const [showAllEmployees, setShowAllEmployees] = useState(true);
-            const [openShiftsCollapsed, setOpenShiftsCollapsed] = useState(true);
+            const [openShiftsCollapsed, setOpenShiftsCollapsed] = useState(false);
             // Height of the sticky app header, so the location toggle can pin just beneath it while scrolling.
             const [appHeaderH, setAppHeaderH] = useState(92);
             useEffect(() => {
@@ -6117,7 +6117,7 @@
                                                                         style={{position: "sticky", top: gridHeaderH, padding: 4, borderRight: "1px solid var(--border-subtle)", borderBottom: "2px solid #93c5fd", verticalAlign: "top", minHeight: openShiftsCollapsed ? 0 : 60, background: "#eff6ff", cursor: "pointer", zIndex: 15}}>
                                                                         {openShiftsCollapsed
                                                                             ? (cellShifts.length>0 && <div style={{textAlign:"center", fontSize:11, fontWeight:700, color:"#3b82f6"}}>{cellShifts.length}</div>)
-                                                                            : cellShifts.map(shift=>(
+                                                                            : <div style={{maxHeight:138, overflowY:"auto", overflowX:"hidden"}}>{cellShifts.map(shift=>(
                                                                             <div key={shift.id}
                                                                                 draggable
                                                                                 onDragStart={(e)=>{e.stopPropagation();setDraggedShift(shift);}}
@@ -6130,7 +6130,7 @@
                                                                                 {fmtShiftRange(shift)}
                                                                                 {shift.role && <div style={{fontSize: 10, opacity: 0.9, fontWeight: 400}}>{shift.role}</div>}
                                                                             </div>
-                                                                        ))}
+                                                                        ))}</div>}
                                                                     </td>
                                                                 );
                                                             })}
