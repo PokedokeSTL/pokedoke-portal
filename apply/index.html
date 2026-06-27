@@ -1496,7 +1496,10 @@
 
             const handlePinSubmit = () => {
                 const match = staffList.find(s => s.pin === pin);
-                if (match) {
+                if (match && match.active === false) {
+                    setError(language === "es" ? "Cuenta desactivada — contacta a un gerente" : "Account deactivated — contact a manager");
+                    setPin("");
+                } else if (match) {
                     loginByName(match.name);
                 } else {
                     setError(language === "es" ? "PIN incorrecto" : "Incorrect PIN");
@@ -1509,7 +1512,9 @@
                 setBioBusy(true);
                 try {
                     const name = await window.pdBio.unlock();
-                    if (name && staffList.some(s => s.name === name)) loginByName(name);
+                    const rec = name && staffList.find(s => s.name === name);
+                    if (rec && rec.active === false) { if (!silent) setError(language === "es" ? "Cuenta desactivada — contacta a un gerente" : "Account deactivated — contact a manager"); }
+                    else if (rec) loginByName(name);
                     else if (!silent) setError(language === "es" ? "Usa tu PIN" : "Use your PIN");
                 } catch (e) {
                     if (!silent) setError(language === "es" ? "Face ID falló — usa tu PIN" : "Face ID failed — use your PIN");
@@ -9229,7 +9234,7 @@
             );
         }
 
-        function Employees({ language, staffName, staffList, autoAdd, onAutoAddHandled }) {
+        function Employees({ language, staffName, staffList, setStaffList, autoAdd, onAutoAddHandled }) {
             const [employees, setEmployees] = useState([]);
             const [selectedEmp, setSelectedEmp] = useState(null);
             const [editMode, setEditMode] = useState(false);
@@ -9418,7 +9423,46 @@
                 const event = { id: Date.now().toString(), type: "reactivated", date: new Date().toISOString(), by: staffName };
                 const history = [...(selectedEmp.history || []), event];
                 await db.collection("employees").doc(docId).update({ status: "active", history, updatedAt: new Date().toISOString() });
+                // Restore the staff record so login + schedule work again.
+                if (setStaffList) {
+                    const updatedStaff = staffList.map(s => s.name === selectedEmp.name ? { ...s, active: true } : s);
+                    await db.collection("config").doc("staff").set({ list: updatedStaff });
+                    setStaffList(updatedStaff);
+                }
                 setSelectedEmp({ ...selectedEmp, status: "active", history });
+            };
+
+            // When an employee is deactivated, turn their upcoming shifts into open shifts so they
+            // can be picked up. Only touches the current week and later (past weeks stay as history),
+            // which keeps the current week usable as a week-over-week template with the slot now open.
+            const reopenShifts = async (empName) => {
+                let count = 0;
+                try {
+                    const d = new Date();
+                    const dow = d.getDay() === 0 ? 7 : d.getDay();
+                    d.setDate(d.getDate() - dow + 1);
+                    const currentMonday = window.fmtLocalDate(d);
+                    const snap = await db.collection("schedules").get();
+                    const batch = db.batch();
+                    let hasWrites = false;
+                    snap.forEach(docSnap => {
+                        const weekStart = docSnap.id.split("_").slice(1).join("_");
+                        if (weekStart < currentMonday) return;
+                        const data = docSnap.data();
+                        const conv = (arr) => (arr || []).map(s => s.employee === empName ? { ...s, employee: "__OPEN__" } : s);
+                        const hit = (arr) => (arr || []).some(s => s.employee === empName);
+                        if (!(hit(data.publishedShifts) || hit(data.draftShifts) || hit(data.shifts))) return;
+                        const update = {};
+                        if (data.publishedShifts) update.publishedShifts = conv(data.publishedShifts);
+                        if (data.draftShifts) update.draftShifts = conv(data.draftShifts);
+                        if (data.shifts) update.shifts = conv(data.shifts);
+                        count += (data.publishedShifts || data.draftShifts || data.shifts || []).filter(s => s.employee === empName).length;
+                        batch.set(docSnap.ref, update, { merge: true });
+                        hasWrites = true;
+                    });
+                    if (hasWrites) await batch.commit();
+                } catch (e) { console.error("reopenShifts failed", e); }
+                return count;
             };
 
             const confirmDeactivate = async () => {
@@ -9429,9 +9473,16 @@
                 const event = { id: Date.now().toString(), type: "deactivated", reason: deactForm.reason, rehirable: !!deactForm.rehirable, date: now, by: staffName };
                 const history = [...(emp.history || []), event];
                 await db.collection("employees").doc(docId).update({ status: "inactive", deactivation, history, updatedAt: now });
+                // Also flag the staff record so the deactivated person can't log in and drops off the schedule.
+                if (setStaffList) {
+                    const updatedStaff = staffList.map(s => s.name === emp.name ? { ...s, active: false } : s);
+                    await db.collection("config").doc("staff").set({ list: updatedStaff });
+                    setStaffList(updatedStaff);
+                }
                 setSelectedEmp(s => s && s.id === emp.id ? { ...s, status: "inactive", deactivation, history } : s);
+                const reopened = await reopenShifts(emp.name);
                 setDeactivating(null);
-                window.showToast(emp.name + (language === "es" ? " archivado" : " archived"), "success");
+                window.showToast(emp.name + (language === "es" ? " archivado" : " archived") + (reopened > 0 ? (language === "es" ? ` · ${reopened} turno(s) ahora abiertos` : ` · ${reopened} shift(s) now open`) : ""), "success");
             };
 
             const archivedCount = employees.filter(e => e.status === "inactive").length;
@@ -14391,10 +14442,10 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         {activeTab === "training" && <TrainingHub staffName={staffName} language={language} />}
                         {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} focus={opsFocus} onFocusConsumed={()=>setOpsFocus(null)} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
-                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} staffList={staffList} focus={scheduleFocus} />}
+                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} staffList={staffList.filter(s=>s.active!==false)} focus={scheduleFocus} />}
                         {activeTab === "dashboard" && staffIsOwner && <Dashboard language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "bookkeeping" && staffIsOwner && <Bookkeeping language={language} staffName={staffName} />}
-                        {activeTab === "employees" && staffIsOwner && <Employees language={language} staffName={staffName} staffList={staffList} autoAdd={empAutoAdd} onAutoAddHandled={()=>setEmpAutoAdd(false)} />}
+                        {activeTab === "employees" && staffIsOwner && <Employees language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} autoAdd={empAutoAdd} onAutoAddHandled={()=>setEmpAutoAdd(false)} />}
                         {activeTab === "messages" && <Messages language={language} staffName={staffName} staffList={staffList} userPrefs={userPrefs} saveUserPref={saveUserPref} />}
                         {activeTab === "recipes" && canViewRecipes && <Recipes language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
