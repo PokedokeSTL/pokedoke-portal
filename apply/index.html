@@ -11346,6 +11346,8 @@
             // P&L state
             const [plRange, setPlRange] = useState("month");
             const [plLoc, setPlLoc] = useState("all");
+            const [plCustomStart, setPlCustomStart] = useState(window.fmtLocalDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
+            const [plCustomEnd, setPlCustomEnd] = useState(window.fmtLocalDate());
 
             // Expense list filter
             const [expFilterCat, setExpFilterCat] = useState("all");
@@ -11429,6 +11431,14 @@
 
             const laborForDateLoc = (date, loc) => (loc==="all"?["cwe","kirkwood"]:[loc]).reduce((s,l)=>s+(laborMap[date+"_"+l]||0),0);
             const laborForRange = (start, end, loc) => Object.entries(laborMap).reduce((sum,[k,v])=>{ const li=k.lastIndexOf("_"); const d=k.slice(0,li); const l=k.slice(li+1); return (d>=start && d<=end && (loc==="all"||l===loc)) ? sum+v : sum; }, 0);
+            // Real Toast numbers for a single date (date is YYYY-MM-DD; toastDaily keys are YYYYMMDD).
+            const toastForDateLoc = (date, loc) => {
+                const key = String(date).replace(/-/g,"");
+                const locs = loc==="all" ? ["cwe","kirkwood"] : [loc];
+                let net=0, labor=0, has=false;
+                toastDaily.forEach(d=>{ if(d.businessDate===key && locs.includes(d.location)){ net+=d.netSales||0; labor+=d.laborCost||0; has=true; } });
+                return { net, labor, has };
+            };
 
             const saveBkSettings = async () => {
                 const f = setFloat===""?bkSettings.float:parseFloat(setFloat);
@@ -11474,6 +11484,7 @@
             const catInfo = (id) => EXPENSE_CATEGORIES.find(c=>c.id===id) || EXPENSE_CATEGORIES[8];
 
             const getDateRange = (range) => {
+                if (range === "custom") return { start: plCustomStart, end: plCustomEnd };
                 const today = new Date();
                 const end = window.fmtLocalDate();
                 let start;
@@ -11513,15 +11524,19 @@
             // ═══ FLASH DATA ═══
             const fSales = sales.filter(s => s.date===flashDate && (flashLoc==="all"||s.location===flashLoc));
             const fExp = expenses.filter(e => e.date===flashDate && (flashLoc==="all"||e.location===flashLoc));
-            const fRev = fSales.reduce((s,x)=>s+(x.amount||0),0);
-            const fTotalExp = fExp.reduce((s,x)=>s+(x.amount||0),0);
+            const fToast = toastForDateLoc(flashDate, flashLoc);
+            const fRevManual = fSales.reduce((s,x)=>s+(x.amount||0),0);
+            const fRev = fToast.has ? fToast.net : fRevManual;          // revenue: real Toast when available
+            const fExpRaw = fExp.reduce((s,x)=>s+(x.amount||0),0);
             const fCOGS = fExp.filter(e=>e.category==="cogs").reduce((s,x)=>s+(x.amount||0),0);
-            const fLabor = fExp.filter(e=>e.category==="labor").reduce((s,x)=>s+(x.amount||0),0);
-            const fOther = fTotalExp - fCOGS - fLabor;
+            const fLaborManual = fExp.filter(e=>e.category==="labor").reduce((s,x)=>s+(x.amount||0),0);
+            const fLabor = fToast.has ? fToast.labor : fLaborManual;    // profit labor: real Toast when available
+            const fOther = fExpRaw - fCOGS - fLaborManual;
+            const fTotalExp = fCOGS + fOther + fLabor;                  // total swaps in Toast labor (no double-count)
             const fProfit = fRev - fTotalExp;
             const fMargin = fRev > 0 ? (fProfit/fRev*100) : 0;
-            // Scheduled labor (from the schedule) + prime cost
-            const fLaborSched = laborForDateLoc(flashDate, flashLoc);
+            // Prime-cost labor: real Toast when available, else scheduled estimate
+            const fLaborSched = fToast.has ? fToast.labor : laborForDateLoc(flashDate, flashLoc);
             const fPrime = fCOGS + fLaborSched;
             const fPrimePct = fRev > 0 ? (fPrime/fRev*100) : 0;
             const fOverShort = fSales.reduce((s,x)=> s + (computeOS(x)||0), 0);
@@ -11531,15 +11546,38 @@
             const plDates = getDateRange(plRange);
             const plSalesData = filterByDateLoc(sales, plDates.start, plDates.end, plLoc);
             const plExpData = filterByDateLoc(expenses, plDates.start, plDates.end, plLoc);
-            const plRev = plSalesData.reduce((s,x)=>s+(x.amount||0),0);
-            const plTotalExp = plExpData.reduce((s,x)=>s+(x.amount||0),0);
-            const plProfit = plRev - plTotalExp;
+            const plLocs = plLoc==="all" ? ["cwe","kirkwood"] : [plLoc];
+            // Blend per day+store: real Toast where we have it, manual/scheduled where we don't.
+            const plToastCovered = new Set();
+            let plToastNet = 0, plToastLabor = 0;
+            toastDaily.forEach(d=>{
+                const dd = d.businessDate.slice(0,4)+"-"+d.businessDate.slice(4,6)+"-"+d.businessDate.slice(6,8);
+                if(dd>=plDates.start && dd<=plDates.end && plLocs.includes(d.location)){
+                    plToastNet += d.netSales||0; plToastLabor += d.laborCost||0; plToastCovered.add(dd+"_"+d.location);
+                }
+            });
+            const plRevManualUncovered = plSalesData.filter(s=>!plToastCovered.has(s.date+"_"+s.location)).reduce((s,x)=>s+(x.amount||0),0);
+            const plRev = plToastNet + plRevManualUncovered;            // revenue: Toast covered + manual uncovered
+            const plExpRaw = plExpData.reduce((s,x)=>s+(x.amount||0),0);
             const plCOGS = plExpData.filter(e=>e.category==="cogs").reduce((s,x)=>s+(x.amount||0),0);
-            const plLaborSched = laborForRange(plDates.start, plDates.end, plLoc);
+            const plLaborManualAll = plExpData.filter(e=>e.category==="labor").reduce((s,x)=>s+(x.amount||0),0);
+            const plLaborManualUncovered = plExpData.filter(e=>e.category==="labor" && !plToastCovered.has(e.date+"_"+e.location)).reduce((s,x)=>s+(x.amount||0),0);
+            const plProfitLabor = plToastLabor + plLaborManualUncovered;   // profit labor: Toast covered + manual uncovered
+            const plNonLaborExp = plExpRaw - plLaborManualAll;
+            const plTotalExp = plNonLaborExp + plProfitLabor;
+            const plProfit = plRev - plTotalExp;
+            // Scheduled labor only for days NOT covered by Toast; prime labor = Toast covered + scheduled uncovered
+            let plSchedUncovered = 0;
+            for(let _d=new Date(plDates.start+"T00:00:00"), _e=new Date(plDates.end+"T00:00:00"); _d<=_e; _d.setDate(_d.getDate()+1)){
+                const ds = _d.getFullYear()+"-"+String(_d.getMonth()+1).padStart(2,"0")+"-"+String(_d.getDate()).padStart(2,"0");
+                plLocs.forEach(loc=>{ if(!plToastCovered.has(ds+"_"+loc)) plSchedUncovered += (laborMap[ds+"_"+loc]||0); });
+            }
+            const plLaborSched = plToastLabor + plSchedUncovered;
             const plPrime = plCOGS + plLaborSched;
             const plCOGSpct = plRev>0 ? plCOGS/plRev*100 : 0;
             const plLaborPct = plRev>0 ? plLaborSched/plRev*100 : 0;
             const plPrimePct = plRev>0 ? plPrime/plRev*100 : 0;
+            const plToastHas = plToastCovered.size>0;
             const plTaxSetAside = plSalesData.reduce((s,x)=>s+(x.taxCollected||0),0);
             const plCatBreakdown = EXPENSE_CATEGORIES.map(cat => {
                 const total = plExpData.filter(e=>e.category===cat.id).reduce((s,x)=>s+(x.amount||0),0);
@@ -11747,7 +11785,7 @@
                                 </div>
                                 <div style={{padding: "16px 20px"}}>
                                     <div className="flex justify-between items-center py-2" style={{borderBottom:"1px solid var(--border-subtle)"}}>
-                                        <span className="text-sm" style={{color:"var(--text-secondary)"}}>💵 {language==="es"?"Ventas":"Revenue"}</span>
+                                        <span className="text-sm" style={{color:"var(--text-secondary)"}}>💵 {language==="es"?"Ventas":"Revenue"}{fToast.has && <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{background:"#dbeafe",color:"#1e40af"}}>📡 Toast</span>}</span>
                                         <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(fRev)}</span>
                                     </div>
                                     <div className="flex justify-between items-center py-2" style={{borderBottom:"1px solid var(--border-subtle)"}}>
@@ -11789,14 +11827,14 @@
                                     <span className="text-sm font-bold" style={{color:"var(--text-primary)"}}>{fmtM(fCOGS)} <span className="text-xs font-normal" style={{color:"var(--text-muted)"}}>{pct(fCOGS,fRev)}</span></span>
                                 </div>
                                 <div className="flex justify-between items-center py-1.5" style={{borderBottom:"1px solid var(--border-subtle)"}}>
-                                    <span className="text-sm" style={{color:"var(--text-secondary)"}}>👥 {language==="es"?"Nómina (programada)":"Labor (scheduled)"}</span>
+                                    <span className="text-sm" style={{color:"var(--text-secondary)"}}>👥 {fToast.has ? (language==="es"?"Nómina (Toast)":"Labor (Toast)") : (language==="es"?"Nómina (programada)":"Labor (scheduled)")}</span>
                                     <span className="text-sm font-bold" style={{color:"var(--text-primary)"}}>{fmtM(fLaborSched)} <span className="text-xs font-normal" style={{color:"var(--text-muted)"}}>{pct(fLaborSched,fRev)}</span></span>
                                 </div>
                                 <div className="flex justify-between items-center pt-2">
                                     <span className="text-sm font-bold" style={{color:"var(--text-primary)"}}>{language==="es"?"Costo Primo":"Prime Cost"}</span>
                                     <span className="font-bold text-sm" style={{color:"var(--text-primary)"}}>{fmtM(fPrime)}</span>
                                 </div>
-                                <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Nómina tomada del horario publicado × salarios. Meta del costo primo: ≤60%.":"Labor pulled from the published schedule × wages. Prime cost target: ≤60%."}</p>
+                                <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{fToast.has ? (language==="es"?"Ventas y nómina reales de Toast. Meta del costo primo: ≤60%.":"Real sales & labor from Toast. Prime cost target: ≤60%.") : (language==="es"?"Nómina tomada del horario publicado × salarios. Meta del costo primo: ≤60%.":"Labor pulled from the published schedule × wages. Prime cost target: ≤60%.")}</p>
                             </div>
 
                             {/* Cash over/short for the day */}
@@ -11907,7 +11945,7 @@
                             {/* Range + Location */}
                             <div className="flex gap-2">
                                 <div className="flex gap-1 rounded-xl p-1 flex-1" style={{background:"var(--bg-subtle)"}}>
-                                    {[{id:"week",l:language==="es"?"Sem":"Week"},{id:"month",l:language==="es"?"Mes":"Month"},{id:"quarter",l:language==="es"?"Trim":"Qtr"}].map(r=>(
+                                    {[{id:"week",l:language==="es"?"Sem":"Week"},{id:"month",l:language==="es"?"Mes":"Month"},{id:"quarter",l:language==="es"?"Trim":"Qtr"},{id:"custom",l:language==="es"?"Pers":"Custom"}].map(r=>(
                                         <button key={r.id} onClick={()=>setPlRange(r.id)}
                                             className={"flex-1 py-1.5 rounded-lg text-xs font-bold transition "+(plRange===r.id?"bg-poke-600 text-white":"")}>
                                             {r.l}
@@ -11921,6 +11959,18 @@
                                     <option value="kirkwood">KWD</option>
                                 </select>
                             </div>
+
+                            {plRange === "custom" && (
+                                <div className="flex gap-2 items-center">
+                                    <input type="date" value={plCustomStart} max={plCustomEnd} onChange={e=>setPlCustomStart(e.target.value)}
+                                        className="flex-1 min-w-0 px-2 py-1.5 border rounded-lg" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}} />
+                                    <span className="text-xs" style={{color:"var(--text-muted)"}}>→</span>
+                                    <input type="date" value={plCustomEnd} min={plCustomStart} onChange={e=>setPlCustomEnd(e.target.value)}
+                                        className="flex-1 min-w-0 px-2 py-1.5 border rounded-lg" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}} />
+                                </div>
+                            )}
+
+                            {plToastHas && <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold mb-1" style={{color:"#1e40af"}}><span className="px-1.5 py-0.5 rounded" style={{background:"#dbeafe"}}>📡 {language==="es"?"Ventas y nómina reales de Toast donde disponible":"Real Toast sales & labor where available"}</span></div>}
 
                             {/* Summary cards */}
                             <div className="grid grid-cols-3 gap-2">
