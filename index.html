@@ -58,6 +58,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700;9..144,800&family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
@@ -11315,6 +11316,12 @@
 
         function Bookkeeping({ language, staffName }) {
             const [bkTab, setBkTab] = useState("flash");
+            const [toastDaily, setToastDaily] = useState([]);
+            const [numRange, setNumRange] = useState("yesterday");
+            const [pulling, setPulling] = useState(false);
+            const [pullMsg, setPullMsg] = useState("");
+            const [analysis, setAnalysis] = useState("");
+            const [analyzing, setAnalyzing] = useState(false);
             const [expenses, setExpenses] = useState([]);
             const [sales, setSales] = useState([]);
             const [loading, setLoading] = useState(true);
@@ -11375,7 +11382,10 @@
                     }));
                     setInvValue(v);
                 });
-                return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); };
+                const unsub6 = db.collection("toastDaily").orderBy("businessDate","desc").limit(120).onSnapshot(snap => {
+                    setToastDaily(snap.docs.map(d=>({id:d.id,...d.data()})));
+                });
+                return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); };
             }, []);
 
             // Date helpers for labor-from-schedule
@@ -11542,6 +11552,53 @@
                 (expFilterLoc === "all" || e.location === expFilterLoc)
             );
 
+            // ===== Live Toast numbers helpers =====
+            const ymdC = (offset) => { const d=new Date(Date.now()+(offset||0)*86400000); const p=new Intl.DateTimeFormat("en-CA",{timeZone:"America/Chicago",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(d); const g=t=>p.find(z=>z.type===t).value; return g("year")+g("month")+g("day"); };
+            const ydayKey = ymdC(-1), todayKey = ymdC(0);
+            const cDow = {Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[new Intl.DateTimeFormat("en-US",{timeZone:"America/Chicago",weekday:"short"}).format(new Date())];
+            const weekKeys = []; for(let k=(cDow+6)%7;k>=0;k--) weekKeys.push(ymdC(-k));
+            const numKeys = numRange==="yesterday" ? [ydayKey] : weekKeys;
+            const sumToast = (keys) => {
+                const z = ()=>({net:0,labor:0,orders:0,days:0});
+                const out = {cwe:z(),kirkwood:z()};
+                toastDaily.forEach(d=>{ if(!keys.includes(d.businessDate)) return; const L=out[d.location]; if(!L) return; L.net+=d.netSales||0; L.labor+=d.laborCost||0; L.orders+=d.orderCount||0; L.days+=1; });
+                out.combined={net:out.cwe.net+out.kirkwood.net, labor:out.cwe.labor+out.kirkwood.labor, orders:out.cwe.orders+out.kirkwood.orders};
+                return out;
+            };
+            const tNum = sumToast(numKeys);
+            const lastPull = toastDaily.reduce((m,d)=> (d.pulledAt && d.pulledAt>m) ? d.pulledAt : m, "");
+            const pctOf = (labor,net)=> net>0 ? (labor/net*100) : null;
+            const money = (n)=> "$"+(n||0).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
+            const pullFromToast = async () => {
+                setPulling(true); setPullMsg("");
+                try {
+                    const call = firebase.app().functions("us-central1").httpsCallable("pdToastPull");
+                    await call({ businessDate: ydayKey });
+                    await call({ businessDate: todayKey });
+                    setPullMsg(language==="es"?"✓ Datos actualizados":"✓ Pulled");
+                } catch(e){ setPullMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
+                setPulling(false);
+            };
+            const analyzeNumbers = async () => {
+                setAnalyzing(true); setAnalysis("");
+                try {
+                    const s = sumToast(numKeys);
+                    const rp = (l,n)=> pctOf(l,n)!=null ? Math.round(pctOf(l,n)*10)/10 : null;
+                    const payload = {
+                        periodLabel: numRange==="yesterday" ? ("Yesterday ("+ydayKey+")") : ("This week so far ("+weekKeys.length+" days)"),
+                        sales: Math.round(s.combined.net), laborCost: Math.round(s.combined.labor),
+                        laborPct: rp(s.combined.labor,s.combined.net), orders: s.combined.orders,
+                        byStore: {
+                            cwe: { sales:Math.round(s.cwe.net), laborCost:Math.round(s.cwe.labor), laborPct:rp(s.cwe.labor,s.cwe.net) },
+                            kirkwood: { sales:Math.round(s.kirkwood.net), laborCost:Math.round(s.kirkwood.labor), laborPct:rp(s.kirkwood.labor,s.kirkwood.net) }
+                        }
+                    };
+                    const res = await firebase.app().functions("us-central1").httpsCallable("pdNumbersAnalyst")(payload);
+                    setAnalysis((res.data && res.data.analysis) || (language==="es"?"Sin respuesta":"No response"));
+                } catch(e){ setAnalysis((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
+                setAnalyzing(false);
+            };
+
             if (loading) return <div className="p-4 pb-24 animate-in"><Skeleton count={5}/></div>;
 
             return (
@@ -11552,6 +11609,7 @@
                     {/* Sub-tabs */}
                     <div className="flex gap-1 rounded-2xl p-1 mb-4" style={{background:"var(--bg-subtle)"}}>
                         {[
+                            {id:"live",l:"📡 "+(language==="es"?"En Vivo":"Live")},
                             {id:"flash",l:"⚡ "+(language==="es"?"Flash":"Flash")},
                             {id:"expenses",l:"💳 "+(language==="es"?"Gastos":"Expenses")},
                             {id:"pnl",l:"📊 P&L"},
@@ -11566,6 +11624,70 @@
                     {/* ═══════════════════════════════════ */}
                     {/* ═══ DAILY FLASH TAB ═══ */}
                     {/* ═══════════════════════════════════ */}
+                    {bkTab === "live" && (
+                        <div className="space-y-3">
+                            <div className="card p-3">
+                                <div className="flex gap-1 rounded-xl p-1 mb-3" style={{background:"var(--bg-subtle)"}}>
+                                    {[{id:"yesterday",l:language==="es"?"Ayer":"Yesterday"},{id:"week",l:language==="es"?"Esta semana":"This week"}].map(r=>(
+                                        <button key={r.id} onClick={()=>setNumRange(r.id)}
+                                            className={"flex-1 py-2 rounded-lg text-sm font-bold transition-all "+(numRange===r.id?"bg-poke-600 text-white shadow":"")}
+                                            style={numRange!==r.id?{color:"var(--text-secondary)"}:{}}>{r.l}</button>
+                                    ))}
+                                </div>
+                                <button onClick={pullFromToast} disabled={pulling}
+                                    className="w-full py-2.5 rounded-xl font-bold text-white text-sm bg-poke-600 disabled:opacity-60">
+                                    {pulling ? (language==="es"?"Conectando con Toast…":"Pulling from Toast…") : (language==="es"?"⬇ Obtener de Toast":"⬇ Pull from Toast")}
+                                </button>
+                                {pullMsg && <p className="text-xs mt-2" style={{color:"var(--text-muted)"}}>{pullMsg}</p>}
+                                {lastPull && <p className="text-xs mt-1" style={{color:"var(--text-muted)"}}>{(language==="es"?"Última actualización: ":"Last pulled: ")+new Date(lastPull).toLocaleString()}</p>}
+                            </div>
+
+                            {(tNum.cwe.days===0 && tNum.kirkwood.days===0) ? (
+                                <div className="card p-6 text-center">
+                                    <div className="text-3xl mb-2">📡</div>
+                                    <p className="text-sm font-bold mb-1" style={{color:"var(--text-primary)"}}>{language==="es"?"Sin datos todavía":"No data yet"}</p>
+                                    <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Toca \"Obtener de Toast\" para traer ventas y mano de obra reales.":"Tap \"Pull from Toast\" to bring in real sales and labor."}</p>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="card p-4">
+                                        <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Ambas tiendas":"Both stores"}</p>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div><p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Ventas":"Net Sales"}</p><p className="text-lg font-bold" style={{color:"var(--text-primary)"}}>{money(tNum.combined.net)}</p></div>
+                                            <div><p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Mano obra":"Labor"}</p><p className="text-lg font-bold" style={{color:"var(--text-primary)"}}>{money(tNum.combined.labor)}</p></div>
+                                            <div><p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"% Mano obra":"Labor %"}</p><p className="text-lg font-bold" style={{color: pctOf(tNum.combined.labor,tNum.combined.net)>30?"#dc2626":"#059669"}}>{pctOf(tNum.combined.labor,tNum.combined.net)!=null?pctOf(tNum.combined.labor,tNum.combined.net).toFixed(1)+"%":"—"}</p></div>
+                                        </div>
+                                    </div>
+                                    {[{k:"cwe",n:"Central West End"},{k:"kirkwood",n:"Kirkwood"}].map(st=>{
+                                        const d=tNum[st.k]; const pct=pctOf(d.labor,d.net);
+                                        return (
+                                            <div key={st.k} className="card p-4">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <p className="text-sm font-bold" style={{color:"var(--text-primary)"}}>{st.n}</p>
+                                                    <p className="text-xs" style={{color:"var(--text-muted)"}}>{(d.orders||0)+" "+(language==="es"?"órdenes":"orders")}</p>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-2">
+                                                    <div><p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Ventas":"Net Sales"}</p><p className="text-base font-bold" style={{color:"var(--text-primary)"}}>{money(d.net)}</p></div>
+                                                    <div><p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Mano obra":"Labor"}</p><p className="text-base font-bold" style={{color:"var(--text-primary)"}}>{money(d.labor)}</p></div>
+                                                    <div><p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"% Mano obra":"Labor %"}</p><p className="text-base font-bold" style={{color: pct>30?"#dc2626":"#059669"}}>{pct!=null?pct.toFixed(1)+"%":"—"}</p></div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    <div className="card p-4">
+                                        <button onClick={analyzeNumbers} disabled={analyzing}
+                                            className="w-full py-2.5 rounded-xl font-bold text-sm disabled:opacity-60"
+                                            style={{background:"var(--bg-subtle)", color:"var(--text-primary)"}}>
+                                            {analyzing ? (language==="es"?"Analizando…":"Analyzing…") : (language==="es"?"🤖 Analizar números":"🤖 Analyze numbers")}
+                                        </button>
+                                        {analysis && <div className="mt-3 text-sm whitespace-pre-wrap" style={{color:"var(--text-secondary)"}}>{analysis}</div>}
+                                    </div>
+                                    <p className="text-xs text-center" style={{color:"var(--text-muted)"}}>{language==="es"?"Datos en vivo de Toast · se actualiza cada mañana automáticamente":"Live from Toast · auto-updates each morning"}</p>
+                                </>
+                            )}
+                        </div>
+                    )}
+
                     {bkTab === "flash" && (
                         <div className="space-y-3">
                             {/* Date + Location */}
