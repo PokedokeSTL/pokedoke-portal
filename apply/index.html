@@ -13327,14 +13327,16 @@
                 setSaving(true);
                 try {
                     const rec = {
-                        employeeId: selectedEmp.id, employee: selectedEmp.name, location: selectedEmp.location || myLoc,
+                        employeeId: selectedEmp.id || null, employee: selectedEmp.name || "", location: selectedEmp.location || myLoc,
                         type: form.type, date: form.date, title: form.title.trim(), details: form.details.trim(),
                         policyRef: form.policyRef.trim(), actionPlan: form.actionPlan.trim(),
-                        consequences: form.consequences.trim(), followUpDate: form.followUpDate,
+                        consequences: form.consequences.trim(), followUpDate: form.followUpDate || "",
                         employeeStatement: form.employeeStatement.trim(),
                         author: staffName, createdAt: new Date().toISOString(),
                         ack: { signed: false }, attachments: []
                     };
+                    // Firestore rejects any undefined value — strip them as a safety net.
+                    Object.keys(rec).forEach(k => { if (rec[k] === undefined) delete rec[k]; });
                     const docRef = await db.collection("personnelRecords").add(rec);
                     if (pendingFiles.length) {
                         const urls = [];
@@ -13351,8 +13353,9 @@
                     setShowForm(false); setForm(blankForm); setPendingFiles([]); setUploadMsg("");
                     window.showToast(L("Record saved", "Registro guardado"), "success");
                 } catch (e) {
+                    console.error("saveRecord failed:", e);
                     setUploadMsg("");
-                    window.showToast(L("Error saving record", "Error al guardar"), "error");
+                    window.showToast(L("Error saving record", "Error al guardar") + ": " + (e && e.message ? e.message : String(e)), "error");
                 }
                 setSaving(false);
             };
