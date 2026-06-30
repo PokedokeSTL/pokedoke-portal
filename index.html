@@ -11318,6 +11318,8 @@
             const [bkTab, setBkTab] = useState("flash");
             const [toastDaily, setToastDaily] = useState([]);
             const [numRange, setNumRange] = useState("yesterday");
+            const [numCustomStart, setNumCustomStart] = useState(window.fmtLocalDate(new Date(Date.now()-6*86400000)));
+            const [numCustomEnd, setNumCustomEnd] = useState(window.fmtLocalDate());
             const [pulling, setPulling] = useState(false);
             const [pullMsg, setPullMsg] = useState("");
             const [analysis, setAnalysis] = useState("");
@@ -11597,7 +11599,24 @@
             const ydayKey = ymdC(-1), todayKey = ymdC(0);
             const cDow = {Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[new Intl.DateTimeFormat("en-US",{timeZone:"America/Chicago",weekday:"short"}).format(new Date())];
             const weekKeys = []; for(let k=(cDow+6)%7;k>=0;k--) weekKeys.push(ymdC(-k));
-            const numKeys = numRange==="yesterday" ? [ydayKey] : weekKeys;
+            const _keyOf = (d)=> d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0");
+            const _fmtD = (d)=> d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+            const _keysBetween = (s,e)=>{ const out=[]; const a=new Date(s+"T00:00:00"), b=new Date(e+"T00:00:00"); if(isNaN(a)||isNaN(b)||a>b) return out; for(let d=new Date(a); d<=b; d.setDate(d.getDate()+1)) out.push(_keyOf(d)); return out; };
+            const _td = new Date();
+            const _mon = new Date(_td); _mon.setDate(_td.getDate()-((_td.getDay()+6)%7));
+            const _lastSun = new Date(_mon); _lastSun.setDate(_mon.getDate()-1);
+            const _lastMon = new Date(_lastSun); _lastMon.setDate(_lastSun.getDate()-6);
+            const _firstOfMonth = new Date(_td.getFullYear(), _td.getMonth(), 1);
+            const numRanges = {
+                today: [todayKey],
+                yesterday: [ydayKey],
+                week: _keysBetween(_fmtD(_mon), _fmtD(_td)),
+                lastweek: _keysBetween(_fmtD(_lastMon), _fmtD(_lastSun)),
+                month: _keysBetween(_fmtD(_firstOfMonth), _fmtD(_td)),
+                custom: _keysBetween(numCustomStart, numCustomEnd)
+            };
+            const numLabels = {today:language==="es"?"Hoy":"Today", yesterday:language==="es"?"Ayer":"Yesterday", week:language==="es"?"Esta semana":"This week", lastweek:language==="es"?"Semana pasada":"Last week", month:language==="es"?"Este mes":"This month", custom:language==="es"?"Rango personalizado":"Custom range"};
+            const numKeys = numRanges[numRange] || [ydayKey];
             const sumToast = (keys) => {
                 const z = ()=>({net:0,labor:0,orders:0,days:0});
                 const out = {cwe:z(),kirkwood:z()};
@@ -11612,8 +11631,12 @@
             const pullFromToast = async () => {
                 setPulling(true); setPullMsg("");
                 try {
+                    const have = new Set(toastDaily.map(d=>d.businessDate));
+                    let keys = (numRanges[numRange]||[]).filter(k=>!have.has(k));
+                    keys = Array.from(new Set([...keys, ydayKey, todayKey]));   // always refresh yesterday+today
+                    if (keys.length > 31) keys = keys.slice(-31);               // safety cap per pull
                     const ref = await db.collection("toastPullRequests").add({
-                        businessDates: [ydayKey, todayKey], requestedBy: staffName, status: "pending", createdAt: new Date().toISOString()
+                        businessDates: keys, requestedBy: staffName, status: "pending", createdAt: new Date().toISOString()
                     });
                     let finished = false;
                     const unsub = ref.onSnapshot(d => {
@@ -11621,7 +11644,7 @@
                         if (dd.status === "done") { finished=true; unsub(); setPulling(false); setPullMsg(language==="es"?"✓ Datos actualizados":"✓ Pulled"); }
                         else if (dd.status === "error") { finished=true; unsub(); setPulling(false); setPullMsg((language==="es"?"Error: ":"Error: ")+(dd.error||"unknown")); }
                     });
-                    setTimeout(()=>{ if(!finished){ try{unsub();}catch(_){} setPulling(false); setPullMsg(language==="es"?"Procesando… los datos aparecerán pronto":"Working… data will appear shortly"); } }, 90000);
+                    setTimeout(()=>{ if(!finished){ try{unsub();}catch(_){} setPulling(false); setPullMsg(language==="es"?"Procesando… los datos aparecerán pronto":"Working… data will appear shortly"); } }, 150000);
                 } catch(e){ setPulling(false); setPullMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
             };
             const analyzeNumbers = async () => {
@@ -11630,7 +11653,7 @@
                     const s = sumToast(numKeys);
                     const rp = (l,n)=> pctOf(l,n)!=null ? Math.round(pctOf(l,n)*10)/10 : null;
                     const payload = {
-                        periodLabel: numRange==="yesterday" ? ("Yesterday ("+ydayKey+")") : ("This week so far ("+weekKeys.length+" days)"),
+                        periodLabel: numLabels[numRange] + " (" + numKeys.length + " day" + (numKeys.length===1?"":"s") + ")",
                         sales: Math.round(s.combined.net), laborCost: Math.round(s.combined.labor),
                         laborPct: rp(s.combined.labor,s.combined.net), orders: s.combined.orders,
                         byStore: {
@@ -11672,13 +11695,25 @@
                     {bkTab === "live" && (
                         <div className="space-y-3">
                             <div className="card p-3">
-                                <div className="flex gap-1 rounded-xl p-1 mb-3" style={{background:"var(--bg-subtle)"}}>
-                                    {[{id:"yesterday",l:language==="es"?"Ayer":"Yesterday"},{id:"week",l:language==="es"?"Esta semana":"This week"}].map(r=>(
-                                        <button key={r.id} onClick={()=>setNumRange(r.id)}
-                                            className={"flex-1 py-2 rounded-lg text-sm font-bold transition-all "+(numRange===r.id?"bg-poke-600 text-white shadow":"")}
-                                            style={numRange!==r.id?{color:"var(--text-secondary)"}:{}}>{r.l}</button>
-                                    ))}
-                                </div>
+                                <select value={numRange} onChange={e=>setNumRange(e.target.value)}
+                                    className="w-full px-3 py-2 border rounded-xl text-sm font-bold mb-3"
+                                    style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}}>
+                                    <option value="today">{language==="es"?"Hoy":"Today"}</option>
+                                    <option value="yesterday">{language==="es"?"Ayer":"Yesterday"}</option>
+                                    <option value="week">{language==="es"?"Esta semana":"This week"}</option>
+                                    <option value="lastweek">{language==="es"?"Semana pasada":"Last week"}</option>
+                                    <option value="month">{language==="es"?"Este mes":"This month"}</option>
+                                    <option value="custom">{language==="es"?"Rango personalizado":"Custom range"}</option>
+                                </select>
+                                {numRange==="custom" && (
+                                    <div className="flex gap-2 items-center mb-3">
+                                        <input type="date" value={numCustomStart} max={numCustomEnd} onChange={e=>setNumCustomStart(e.target.value)}
+                                            className="flex-1 min-w-0 px-2 py-1.5 border rounded-lg" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}} />
+                                        <span className="text-xs" style={{color:"var(--text-muted)"}}>→</span>
+                                        <input type="date" value={numCustomEnd} min={numCustomStart} onChange={e=>setNumCustomEnd(e.target.value)}
+                                            className="flex-1 min-w-0 px-2 py-1.5 border rounded-lg" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}} />
+                                    </div>
+                                )}
                                 <button onClick={pullFromToast} disabled={pulling}
                                     className="w-full py-2.5 rounded-xl font-bold text-white text-sm bg-poke-600 disabled:opacity-60">
                                     {pulling ? (language==="es"?"Conectando con Toast…":"Pulling from Toast…") : (language==="es"?"⬇ Obtener de Toast":"⬇ Pull from Toast")}
