@@ -12085,15 +12085,16 @@
                         // ── Toast cash (real, from POS) ──
                         const cashLocs = plLoc==="all" ? ["cwe","kirkwood"] : [plLoc];
                         let tCashSales=0, tExpDep=0, tActDep=0, tDepCount=0, tPayOuts=0, tTipOuts=0, tHasCash=false;
+                        let tDrawerOS=0, tDrawerDays=0;
                         toastDaily.forEach(d=>{
                             const dd = d.businessDate.slice(0,4)+"-"+d.businessDate.slice(4,6)+"-"+d.businessDate.slice(6,8);
                             if(dd>=plDates.start && dd<=plDates.end && cashLocs.includes(d.location)){
                                 tCashSales += d.cashSales||0; tExpDep += d.expectedDeposit||0; tActDep += d.actualDeposit||0;
                                 tDepCount += d.depositCount||0; tPayOuts += d.cashPayOuts||0; tTipOuts += d.cashTipOuts||0;
-                                if((d.cashSales||0)>0 || (d.actualDeposit||0)>0 || (d.depositCount||0)>0) tHasCash=true;
+                                if(d.drawerClosed){ tDrawerOS += d.drawerOverShort||0; tDrawerDays++; }
+                                if((d.cashSales||0)>0 || (d.actualDeposit||0)>0 || d.drawerClosed) tHasCash=true;
                             }
                         });
-                        const tOverShort = tActDep - tExpDep;
                         return (
                             <div className="space-y-3">
                                 {/* Range + location */}
@@ -12135,19 +12136,20 @@
                                                 <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Depósito esperado":"Expected deposit"}</p>
                                                 <p className="text-lg font-bold" style={{color:"var(--text-primary)"}}>{fmtM(tExpDep)}</p>
                                             </div>
-                                            <div>
-                                                <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Depósito real":"Actual deposit"}</p>
-                                                <p className="text-lg font-bold" style={{color:"var(--text-primary)"}}>{fmtM(tActDep)} {tDepCount>0 && <span className="text-xs font-normal" style={{color:"var(--text-muted)"}}>({tDepCount})</span>}</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Sobrante / faltante":"Over / short"}</p>
-                                                <p className="text-lg font-bold" style={{color: tDepCount===0?"var(--text-muted)":Math.abs(tOverShort)<1?"#16a34a":Math.abs(tOverShort)<20?"#ca8a04":"#dc2626"}}>{tDepCount===0?"—":(tOverShort>=0?"+":"−")+fmtM(Math.abs(tOverShort))}</p>
+                                        </div>
+                                        <div className="mt-3 pt-3" style={{borderTop:"1px solid var(--border-subtle)"}}>
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>🪙 {language==="es"?"SOBRANTE / FALTANTE (CONTEO DE CAJA)":"OVER / SHORT (DRAWER COUNT)"}</p>
+                                                    <p className="text-[11px]" style={{color:"var(--text-muted)"}}>{tDrawerDays>0 ? (tDrawerDays+" "+(language==="es"?"cierres de caja":"drawer closes")) : (language==="es"?"sin cierres contados":"no counted closes")}</p>
+                                                </div>
+                                                <span className="font-display text-xl font-bold" style={{color: tDrawerDays===0?"var(--text-muted)":Math.abs(tDrawerOS)<1?"#16a34a":Math.abs(tDrawerOS)<20?"#ca8a04":"#dc2626"}}>{tDrawerDays===0?"—":(tDrawerOS>=0?"+":"−")+fmtM(Math.abs(tDrawerOS))}</span>
                                             </div>
                                         </div>
                                         {(tPayOuts>0 || tTipOuts>0) && (
                                             <p className="text-[11px] mt-3" style={{color:"var(--text-muted)"}}>{language==="es"?"Incluye":"Includes"} {fmtM(tPayOuts)} {language==="es"?"pagos en efectivo":"pay-outs"} · {fmtM(tTipOuts)} {language==="es"?"propinas pagadas":"tip-outs"}</p>
                                         )}
-                                        {tDepCount===0 && <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Aún no hay depósitos registrados en Toast para este periodo.":"No deposits recorded in Toast for this period yet."}</p>}
+                                        {tDrawerDays===0 && <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Aún no se detectan cierres de caja contados en Toast para este periodo.":"No counted drawer closes detected in Toast for this period yet."}</p>}
                                     </div>
                                 )}
 
