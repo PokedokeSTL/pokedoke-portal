@@ -11566,11 +11566,13 @@
             const plNonLaborExp = plExpRaw - plLaborManualAll;
             const plTotalExp = plNonLaborExp + plProfitLabor;
             const plProfit = plRev - plTotalExp;
-            // Scheduled labor only for days NOT covered by Toast; prime labor = Toast covered + scheduled uncovered
+            // Scheduled labor only for uncovered days that actually have recorded sales,
+            // so days with no revenue source don't inflate the labor %. Toast-covered days use real labor.
+            const plManualSalesKeys = new Set(plSalesData.map(s=>s.date+"_"+s.location));
             let plSchedUncovered = 0;
             for(let _d=new Date(plDates.start+"T00:00:00"), _e=new Date(plDates.end+"T00:00:00"); _d<=_e; _d.setDate(_d.getDate()+1)){
                 const ds = _d.getFullYear()+"-"+String(_d.getMonth()+1).padStart(2,"0")+"-"+String(_d.getDate()).padStart(2,"0");
-                plLocs.forEach(loc=>{ if(!plToastCovered.has(ds+"_"+loc)) plSchedUncovered += (laborMap[ds+"_"+loc]||0); });
+                plLocs.forEach(loc=>{ if(!plToastCovered.has(ds+"_"+loc) && plManualSalesKeys.has(ds+"_"+loc)) plSchedUncovered += (laborMap[ds+"_"+loc]||0); });
             }
             const plLaborSched = plToastLabor + plSchedUncovered;
             const plPrime = plCOGS + plLaborSched;
@@ -12051,7 +12053,9 @@
                                 <div className="card p-3">
                                     <p className="text-xs font-bold mb-3" style={{color:"var(--text-muted)"}}>{language==="es"?"POR UBICACIÓN":"BY LOCATION"}</p>
                                     {["cwe","kirkwood"].map(loc => {
-                                        const locSales = filterByDateLoc(sales, plDates.start, plDates.end, loc).reduce((s,x)=>s+(x.amount||0),0);
+                                        let locToastNet=0; const locCov=new Set();
+                                        toastDaily.forEach(d=>{ const dd=d.businessDate.slice(0,4)+"-"+d.businessDate.slice(4,6)+"-"+d.businessDate.slice(6,8); if(d.location===loc && dd>=plDates.start && dd<=plDates.end){ locToastNet+=d.netSales||0; locCov.add(dd); } });
+                                        const locSales = locToastNet + filterByDateLoc(sales, plDates.start, plDates.end, loc).filter(s=>!locCov.has(s.date)).reduce((s,x)=>s+(x.amount||0),0);
                                         const locExp = filterByDateLoc(expenses, plDates.start, plDates.end, loc).reduce((s,x)=>s+(x.amount||0),0);
                                         const locProfit = locSales - locExp;
                                         return (
@@ -12078,6 +12082,18 @@
                         const deposits = plSalesData.filter(s => s.depositAmount != null && s.depositAmount > 0).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
                         const totalDeposits = deposits.reduce((s,x)=>s+(x.depositAmount||0),0);
                         const cardTipsOwed = plSalesData.reduce((s,x)=>s+(x.cardTips||0),0);
+                        // ── Toast cash (real, from POS) ──
+                        const cashLocs = plLoc==="all" ? ["cwe","kirkwood"] : [plLoc];
+                        let tCashSales=0, tExpDep=0, tActDep=0, tDepCount=0, tPayOuts=0, tTipOuts=0, tHasCash=false;
+                        toastDaily.forEach(d=>{
+                            const dd = d.businessDate.slice(0,4)+"-"+d.businessDate.slice(4,6)+"-"+d.businessDate.slice(6,8);
+                            if(dd>=plDates.start && dd<=plDates.end && cashLocs.includes(d.location)){
+                                tCashSales += d.cashSales||0; tExpDep += d.expectedDeposit||0; tActDep += d.actualDeposit||0;
+                                tDepCount += d.depositCount||0; tPayOuts += d.cashPayOuts||0; tTipOuts += d.cashTipOuts||0;
+                                if((d.cashSales||0)>0 || (d.actualDeposit||0)>0 || (d.depositCount||0)>0) tHasCash=true;
+                            }
+                        });
+                        const tOverShort = tActDep - tExpDep;
                         return (
                             <div className="space-y-3">
                                 {/* Range + location */}
@@ -12102,6 +12118,38 @@
                                         <p className="text-white/70 text-sm mt-1">{language==="es"?"Cobrado este periodo — guárdalo para el pago de impuestos":"Collected this period — park it for your tax payment"}</p>
                                     </div>
                                 </div>
+
+                                {/* Toast cash (real from POS) */}
+                                {tHasCash && (
+                                    <div className="card p-4">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <p className="text-xs font-bold" style={{color:"var(--text-muted)"}}>📡 {language==="es"?"EFECTIVO DE TOAST":"CASH FROM TOAST"}</p>
+                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{background:"#dbeafe",color:"#1e40af"}}>{language==="es"?"En vivo":"Live"}</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Ventas en efectivo":"Cash sales"}</p>
+                                                <p className="text-lg font-bold" style={{color:"var(--text-primary)"}}>{fmtM(tCashSales)}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Depósito esperado":"Expected deposit"}</p>
+                                                <p className="text-lg font-bold" style={{color:"var(--text-primary)"}}>{fmtM(tExpDep)}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Depósito real":"Actual deposit"}</p>
+                                                <p className="text-lg font-bold" style={{color:"var(--text-primary)"}}>{fmtM(tActDep)} {tDepCount>0 && <span className="text-xs font-normal" style={{color:"var(--text-muted)"}}>({tDepCount})</span>}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs" style={{color:"var(--text-muted)"}}>{language==="es"?"Sobrante / faltante":"Over / short"}</p>
+                                                <p className="text-lg font-bold" style={{color: tDepCount===0?"var(--text-muted)":Math.abs(tOverShort)<1?"#16a34a":Math.abs(tOverShort)<20?"#ca8a04":"#dc2626"}}>{tDepCount===0?"—":(tOverShort>=0?"+":"−")+fmtM(Math.abs(tOverShort))}</p>
+                                            </div>
+                                        </div>
+                                        {(tPayOuts>0 || tTipOuts>0) && (
+                                            <p className="text-[11px] mt-3" style={{color:"var(--text-muted)"}}>{language==="es"?"Incluye":"Includes"} {fmtM(tPayOuts)} {language==="es"?"pagos en efectivo":"pay-outs"} · {fmtM(tTipOuts)} {language==="es"?"propinas pagadas":"tip-outs"}</p>
+                                        )}
+                                        {tDepCount===0 && <p className="text-[11px] mt-2" style={{color:"var(--text-muted)"}}>{language==="es"?"Aún no hay depósitos registrados en Toast para este periodo.":"No deposits recorded in Toast for this period yet."}</p>}
+                                    </div>
+                                )}
 
                                 {/* Cash over/short summary */}
                                 <div className="card p-4">
