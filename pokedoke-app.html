@@ -11572,12 +11572,17 @@
             const pullFromToast = async () => {
                 setPulling(true); setPullMsg("");
                 try {
-                    const call = firebase.app().functions("us-central1").httpsCallable("pdToastPull");
-                    await call({ businessDate: ydayKey });
-                    await call({ businessDate: todayKey });
-                    setPullMsg(language==="es"?"✓ Datos actualizados":"✓ Pulled");
-                } catch(e){ setPullMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
-                setPulling(false);
+                    const ref = await db.collection("toastPullRequests").add({
+                        businessDates: [ydayKey, todayKey], requestedBy: staffName, status: "pending", createdAt: new Date().toISOString()
+                    });
+                    let finished = false;
+                    const unsub = ref.onSnapshot(d => {
+                        const dd = d.data() || {};
+                        if (dd.status === "done") { finished=true; unsub(); setPulling(false); setPullMsg(language==="es"?"✓ Datos actualizados":"✓ Pulled"); }
+                        else if (dd.status === "error") { finished=true; unsub(); setPulling(false); setPullMsg((language==="es"?"Error: ":"Error: ")+(dd.error||"unknown")); }
+                    });
+                    setTimeout(()=>{ if(!finished){ try{unsub();}catch(_){} setPulling(false); setPullMsg(language==="es"?"Procesando… los datos aparecerán pronto":"Working… data will appear shortly"); } }, 90000);
+                } catch(e){ setPulling(false); setPullMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
             };
             const analyzeNumbers = async () => {
                 setAnalyzing(true); setAnalysis("");
