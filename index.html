@@ -11434,6 +11434,8 @@
             const [numCustomEnd, setNumCustomEnd] = useState(window.fmtLocalDate());
             const [pulling, setPulling] = useState(false);
             const [pullMsg, setPullMsg] = useState("");
+            const [backfilling, setBackfilling] = useState(false);
+            const [backfillMsg, setBackfillMsg] = useState("");
             const [analysis, setAnalysis] = useState("");
             const [analyzing, setAnalyzing] = useState(false);
             const [expenses, setExpenses] = useState([]);
@@ -11759,6 +11761,39 @@
                     setTimeout(()=>{ if(!finished){ try{unsub();}catch(_){} setPulling(false); setPullMsg(language==="es"?"Procesando… los datos aparecerán pronto":"Working… data will appear shortly"); } }, 150000);
                 } catch(e){ setPulling(false); setPullMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
             };
+            const backfillToast = async () => {
+                if (backfilling) return;
+                setBackfilling(true);
+                try {
+                    // Last 90 days (yesterday back to 90 days ago), oldest first.
+                    const days = [];
+                    for (let k=1; k<=90; k++) days.push(ymdC(-k));
+                    days.reverse();
+                    // Chunk into 30-day requests so each finishes well under the function timeout.
+                    const chunks = [];
+                    for (let i=0; i<days.length; i+=30) chunks.push(days.slice(i, i+30));
+                    const total = chunks.length;
+                    let done = 0;
+                    const label = (n)=> (language==="es"?"Rellenando 90 días… ":"Backfilling 90 days… ")+n+"/"+total+(language==="es"?" lotes":" batches");
+                    setBackfillMsg(label(0));
+                    await Promise.all(chunks.map(chunk => new Promise(async (resolve) => {
+                        try {
+                            const ref = await db.collection("toastPullRequests").add({
+                                businessDates: chunk, requestedBy: staffName, status:"pending", backfill:true, createdAt:new Date().toISOString()
+                            });
+                            let settled = false;
+                            const finish = () => { if(settled) return; settled=true; try{unsub();}catch(_){} done++; setBackfillMsg(label(done)); resolve(); };
+                            const unsub = ref.onSnapshot(d => {
+                                const dd = d.data() || {};
+                                if (dd.status === "done" || dd.status === "error") finish();
+                            });
+                            setTimeout(finish, 290000); // safety per chunk
+                        } catch(_) { done++; setBackfillMsg(label(done)); resolve(); }
+                    })));
+                    setBackfilling(false);
+                    setBackfillMsg(language==="es"?"✓ Relleno completo — revisa 🍽 Vendidos en Operaciones":"✓ Backfill complete — check 🍽 Sellers in Operations");
+                } catch(e){ setBackfilling(false); setBackfillMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
+            };
             const analyzeNumbers = async () => {
                 setAnalyzing(true); setAnalysis("");
                 try {
@@ -11838,6 +11873,14 @@
                                 </button>
                                 {pullMsg && <p className="text-xs mt-2" style={{color:"var(--text-muted)"}}>{pullMsg}</p>}
                                 {lastPull && <p className="text-xs mt-1" style={{color:"var(--text-muted)"}}>{(language==="es"?"Última actualización: ":"Last pulled: ")+new Date(lastPull).toLocaleString()}</p>}
+                                <div className="mt-2 pt-2" style={{borderTop:"1px solid var(--border-subtle)"}}>
+                                    <button onClick={backfillToast} disabled={backfilling}
+                                        className="text-xs font-bold disabled:opacity-60" style={{color:"var(--poke-600,#0891b2)"}}>
+                                        {backfilling ? (language==="es"?"Rellenando historial…":"Backfilling history…") : (language==="es"?"⏳ Rellenar últimos 90 días (una vez)":"⏳ Backfill last 90 days (one-time)")}
+                                    </button>
+                                    {backfillMsg && <p className="text-xs mt-1" style={{color:"var(--text-muted)"}}>{backfillMsg}</p>}
+                                    {!backfillMsg && <p className="text-[11px] mt-1" style={{color:"var(--text-muted)"}}>{language==="es"?"Trae 90 días de ventas + menú de una vez (unos minutos).":"Pulls 90 days of sales + menu detail at once (takes a few minutes)."}</p>}
+                                </div>
                             </div>
 
                             {(tNum.cwe.days===0 && tNum.kirkwood.days===0) ? (
