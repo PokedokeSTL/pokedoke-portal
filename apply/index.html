@@ -11652,19 +11652,25 @@
                 try {
                     const s = sumToast(numKeys);
                     const rp = (l,n)=> pctOf(l,n)!=null ? Math.round(pctOf(l,n)*10)/10 : null;
-                    const payload = {
+                    const ref = await db.collection("analysisRequests").add({
+                        language,
                         periodLabel: numLabels[numRange] + " (" + numKeys.length + " day" + (numKeys.length===1?"":"s") + ")",
                         sales: Math.round(s.combined.net), laborCost: Math.round(s.combined.labor),
                         laborPct: rp(s.combined.labor,s.combined.net), orders: s.combined.orders,
                         byStore: {
                             cwe: { sales:Math.round(s.cwe.net), laborCost:Math.round(s.cwe.labor), laborPct:rp(s.cwe.labor,s.cwe.net) },
                             kirkwood: { sales:Math.round(s.kirkwood.net), laborCost:Math.round(s.kirkwood.labor), laborPct:rp(s.kirkwood.labor,s.kirkwood.net) }
-                        }
-                    };
-                    const res = await firebase.app().functions("us-central1").httpsCallable("pdNumbersAnalyst")(payload);
-                    setAnalysis((res.data && res.data.analysis) || (language==="es"?"Sin respuesta":"No response"));
-                } catch(e){ setAnalysis((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
-                setAnalyzing(false);
+                        },
+                        status: "pending", createdAt: new Date().toISOString()
+                    });
+                    let finished = false;
+                    const unsub = ref.onSnapshot(d => {
+                        const dd = d.data() || {};
+                        if (dd.status === "done") { finished=true; unsub(); setAnalyzing(false); setAnalysis(dd.analysis || (language==="es"?"Sin respuesta":"No response")); }
+                        else if (dd.status === "error") { finished=true; unsub(); setAnalyzing(false); setAnalysis((language==="es"?"Error: ":"Error: ")+(dd.error||"unknown")); }
+                    });
+                    setTimeout(()=>{ if(!finished){ try{unsub();}catch(_){} setAnalyzing(false); setAnalysis(language==="es"?"Tardó demasiado — intenta de nuevo":"Timed out — try again"); } }, 60000);
+                } catch(e){ setAnalyzing(false); setAnalysis((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
             };
 
             if (loading) return <div className="p-4 pb-24 animate-in"><Skeleton count={5}/></div>;
