@@ -1761,6 +1761,66 @@
             );
         }
 
+        // Reusable inline date-range picker: preset chips + two-tap calendar (no confirm buttons).
+        function InlineDateRange({ start, end, onChange, language }) {
+            const es = language === "es";
+            const parse = (s) => { const p=(s||"").split("-").map(Number); return (p[0]&&p[1]&&p[2]) ? new Date(p[0],p[1]-1,p[2]) : null; };
+            const fmt = (dt) => window.fmtLocalDate(dt);
+            const today = new Date(); today.setHours(0,0,0,0);
+            const s = parse(start), e = parse(end);
+            const [viewM, setViewM] = useState(() => { const d = parse(start) || today; return new Date(d.getFullYear(), d.getMonth(), 1); });
+            const [pickingEnd, setPickingEnd] = useState(false);
+            const setPreset = (a, b) => { onChange(fmt(a), fmt(b)); setViewM(new Date(b.getFullYear(), b.getMonth(), 1)); setPickingEnd(false); };
+            const presets = [
+                { l: es?"Esta semana":"This week", get:()=>{ const t=new Date(); return [new Date(t.getFullYear(),t.getMonth(),t.getDate()-((t.getDay()+6)%7)), t]; } },
+                { l: es?"Este mes":"This month", get:()=>{ const t=new Date(); return [new Date(t.getFullYear(),t.getMonth(),1), t]; } },
+                { l: es?"Mes pasado":"Last month", get:()=>{ const t=new Date(); return [new Date(t.getFullYear(),t.getMonth()-1,1), new Date(t.getFullYear(),t.getMonth(),0)]; } },
+                { l: es?"Trimestre":"Quarter", get:()=>{ const t=new Date(); return [new Date(t.getFullYear(),Math.floor(t.getMonth()/3)*3,1), t]; } },
+            ];
+            const dayTap = (dt) => {
+                if (!pickingEnd || !s) { onChange(fmt(dt), fmt(dt)); setPickingEnd(true); }
+                else if (dt < s) { onChange(fmt(dt), fmt(s)); setPickingEnd(false); }
+                else { onChange(fmt(s), fmt(dt)); setPickingEnd(false); }
+            };
+            const year = viewM.getFullYear(), mon = viewM.getMonth();
+            const startDow = new Date(year, mon, 1).getDay();
+            const daysInMon = new Date(year, mon+1, 0).getDate();
+            const cells = []; for (let i=0;i<startDow;i++) cells.push(null); for (let d=1;d<=daysInMon;d++) cells.push(new Date(year,mon,d));
+            const isEnd = (dt) => (s && dt.getTime()===s.getTime()) || (e && dt.getTime()===e.getTime());
+            const inRange = (dt) => s && e && dt>s && dt<e;
+            const monthName = viewM.toLocaleDateString(es?"es-ES":"en-US", { month:"long", year:"numeric" });
+            const wk = es ? ["D","L","M","M","J","V","S"] : ["S","M","T","W","T","F","S"];
+            return (
+                <div className="space-y-2">
+                    <div className="flex gap-1 flex-wrap">
+                        {presets.map((p,i)=>(<button key={i} onClick={()=>{const [a,b]=p.get(); setPreset(a,b);}} className="px-2.5 py-1.5 rounded-lg text-xs font-bold" style={{background:"var(--bg-subtle)",color:"var(--text-secondary)"}}>{p.l}</button>))}
+                    </div>
+                    <div className="card p-2">
+                        <div className="flex items-center justify-between mb-1">
+                            <button onClick={()=>setViewM(new Date(year,mon-1,1))} className="px-3 py-1 rounded text-lg" style={{color:"var(--text-secondary)"}}>‹</button>
+                            <span className="text-sm font-bold capitalize" style={{color:"var(--text-primary)"}}>{monthName}</span>
+                            <button onClick={()=>{ const nm=new Date(year,mon+1,1); if(nm<=new Date(today.getFullYear(),today.getMonth(),1)) setViewM(nm); }} className="px-3 py-1 rounded text-lg" style={{color:"var(--text-secondary)"}}>›</button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-0.5 text-center">
+                            {wk.map((w,i)=>(<div key={i} className="text-[10px] font-bold py-1" style={{color:"var(--text-muted)"}}>{w}</div>))}
+                            {cells.map((dt,i)=> dt ? (
+                                <button key={i} onClick={()=>dayTap(dt)} disabled={dt>today}
+                                    className="text-xs py-1.5 rounded-lg font-medium"
+                                    style={{
+                                        background: isEnd(dt) ? "var(--poke-600,#0891b2)" : inRange(dt) ? "rgba(8,145,178,0.15)" : "transparent",
+                                        color: isEnd(dt) ? "#fff" : (dt>today ? "var(--text-muted)" : "var(--text-primary)"),
+                                        opacity: dt>today ? 0.35 : 1
+                                    }}>{dt.getDate()}</button>
+                            ) : <div key={i}/>)}
+                        </div>
+                    </div>
+                    <p className="text-[11px] text-center" style={{color:"var(--text-muted)"}}>
+                        {s && e ? (start===end ? start : (start+"  →  "+end)) : (es?"Toca inicio, luego fin":"Tap start, then end")}
+                    </p>
+                </div>
+            );
+        }
+
         // Operations Component
         function Operations({ language, staffList, staffName, focus, onFocusConsumed }) {
             const [passwordEntered, setPasswordEntered] = useState(false);
@@ -4197,12 +4257,7 @@
                             )}
 
                             {invViewMode === "mix" && (() => {
-                                const _t = new Date();
-                                const startOfWeek = new Date(_t.getFullYear(), _t.getMonth(), _t.getDate()-((_t.getDay()+6)%7));
-                                const rng = itemsRange==="custom" ? {start:itemsCustomStart, end:itemsCustomEnd}
-                                    : itemsRange==="week" ? {start:window.fmtLocalDate(startOfWeek), end:window.fmtLocalDate(_t)}
-                                    : itemsRange==="quarter" ? {start:window.fmtLocalDate(new Date(_t.getFullYear(), Math.floor(_t.getMonth()/3)*3, 1)), end:window.fmtLocalDate(_t)}
-                                    : {start:window.fmtLocalDate(new Date(_t.getFullYear(), _t.getMonth(), 1)), end:window.fmtLocalDate(_t)};
+                                const rng = {start: itemsCustomStart, end: itemsCustomEnd};
                                 const fmtM = (n)=>"$"+(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
                                 const mixLocs = invLoc==="all" ? ["cwe","kirkwood"] : [invLoc];
                                 const agg = {}; let itemsHasData = false; const daysSet = new Set();
@@ -4229,25 +4284,12 @@
                                 const maxV = rows.length ? Math.max(...rows.map(val)) : 1;
                                 return (
                                     <div className="space-y-3">
-                                        <div className="card p-3 flex gap-2">
-                                            <select value={itemsRange} onChange={e=>setItemsRange(e.target.value)}
-                                                className="flex-1 min-w-0 px-2 py-2 border rounded-xl text-sm font-bold" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}}>
-                                                <option value="week">{language==="es"?"Esta semana":"This week"}</option>
-                                                <option value="month">{language==="es"?"Este mes":"This month"}</option>
-                                                <option value="quarter">{language==="es"?"Trimestre":"This quarter"}</option>
-                                                <option value="custom">{language==="es"?"Personalizado":"Custom"}</option>
-                                            </select>
-                                            <div className="px-3 py-2 rounded-xl text-sm font-bold" style={{background:"var(--bg-subtle)",color:"var(--text-secondary)"}}>{invLoc==="all"?(language==="es"?"Ambas":"Both"):invLoc==="cwe"?"CWE":"Kirkwood"}</div>
+                                        <div className="flex items-center justify-between px-1">
+                                            <span className="text-xs font-bold uppercase tracking-wide" style={{color:"var(--text-muted)"}}>{language==="es"?"Rango":"Date range"}</span>
+                                            <span className="px-2.5 py-1 rounded-lg text-xs font-bold" style={{background:"var(--bg-subtle)",color:"var(--text-secondary)"}}>{invLoc==="all"?(language==="es"?"Ambas":"Both"):invLoc==="cwe"?"CWE":"Kirkwood"}</span>
                                         </div>
-                                        {itemsRange==="custom" && (
-                                            <div className="flex gap-2 items-center">
-                                                <input type="date" value={itemsCustomStart} max={itemsCustomEnd} onChange={e=>setItemsCustomStart(e.target.value)}
-                                                    className="flex-1 min-w-0 px-2 py-1.5 border rounded-lg" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}} />
-                                                <span className="text-xs" style={{color:"var(--text-muted)"}}>→</span>
-                                                <input type="date" value={itemsCustomEnd} min={itemsCustomStart} onChange={e=>setItemsCustomEnd(e.target.value)}
-                                                    className="flex-1 min-w-0 px-2 py-1.5 border rounded-lg" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}} />
-                                            </div>
-                                        )}
+                                        <InlineDateRange start={itemsCustomStart} end={itemsCustomEnd} language={language}
+                                            onChange={(a,b)=>{ setItemsCustomStart(a); setItemsCustomEnd(b); }} />
                                         <div className="flex gap-1 rounded-xl p-1" style={{background:"var(--bg-subtle)"}}>
                                             {[{id:"units",l:language==="es"?"Unidades":"Units"},{id:"revenue",l:language==="es"?"Ventas":"Revenue"},{id:"category",l:language==="es"?"Categoría":"Category"}].map(m=>(
                                                 <button key={m.id} onClick={()=>setItemsMode(m.id)}
