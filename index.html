@@ -11490,6 +11490,8 @@
             const [backfillMsg, setBackfillMsg] = useState("");
             const [analysis, setAnalysis] = useState("");
             const [analyzing, setAnalyzing] = useState(false);
+            const [briefTesting, setBriefTesting] = useState(false);
+            const [briefMsg, setBriefMsg] = useState("");
             const [expenses, setExpenses] = useState([]);
             const [sales, setSales] = useState([]);
             const [loading, setLoading] = useState(true);
@@ -11893,6 +11895,21 @@
                     setTimeout(()=>{ if(!finished){ try{unsub();}catch(_){} setAnalyzing(false); setAnalysis(language==="es"?"Tardó demasiado — intenta de nuevo":"Timed out — try again"); } }, 60000);
                 } catch(e){ setAnalyzing(false); setAnalysis((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
             };
+            const sendTestBrief = async () => {
+                if (briefTesting) return;
+                setBriefTesting(true); setBriefMsg("");
+                try {
+                    const ref = await db.collection("briefRequests").add({ requestedBy: staffName, status:"pending", createdAt:new Date().toISOString() });
+                    let finished = false;
+                    const unsub = ref.onSnapshot(d => {
+                        const dd = d.data() || {};
+                        if (dd.status === "done") { finished=true; unsub(); setBriefTesting(false); setBriefMsg(language==="es"?"✓ Enviado — revisa tus notificaciones":"✓ Sent — check your notifications"); }
+                        else if (dd.status === "empty") { finished=true; unsub(); setBriefTesting(false); setBriefMsg(language==="es"?"Sin ventas de ayer para resumir todavía":"No sales from yesterday to summarize yet"); }
+                        else if (dd.status === "error") { finished=true; unsub(); setBriefTesting(false); setBriefMsg((language==="es"?"Error: ":"Error: ")+(dd.error||"unknown")); }
+                    });
+                    setTimeout(()=>{ if(!finished){ try{unsub();}catch(_){} setBriefTesting(false); setBriefMsg(language==="es"?"Procesando… debería llegar pronto":"Working… it should arrive shortly"); } }, 30000);
+                } catch(e){ setBriefTesting(false); setBriefMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
+            };
 
             if (loading) return <div className="p-4 pb-24 animate-in"><Skeleton count={5}/></div>;
 
@@ -11996,6 +12013,14 @@
                                             {analyzing ? (language==="es"?"Analizando…":"Analyzing…") : (language==="es"?"🤖 Analizar números":"🤖 Analyze numbers")}
                                         </button>
                                         {analysis && <div className="mt-3 text-sm whitespace-pre-wrap" style={{color:"var(--text-secondary)"}}>{analysis}</div>}
+                                        <div className="mt-2 pt-2" style={{borderTop:"1px solid var(--border-subtle)"}}>
+                                            <button onClick={sendTestBrief} disabled={briefTesting}
+                                                className="text-xs font-bold disabled:opacity-60" style={{color:"var(--poke-600,#0891b2)"}}>
+                                                {briefTesting ? (language==="es"?"Enviando…":"Sending…") : (language==="es"?"☀️ Enviarme un resumen de prueba":"☀️ Send me a test brief")}
+                                            </button>
+                                            {briefMsg ? <p className="text-xs mt-1" style={{color:"var(--text-muted)"}}>{briefMsg}</p>
+                                                : <p className="text-[11px] mt-1" style={{color:"var(--text-muted)"}}>{language==="es"?"El resumen automático llega cada mañana a las 6am.":"The automated brief arrives every morning at 6am."}</p>}
+                                        </div>
                                     </div>
                                     <p className="text-xs text-center" style={{color:"var(--text-muted)"}}>{language==="es"?"Datos en vivo de Toast · se actualiza cada mañana automáticamente":"Live from Toast · auto-updates each morning"}</p>
                                 </>
