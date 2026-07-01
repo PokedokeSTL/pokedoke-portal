@@ -11779,27 +11779,29 @@
                     const days = [];
                     for (let k=1; k<=90; k++) days.push(ymdC(-k));
                     days.reverse();
-                    // Chunk into 30-day requests so each finishes well under the function timeout.
+                    // Smaller 15-day chunks, run ONE AT A TIME so we never trip Toast's rate limit.
                     const chunks = [];
-                    for (let i=0; i<days.length; i+=30) chunks.push(days.slice(i, i+30));
+                    for (let i=0; i<days.length; i+=15) chunks.push(days.slice(i, i+15));
                     const total = chunks.length;
-                    let done = 0;
                     const label = (n)=> (language==="es"?"Rellenando 90 días… ":"Backfilling 90 days… ")+n+"/"+total+(language==="es"?" lotes":" batches");
                     setBackfillMsg(label(0));
-                    await Promise.all(chunks.map(chunk => new Promise(async (resolve) => {
-                        try {
-                            const ref = await db.collection("toastPullRequests").add({
-                                businessDates: chunk, requestedBy: staffName, status:"pending", backfill:true, createdAt:new Date().toISOString()
-                            });
-                            let settled = false;
-                            const finish = () => { if(settled) return; settled=true; try{unsub();}catch(_){} done++; setBackfillMsg(label(done)); resolve(); };
-                            const unsub = ref.onSnapshot(d => {
-                                const dd = d.data() || {};
-                                if (dd.status === "done" || dd.status === "error") finish();
-                            });
-                            setTimeout(finish, 290000); // safety per chunk
-                        } catch(_) { done++; setBackfillMsg(label(done)); resolve(); }
-                    })));
+                    for (let c=0; c<chunks.length; c++) {
+                        await new Promise(async (resolve) => {
+                            try {
+                                const ref = await db.collection("toastPullRequests").add({
+                                    businessDates: chunks[c], requestedBy: staffName, status:"pending", backfill:true, createdAt:new Date().toISOString()
+                                });
+                                let settled = false;
+                                const finish = () => { if(settled) return; settled=true; try{unsub();}catch(_){} resolve(); };
+                                const unsub = ref.onSnapshot(d => {
+                                    const dd = d.data() || {};
+                                    if (dd.status === "done" || dd.status === "error") finish();
+                                });
+                                setTimeout(finish, 290000); // safety per chunk
+                            } catch(_) { resolve(); }
+                        });
+                        setBackfillMsg(label(c+1));
+                    }
                     setBackfilling(false);
                     setBackfillMsg(language==="es"?"✓ Relleno completo — revisa 🍽 Vendidos en Operaciones":"✓ Backfill complete — check 🍽 Sellers in Operations");
                 } catch(e){ setBackfilling(false); setBackfillMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
