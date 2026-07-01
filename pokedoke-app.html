@@ -11785,12 +11785,14 @@
                     const total = chunks.length;
                     const label = (n)=> (language==="es"?"Rellenando 90 días… ":"Backfilling 90 days… ")+n+"/"+total+(language==="es"?" lotes":" batches");
                     setBackfillMsg(label(0));
+                    const refs = [];
                     for (let c=0; c<chunks.length; c++) {
                         await new Promise(async (resolve) => {
                             try {
                                 const ref = await db.collection("toastPullRequests").add({
                                     businessDates: chunks[c], requestedBy: staffName, status:"pending", backfill:true, createdAt:new Date().toISOString()
                                 });
+                                refs.push(ref);
                                 let settled = false;
                                 const finish = () => { if(settled) return; settled=true; try{unsub();}catch(_){} resolve(); };
                                 const unsub = ref.onSnapshot(d => {
@@ -11802,8 +11804,26 @@
                         });
                         setBackfillMsg(label(c+1));
                     }
+                    // Read back the results to report coverage + any failing days.
+                    let okDayLocs = 0, errDayLocs = 0; const errSamples = [];
+                    for (const ref of refs) {
+                        try {
+                            const doc = await ref.get(); const sm = (doc.data()||{}).summary || [];
+                            sm.forEach(day => {
+                                if (day.error) { errDayLocs += 2; if(errSamples.length<3) errSamples.push(day.businessDate+": "+day.error); return; }
+                                (day.results||[]).forEach(r => {
+                                    if (r.error || r.salesError) { errDayLocs++; if(errSamples.length<3) errSamples.push(day.businessDate+" "+r.location+": "+(r.error||r.salesError)); }
+                                    else okDayLocs++;
+                                });
+                            });
+                        } catch(_){}
+                    }
                     setBackfilling(false);
-                    setBackfillMsg(language==="es"?"✓ Relleno completo — revisa 🍽 Vendidos en Operaciones":"✓ Backfill complete — check 🍽 Sellers in Operations");
+                    if (errDayLocs > 0) {
+                        setBackfillMsg((language==="es"?"⚠ Completo con errores: ":"⚠ Done with errors: ")+okDayLocs+" ok, "+errDayLocs+(language==="es"?" fallaron. ":" failed. ")+(errSamples[0]||""));
+                    } else {
+                        setBackfillMsg((language==="es"?"✓ Relleno completo ("+okDayLocs+" tienda-días) — revisa 🍽 Vendidos":"✓ Backfill complete ("+okDayLocs+" store-days) — check 🍽 Sellers"));
+                    }
                 } catch(e){ setBackfilling(false); setBackfillMsg((language==="es"?"Error: ":"Error: ")+(e.message||String(e))); }
             };
             const analyzeNumbers = async () => {
