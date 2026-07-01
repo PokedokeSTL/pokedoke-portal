@@ -183,6 +183,16 @@
             display: none;
         }
 
+        /* Normalize native date inputs (iOS renders an odd grey pill otherwise) */
+        input[type="date"] {
+            -webkit-appearance: none;
+            appearance: none;
+            text-align: left;
+        }
+        input[type="date"]::-webkit-date-and-time-value {
+            text-align: left;
+        }
+
         /* Animations */
         @keyframes flash-yellow {
             0%, 100% { background-color: #fef9c3; border-color: #facc15; }
