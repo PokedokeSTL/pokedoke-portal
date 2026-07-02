@@ -5684,23 +5684,29 @@
             };
 
             const submitTimeOff = async () => {
-                if(!toStartDate)return;
-                if(toAllDay && !toEndDate)return;
+                const toast = (m,t)=>{ try { window.showToast(m, t||"info"); } catch(_) { try{ alert(m); }catch(__){} } };
+                if(!toStartDate){ toast(language==="es"?"Elige una fecha primero":"Pick a date first","error"); return; }
+                if(toAllDay && !toEndDate){ toast(language==="es"?"Elige la fecha final":"Pick an end date","error"); return; }
                 if(!toAllDay && (!toStartTime || !toEndTime)){
-                    window.showToast(language==="es"?"Indica la hora de inicio y fin":"Enter a start and end time","error");
+                    toast(language==="es"?"Indica la hora de inicio y fin":"Enter a start and end time","error");
                     return;
                 }
                 if (!ownerAccess && toStartDate < toMinDate) {
-                    window.showToast(language === "es"
+                    toast(language === "es"
                         ? "Las solicitudes deben ser con " + toLeadLabel + " de anticipación (a partir del " + toMinDisplay + ")"
-                        : "Requests must be at least " + toLeadLabel + " out (on or after " + toMinDisplay + ")", "error", 5000);
+                        : "Requests must be at least " + toLeadLabel + " out (on or after " + toMinDisplay + ")", "error");
                     return;
                 }
                 const rec = {employee:staffName, startDate:toStartDate, endDate:(toAllDay?(toEndDate||toStartDate):toStartDate), reason:toReason, allDay:toAllDay, status:"pending", requestedAt:new Date().toISOString()};
                 if(!toAllDay){ rec.startTime=toStartTime; rec.endTime=toEndTime; }
-                await db.collection("timeOffRequests").add(rec);
-                setToStartDate(""); setToEndDate(""); setToReason(""); setToStartTime(""); setToEndTime(""); setToAllDay(true);
-                window.showToast(language === "es" ? "Solicitud enviada" : "Request submitted", "success");
+                try {
+                    await db.collection("timeOffRequests").add(rec);
+                    setToStartDate(""); setToEndDate(""); setToReason(""); setToStartTime(""); setToEndTime(""); setToAllDay(true);
+                    toast(language === "es" ? "Solicitud enviada" : "Request submitted", "success");
+                } catch(e) {
+                    console.error("time-off submit failed:", e);
+                    toast((language==="es"?"No se pudo enviar: ":"Couldn't submit: ")+(e.message||String(e)), "error");
+                }
             };
 
             // Employee cancels their own request (plans changed). Notifies managers so the schedule can be adjusted.
