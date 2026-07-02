@@ -11492,6 +11492,7 @@
             const [analyzing, setAnalyzing] = useState(false);
             const [briefTesting, setBriefTesting] = useState(false);
             const [briefMsg, setBriefMsg] = useState("");
+            const [briefs, setBriefs] = useState([]);
             const [expenses, setExpenses] = useState([]);
             const [sales, setSales] = useState([]);
             const [loading, setLoading] = useState(true);
@@ -11557,7 +11558,10 @@
                 const unsub6 = db.collection("toastDaily").orderBy("businessDate","desc").limit(120).onSnapshot(snap => {
                     setToastDaily(snap.docs.map(d=>({id:d.id,...d.data()})));
                 });
-                return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); };
+                const unsub7 = db.collection("briefs").orderBy("date","desc").limit(14).onSnapshot(snap => {
+                    setBriefs(snap.docs.map(d=>({id:d.id,...d.data()})));
+                });
+                return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); };
             }, []);
 
             // Date helpers for labor-from-schedule
@@ -12020,6 +12024,21 @@
                                             </button>
                                             {briefMsg ? <p className="text-xs mt-1" style={{color:"var(--text-muted)"}}>{briefMsg}</p>
                                                 : <p className="text-[11px] mt-1" style={{color:"var(--text-muted)"}}>{language==="es"?"El resumen automático llega cada mañana a las 6am.":"The automated brief arrives every morning at 6am."}</p>}
+                                            {briefs.length > 0 && (
+                                                <div className="mt-3 space-y-2">
+                                                    <p className="text-[10px] font-bold uppercase tracking-wide" style={{color:"var(--text-muted)"}}>{language==="es"?"Resúmenes recientes":"Recent briefs"}</p>
+                                                    {briefs.map(b => {
+                                                        const d = b.date && b.date.length===8 ? new Date(+b.date.slice(0,4), +b.date.slice(4,6)-1, +b.date.slice(6,8)) : null;
+                                                        const dLabel = d ? d.toLocaleDateString(language==="es"?"es-ES":"en-US",{weekday:"short",month:"short",day:"numeric"}) : b.date;
+                                                        return (
+                                                            <div key={b.id} className="rounded-xl p-2.5" style={{background:"var(--bg-subtle)"}}>
+                                                                <p className="text-[11px] font-bold mb-0.5" style={{color:"var(--text-secondary)"}}>{dLabel}{b.test?(language==="es"?" · prueba":" · test"):""}</p>
+                                                                <p className="text-xs whitespace-pre-wrap" style={{color:"var(--text-primary)"}}>{b.body}</p>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                     <p className="text-xs text-center" style={{color:"var(--text-muted)"}}>{language==="es"?"Datos en vivo de Toast · se actualiza cada mañana automáticamente":"Live from Toast · auto-updates each morning"}</p>
