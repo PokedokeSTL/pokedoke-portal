@@ -10020,6 +10020,7 @@
             const [pinned, setPinned] = useState(null);
             const [replyTo, setReplyTo] = useState(null);
             const [reactBar, setReactBar] = useState(null);
+            const [reactorsMsg, setReactorsMsg] = useState(null);
             const [search, setSearch] = useState("");
             const [showCompose, setShowCompose] = useState(false);
             const [showNewGroup, setShowNewGroup] = useState(false);
@@ -10344,7 +10345,14 @@
                             {m.reactions && Object.keys(m.reactions).length > 0 && (
                                 <div className={"flex gap-1 mt-0.5 flex-wrap " + (isMe ? "justify-end" : "")}>
                                     {Object.entries(m.reactions).map(([emo, names]) => (
-                                        <button key={emo} onClick={(e) => { e.stopPropagation(); toggleReaction(m, emo); }} className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ background: names.includes(staffName) ? "#cffafe" : "var(--bg-subtle)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>{emo} {names.length}</button>
+                                        <button key={emo} onClick={(e) => { e.stopPropagation(); setReactorsMsg(reactorsMsg === m.id ? null : m.id); }} className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ background: names.includes(staffName) ? "#cffafe" : "var(--bg-subtle)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>{emo} {names.length}</button>
+                                    ))}
+                                </div>
+                            )}
+                            {reactorsMsg === m.id && m.reactions && Object.keys(m.reactions).length > 0 && (
+                                <div className={"mt-0.5 p-2 rounded-lg max-w-[240px] " + (isMe ? "ml-auto" : "")} style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>
+                                    {Object.entries(m.reactions).map(([emo, names]) => (
+                                        <p key={emo} className="text-[11px] leading-snug"><span className="mr-1">{emo}</span>{(names || []).join(", ")}</p>
                                     ))}
                                 </div>
                             )}
@@ -10358,7 +10366,7 @@
                             )}
                             {reactBar === m.id && (
                                 <div className={"flex gap-1 mt-1 p-1 rounded-full items-center " + (isMe ? "justify-end" : "")} style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
-                                    {REACTIONS.map(emo => <button key={emo} onClick={(e) => { e.stopPropagation(); toggleReaction(m, emo); }} className="text-base px-1 active:scale-125 transition">{emo}</button>)}
+                                    {!isMe && REACTIONS.map(emo => <button key={emo} onClick={(e) => { e.stopPropagation(); toggleReaction(m, emo); }} className="text-base px-1 active:scale-125 transition">{emo}</button>)}
                                     <button onClick={(e) => { e.stopPropagation(); setReplyTo({ from: m.from, text: m.text || (es ? "📷 Foto" : "📷 Photo") }); setReactBar(null); }} className="text-sm font-bold px-2" style={{ color: "#0891b2" }}>↩︎</button>
                                     {admin && (isChannel || isGroup) && <button onClick={(e) => { e.stopPropagation(); pinMessage(m); }} className="text-sm px-1" title="Pin">📌</button>}
                                 </div>
@@ -10396,7 +10404,7 @@
                                 <svg width="21" height="21" viewBox="0 0 24 24" fill={urgent ? "#fee2e2" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13.5" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
                             </button>
                             <div className="flex-1 flex items-end gap-1 pl-4 pr-1" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: 22, minHeight: 42 }}>
-                                <textarea ref={composeRef} rows={1} value={newMessage} onChange={e => { setNewMessage(e.target.value); const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={es ? "Mensaje..." : "Message..."} className="flex-1 bg-transparent outline-none py-2 resize-none" style={{ color: "var(--text-primary)", fontSize: 16, lineHeight: "20px", maxHeight: 120, overflowY: "auto" }} />
+                                <textarea ref={composeRef} rows={1} value={newMessage} onChange={e => { setNewMessage(e.target.value); const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }} placeholder={es ? "Mensaje..." : "Message..."} className="flex-1 bg-transparent outline-none py-2 resize-none" style={{ color: "var(--text-primary)", fontSize: 16, lineHeight: "20px", maxHeight: 120, overflowY: "auto" }} />
                                 {hasText && (
                                     <button onClick={() => sendMessage()} className="flex-none flex items-center justify-center rounded-full animate-scale active:scale-90 transition" style={{ width: 32, height: 32, background: "#0891b2", color: "white" }} aria-label={es ? "Enviar" : "Send"}>
                                         <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M3.4 20.4l17.45-7.48a1 1 0 0 0 0-1.84L3.4 3.6a1 1 0 0 0-1.4.92V9.5c0 .5.37.93.87.99L15 12 2.87 13.51c-.5.06-.87.49-.87.99v4.98a1 1 0 0 0 1.4.92z" /></svg>
@@ -10455,7 +10463,7 @@
                                 {admin && <button onClick={unpin} className="flex-none font-bold text-base leading-none" style={{ color: "#b45309" }}>×</button>}
                             </div>
                         )}
-                        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3" style={{ background: bgValue }} onClick={() => { setReactBar(null); setSeenByMsg(null); setShowBgPicker(false); }}>
+                        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3" style={{ background: bgValue }} onClick={() => { setReactBar(null); setSeenByMsg(null); setShowBgPicker(false); setReactorsMsg(null); }}>
                             {messages.length === 0 && <p className="text-center text-sm py-8" style={{ color: "var(--text-muted)" }}>{es ? "Empieza la conversación" : "Start the conversation"}</p>}
                             {renderBubbles()}
                             <div ref={messagesEndRef} />
