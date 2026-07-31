@@ -5020,6 +5020,18 @@
                 const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + dayIdx);
                 return fmtLocalDate(d);
             };
+            // Seasonal "away" — hide staff from the roster/pickers only for weeks that overlap their away window.
+            const awayThisWeek = (s) => {
+                if (!s || !s.awayFrom || !s.awayUntil) return false;
+                const wEnd = getDateForDayKey(6); // Sunday of the viewed week
+                return weekStart <= s.awayUntil && wEnd >= s.awayFrom;
+            };
+            // Anyone currently away (for badges / "who's out" notes), based on today.
+            const awayNow = (s) => {
+                if (!s || !s.awayFrom || !s.awayUntil) return false;
+                const today = window.fmtLocalDate();
+                return today >= s.awayFrom && today <= s.awayUntil;
+            };
 
             useEffect(() => {
                 const unsub = db.collection("schedules").doc(weekKey).onSnapshot(doc => {
@@ -5312,7 +5324,7 @@
             // Get all time-off requests for a given day (approved AND pending), filtered to current location
             const getTimeOffForDay = (dayIdx) => {
                 const shiftDate = getDateForDayKey(dayIdx);
-                const locStaffNames = new Set(staffList.filter(s=>s.location===schedLocation||s.location==="all").map(s=>s.name));
+                const locStaffNames = new Set(staffList.filter(s=>(s.location===schedLocation||s.location==="all") && s.active!==false && !awayThisWeek(s)).map(s=>s.name));
                 return timeOffRequests.filter(req =>
                     locStaffNames.has(req.employee) &&
                     (req.status === "approved" || req.status === "pending") &&
@@ -6068,11 +6080,18 @@
             const myShifts = shifts.filter(s => s.employee === staffName);
             // Everyone sees the full schedule in the Schedule tab (coworkers + open shifts); "My Shifts" tab still filters to just theirs.
             // Only show shifts for staff who belong to the selected location (or open shifts) so stray cross-location shifts never appear.
-            const visLocNames = new Set(staffList.filter(s => s.location === schedLocation || s.location === "all").map(s => s.name));
+            const visLocNames = new Set(staffList.filter(s => (s.location === schedLocation || s.location === "all") && s.active!==false && !awayThisWeek(s)).map(s => s.name));
             const visibleShifts = shifts.filter(s => s.employee === "__OPEN__" || visLocNames.has(s.employee));
+            // Who's out this week (seasonal away), for a manager heads-up on the schedule.
+            const awayThisWeekList = mgrAccess ? staffList.filter(s => (s.location===schedLocation||s.location==="all") && awayThisWeek(s)) : [];
 
             return (
                 <div className="p-4 pb-24 animate-in">
+                    {schedTab === "view" && awayThisWeekList.length > 0 && (
+                        <div className="rounded-xl px-3 py-2 mb-3 text-xs" style={{background:"#f0fdfa", border:"1px solid #99f6e4", color:"#0f766e"}}>
+                            🏝️ {language==="es"?"Ausentes esta semana: ":"Away this week: "}<span className="font-bold">{awayThisWeekList.map(s=>s.name.split(" ")[0]).join(", ")}</span>
+                        </div>
+                    )}
                     <div className="flex gap-1 rounded-2xl p-1 mb-4 overflow-x-auto sticky z-20" style={{background:"var(--bg-subtle)", top: "0px", scrollbarWidth: "none"}}>
                         {[{id:"view",l:"📅 "+(language==="es"?"Horario":"Schedule")},{id:"mine",l:"👤 "+(language==="es"?"Mis Turnos":"My Shifts")},{id:"avail",l:"🕐 "+(language==="es"?"Disponibilidad":"Availability")},{id:"timeoff",l:"🏖️ "+(language==="es"?"Descanso":"Time Off")},{id:"swaps",l:"🔄 "+(language==="es"?"Cambios":"Swaps")},...(mgrAccess?[{id:"hours",l:"⏱️ "+(language==="es"?"Horas":"Hours")},{id:"actual",l:"📊 "+(language==="es"?"Real":"Actual")},{id:"templates",l:"📋 "+(language==="es"?"Plantillas":"Templates")}]:[]),...(ownerAccess?[{id:"labor",l:"💰 "+(language==="es"?"Costos":"Labor")}]:[])].map(tab=>(
                             <button key={tab.id} onClick={()=>setSchedTab(tab.id)}
@@ -6282,7 +6301,7 @@
 
                             {/* ========== DESKTOP GRID VIEW (managers, screens >= 1024px) ========== */}
                             {isDesktop && mgrAccess && (() => {
-                                const locStaff = staffList.filter(s=>(s.location===schedLocation||s.location==="all") && !isOwner(s.name));
+                                const locStaff = staffList.filter(s=>(s.location===schedLocation||s.location==="all") && !isOwner(s.name) && s.active!==false && !awayThisWeek(s));
                                 const empsWithShifts = new Set(shifts.filter(s=>s.employee!=="__OPEN__").map(s=>s.employee));
                                 const visibleEmps = showAllEmployees ? locStaff : locStaff.filter(s=>empsWithShifts.has(s.name));
                                 const openShifts = shifts.filter(s=>s.employee==="__OPEN__");
@@ -7294,7 +7313,7 @@
                             </div>
                             {(()=>{
                                 const weekDates = [0,1,2,3,4,5,6].map(i=>getDateForDayKey(i));
-                                const locStaff = staffList.filter(s=>(s.location===schedLocation||s.location==="all") && !isOwner(s.name));
+                                const locStaff = staffList.filter(s=>(s.location===schedLocation||s.location==="all") && !isOwner(s.name) && s.active!==false && !awayThisWeek(s));
                                 const empData = locStaff.map(s => {
                                     const empShifts = shifts.filter(sh=>sh.employee===s.name);
                                     const scheduledHrs = empShifts.reduce((sum,sh)=>sum+calcHours(sh.startTime,sh.endTime),0);
@@ -9549,6 +9568,8 @@
             const [addEmpError, setAddEmpError] = useState("");
             const [inviteEmp, setInviteEmp] = useState(null);
             const [deactivating, setDeactivating] = useState(null); // emp being deactivated
+            const [awayDraftFrom, setAwayDraftFrom] = useState("");
+            const [awayDraftUntil, setAwayDraftUntil] = useState("");
             const [deactForm, setDeactForm] = useState({ reason: "quit", rehirable: true, note: "" });
             const [viewArchived, setViewArchived] = useState(false);
 
@@ -9729,6 +9750,21 @@
                 setSelectedEmp({ ...selectedEmp, status: "active", history });
             };
 
+            // Seasonal away: set (or clear with nulls) an away date window. Writes to the
+            // employees doc AND the config/staff list (the schedule reads staffList).
+            const setAway = async (from, until) => {
+                const docId = selectedEmp.name.replace(/\s/g, "_");
+                const af = from || null, au = until || null;
+                await db.collection("employees").doc(docId).set({ awayFrom: af, awayUntil: au, updatedAt: new Date().toISOString() }, { merge: true });
+                if (setStaffList) {
+                    const updatedStaff = staffList.map(s => s.name === selectedEmp.name ? { ...s, awayFrom: af, awayUntil: au } : s);
+                    await db.collection("config").doc("staff").set({ list: updatedStaff });
+                    setStaffList(updatedStaff);
+                }
+                setSelectedEmp({ ...selectedEmp, awayFrom: af, awayUntil: au });
+                try { window.showToast(af && au ? (language === "es" ? "🏝️ Ausencia programada" : "🏝️ Away dates set") : (language === "es" ? "✅ De vuelta en el horario" : "✅ Back on the schedule"), "success"); } catch(_){}
+            };
+
             // When an employee is deactivated, turn their upcoming shifts into open shifts so they
             // can be picked up. Only touches the current week and later (past weeks stay as history),
             // which keeps the current week usable as a week-over-week template with the slot now open.
@@ -9900,6 +9936,31 @@
                                     <button onClick={()=>{setEditMode(true);setEditData({...selectedEmp});}} className="py-3 bg-poke-600 text-white rounded-xl font-bold text-sm">✏️ {language==="es"?"Editar":"Edit"}</button>
                                     <button onClick={toggleStatus} className={"py-3 rounded-xl font-bold text-sm "+(selectedEmp.status==="active"?"bg-red-500 text-white":"bg-green-600 text-white")}>{selectedEmp.status==="active"?"❌ "+(language==="es"?"Desactivar":"Deactivate"):"✅ "+(language==="es"?"Reactivar":"Reactivate")}</button>
                                 </div>
+                                {selectedEmp.status === "active" && (
+                                    <div className="rounded-2xl p-3 mt-2" style={{background:"#f0fdfa", border:"1px solid #99f6e4"}}>
+                                        <p className="text-sm font-bold" style={{color:"#0f766e"}}>🏝️ {language==="es"?"Temporal / Ausencia":"Seasonal / Away"}</p>
+                                        {selectedEmp.awayFrom && selectedEmp.awayUntil ? (
+                                            <>
+                                                <p className="text-xs mt-1" style={{color:"#0f766e"}}>
+                                                    {language==="es"?"Ausente ":"Away "}
+                                                    {new Date(selectedEmp.awayFrom+"T12:00:00").toLocaleDateString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric"})}
+                                                    {" → "}
+                                                    {new Date(selectedEmp.awayUntil+"T12:00:00").toLocaleDateString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",year:"numeric"})}
+                                                    {". "}{language==="es"?"Oculto del horario durante este periodo; puede iniciar sesión.":"Hidden from the schedule during this window; can still log in."}
+                                                </p>
+                                                <button onClick={()=>setAway(null,null)} className="mt-2 w-full py-2 rounded-xl font-bold text-xs" style={{background:"#0d9488",color:"white"}}>✅ {language==="es"?"Traer de vuelta ahora":"Bring back now"}</button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p className="text-[11px] mt-1 mb-2" style={{color:"#0f766e"}}>{language==="es"?"Fija un rango (p. ej. temporada universitaria). Se oculta del horario solo en ese periodo; sus turnos ya programados no se tocan.":"Set a range (e.g. college semester). They drop off the schedule only during that window; their already-scheduled shifts are untouched."}</p>
+                                                <InlineDateRange start={awayDraftFrom} end={awayDraftUntil} language={language}
+                                                    onChange={(a,b)=>{ setAwayDraftFrom(a); setAwayDraftUntil(b); }} />
+                                                <button disabled={!awayDraftFrom||!awayDraftUntil||awayDraftFrom===awayDraftUntil} onClick={()=>setAway(awayDraftFrom, awayDraftUntil)}
+                                                    className="mt-2 w-full py-2 rounded-xl font-bold text-xs disabled:opacity-50" style={{background:"#0d9488",color:"white"}}>🏝️ {language==="es"?"Marcar como ausente":"Mark as away"}</button>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
                                 <button onClick={async ()=>{ logInvite(selectedEmp.name, selectedEmp.email||"", selectedEmp.phone||"", selectedEmp.pin); const emailAddr = selectedEmp.email||""; let emailed=false; if (emailAddr) emailed = await sendInviteEmail(selectedEmp.name, emailAddr, selectedEmp.pin, language); if (emailed) { window.showToast((language==="es"?"📧 Invitación enviada por email a ":"📧 Invite emailed to ")+selectedEmp.name, "success"); } else { if (emailAddr) window.showToast(language==="es"?"No se pudo enviar el email — usa las opciones de abajo":"Couldn't auto-email — use the options below","error"); setInviteEmp({name:selectedEmp.name, email:emailAddr, phone:selectedEmp.phone||"", pin:selectedEmp.pin, emailed:false}); } }} className="w-full py-3 rounded-xl font-bold text-sm" style={{background:"#dbeafe",color:"#1e40af"}}>📲 {language==="es"?"Enviar Invitación a la App":"Send App Invite"}</button>
                             </div>
                         ):(
@@ -14620,9 +14681,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             useEffect(() => {
                 const unsubscribe = db.collection("config").doc("staff").onSnapshot((doc) => {
                     if (doc.exists && doc.data().list) {
-                        // Exclude deactivated staff (active:false) from the app-wide list so they
-                        // drop off schedules, rosters, and pickers — not just the archive view.
-                        setStaffList(doc.data().list.filter(s => s.active !== false));
+                        setStaffList(doc.data().list);
                     }
                 });
                 return () => unsubscribe();
