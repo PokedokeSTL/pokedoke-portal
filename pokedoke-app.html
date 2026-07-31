@@ -454,6 +454,8 @@
         const OWNER_NAMES = ["Steve Shih", "Annie Shih", "Leon Shih"];
         const isAdmin = (name) => ADMIN_NAMES.includes(name);
         const isOwner = (name) => OWNER_NAMES.includes(name);
+        // Master list of assignable roles (single source of truth for role dropdowns).
+        const ROLE_MASTER = ["Team Leader", "Shift Lead", "Line Server", "Cashier", "Prep Cook", "Cook", "Dishwasher", "Trainer", "Owner", "FOH", "BOH", "Prep", "Grill", "Fryer", "Bowl Line", "Push Pops", "Proteins", "Rice", "Toppings", "Boba/Drinks", "Dish"];
 
         // Global helper: format Date as YYYY-MM-DD in local time (avoids UTC shift bug)
         // Use this anywhere we save dates to Firestore as date keys
@@ -4967,8 +4969,10 @@
             const DAY_KEYS = ["mon","tue","wed","thu","fri","sat","sun"];
             // Role dropdown options, derived from the roles your staff actually have (plus any existing custom value so editing never loses it)
             const roleOpts = (cur) => {
-                const set = Array.from(new Set((staffList || []).map(s => s.role).filter(Boolean)));
-                set.sort();
+                // Master roles first, then any extra roles current staff happen to have.
+                const staffRoles = (staffList || []).map(s => s.role).filter(Boolean);
+                const merged = [...ROLE_MASTER, ...staffRoles.filter(r => !ROLE_MASTER.includes(r))];
+                const set = Array.from(new Set(merged));
                 if (cur && !set.includes(cur)) set.unshift(cur);
                 return set;
             };
@@ -9056,7 +9060,7 @@
                 showSaved();
             };
 
-            const roleOptions = ["FOH", "BOH", "Shift Lead", "Team Leader", "Owner", "Prep", "Grill", "Fryer", "Bowl Line", "Push Pops", "Proteins", "Rice", "Toppings", "Boba/Drinks", "Dish"];
+            const roleOptions = ROLE_MASTER;
 
             return (
                 <div className="p-4 pb-24">
