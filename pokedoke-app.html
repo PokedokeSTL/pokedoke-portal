@@ -6297,8 +6297,21 @@
                                     "Dishwasher":    {emoji:"🧼", bg:"#f1f5f9", color:"#475569"},
                                     "Owner":         {emoji:"👑", bg:"#fae8ff", color:"#86198f"}
                                 };
+                                const ROLE_LABEL = {
+                                    "Team Leader": (language==="es"?"Líderes de Equipo":"Team Leaders"),
+                                    "Shift Lead":  (language==="es"?"Líderes de Turno":"Shift Leads"),
+                                    "Line Server": (language==="es"?"Servidores":"Line Servers"),
+                                    "Prep Cook":   (language==="es"?"Cocineros de Prep":"Prep Cooks"),
+                                    "Cook":        (language==="es"?"Cocineros":"Cooks"),
+                                    "Dishwasher":  (language==="es"?"Lavaplatos":"Dishwashers"),
+                                    "Cashier":     (language==="es"?"Cajeros":"Cashiers"),
+                                    "Trainer":     (language==="es"?"Entrenadores":"Trainers"),
+                                    "Owner":       (language==="es"?"Dueños":"Owners")
+                                };
+                                // Fold legacy titles into the new groups so old data displays correctly.
+                                const roleAlias = (r) => r === "Manager" ? "Team Leader" : r === "Shift Manager" ? "Shift Lead" : (r || "Other");
                                 const empGroups = {};
-                                visibleEmps.forEach(e => { const r = e.role || "Other"; (empGroups[r] = empGroups[r] || []).push(e); });
+                                visibleEmps.forEach(e => { const r = roleAlias(e.role); (empGroups[r] = empGroups[r] || []).push(e); });
                                 const orderedRoles = [...ROLE_ORDER.filter(r=>empGroups[r]), ...Object.keys(empGroups).filter(r=>!ROLE_ORDER.includes(r)).sort()];
                                 const scheduleRows = [];
                                 orderedRoles.forEach(role => { scheduleRows.push({__group: role}); empGroups[role].forEach(e=>scheduleRows.push(e)); });
@@ -6407,7 +6420,7 @@
                                                                 <tr key={"grp-"+rowItem.__group}>
                                                                     <td colSpan={9} style={{background: meta.bg, padding: "5px 12px", borderBottom: "1px solid var(--border-subtle)"}}>
                                                                         <div style={{display:"flex", alignItems:"center", gap:8, fontSize:11, fontWeight:800, letterSpacing:0.4, color: meta.color}}>
-                                                                            <span style={{textTransform:"uppercase"}}>{meta.emoji} {rowItem.__group}</span>
+                                                                            <span style={{textTransform:"uppercase"}}>{meta.emoji} {ROLE_LABEL[rowItem.__group] || rowItem.__group}</span>
                                                                             <span style={{fontWeight:600, opacity:0.75, textTransform:"none"}}>· {grpEmps.length} {language==="es"?"pers.":"staff"} · {grpHours % 1 === 0 ? grpHours : grpHours.toFixed(1)}h</span>
                                                                         </div>
                                                                     </td>
