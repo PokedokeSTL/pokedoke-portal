@@ -4854,6 +4854,7 @@
         // Schedule Component
         function Schedule({ staffName, language, staffList, focus }) {
             const [schedTab, setSchedTab] = useState("view");
+            const [toastShifts, setToastShifts] = useState([]);
             const [highlightId, setHighlightId] = useState(null);
 
             // Deep-link from the Activity Log: jump to a sub-tab and highlight the item
@@ -5057,6 +5058,14 @@
                 return () => unsub();
             }, [mgrAccess]);
 
+            // Real clock in/out punches pulled from Toast (for schedule-vs-actual + late badges).
+            useEffect(() => {
+                const unsub = db.collection("toastShiftsDaily").orderBy("businessDate","desc").limit(60).onSnapshot(snap => {
+                    setToastShifts(snap.docs.map(d=>({id:d.id,...d.data()})));
+                });
+                return () => unsub();
+            }, []);
+
             useEffect(() => {
                 const unsub = db.collection("timeOffRequests").orderBy("requestedAt","desc").limit(50).onSnapshot(snap => {
                     setTimeOffRequests(snap.docs.map(d=>({id:d.id,...d.data()})));
@@ -5221,6 +5230,66 @@
                 if (shift.isBD || shift.endTime === "BD") return `${startStr} - BD`;
                 if (shift.endTime === "CL" || shift.endTime === closeTime) return `${startStr} - CL`;
                 return `${startStr} - ${fmtTime(shift.endTime)}`;
+            };
+
+            // ── Toast punches: match real clock in/out to scheduled shifts ──────────
+            const LATE_THRESHOLD_MIN = 15;
+            const normName = (n) => (n||"").toLowerCase().replace(/[^a-z\s]/g,"").replace(/\s+/g," ").trim();
+            // Map "normalizedName|YYYY-MM-DD" -> {inTime, outTime, hours}
+            const punchMap = React.useMemo(() => {
+                const m = {};
+                toastShifts.forEach(d => {
+                    const bd = d.businessDate || "";
+                    if (bd.length !== 8) return;
+                    const dateStr = bd.slice(0,4)+"-"+bd.slice(4,6)+"-"+bd.slice(6,8);
+                    (d.shifts||[]).forEach(s => {
+                        if (!s.employee || !s.inTime) return;
+                        const key = normName(s.employee)+"|"+dateStr;
+                        const hrs = (s.regularHours||0)+(s.otHours||0);
+                        if (!m[key]) m[key] = { inTime:s.inTime, outTime:s.outTime||null, hours:hrs, location:d.location };
+                        else { // multiple punches same day: earliest in, latest out, sum hours
+                            if (s.inTime < m[key].inTime) m[key].inTime = s.inTime;
+                            if (s.outTime && (!m[key].outTime || s.outTime > m[key].outTime)) m[key].outTime = s.outTime;
+                            m[key].hours += hrs;
+                        }
+                    });
+                });
+                return m;
+            }, [toastShifts]);
+            // Names Toast reported that don't match anyone in staffList (so they're visible, not silently dropped).
+            const unmatchedToastNames = React.useMemo(() => {
+                const staffNorms = new Set(staffList.map(s=>normName(s.name)));
+                const out = new Set();
+                toastShifts.forEach(d => (d.shifts||[]).forEach(s => {
+                    if (s.employee && !staffNorms.has(normName(s.employee))) out.add(s.employee);
+                }));
+                return Array.from(out);
+            }, [toastShifts, staffList]);
+            const punchFor = (empName, dateStr) => punchMap[normName(empName)+"|"+dateStr] || null;
+            // Compare a scheduled shift to the real punch. Returns status + minutes late.
+            const shiftActual = (shift) => {
+                const dayIdx = DAY_KEYS.indexOf(shift.day);
+                const dateStr = getDateForDayKey(dayIdx);
+                const today = window.fmtLocalDate();
+                const punch = punchFor(shift.employee, dateStr);
+                if (!punch) {
+                    if (dateStr > today) return { status:"upcoming" };
+                    return { status:"nopunch", dateStr };
+                }
+                let lateMin = null;
+                if (shift.startTime && punch.inTime) {
+                    const [sh,sm] = shift.startTime.split(":").map(Number);
+                    const inD = new Date(punch.inTime);
+                    if (!isNaN(inD.getTime()) && !isNaN(sh)) {
+                        const schedMin = sh*60 + (sm||0);
+                        const actualMin = inD.getHours()*60 + inD.getMinutes();
+                        lateMin = actualMin - schedMin;
+                    }
+                }
+                return {
+                    status: (lateMin != null && lateMin > LATE_THRESHOLD_MIN) ? "late" : "ontime",
+                    lateMin, hours: punch.hours, inTime: punch.inTime, outTime: punch.outTime, dateStr
+                };
             };
 
             const calcHours = (start, end) => {
@@ -6423,6 +6492,12 @@
                                                                                     {shiftWarn.length > 0 && (
                                                                                         <div style={{fontSize: 9, fontWeight: 700, marginTop: 1, lineHeight: 1.2}}>{shiftWarn.map(w=>w.icon).join(" ")}</div>
                                                                                     )}
+                                                                                    {mgrAccess && (()=>{
+                                                                                        const act = shiftActual(shift);
+                                                                                        if (act.status === "late") return <div style={{fontSize:9, fontWeight:700, color:"#ea580c", lineHeight:1.2}} title={"Clocked in "+act.lateMin+" min late"}>⏰ {act.lateMin}m</div>;
+                                                                                        if (act.status === "nopunch") return <div style={{fontSize:9, fontWeight:700, color:"#dc2626", lineHeight:1.2}} title="No clock-in recorded">🚫</div>;
+                                                                                        return null;
+                                                                                    })()}
                                                                                 </div>
                                                                                 );
                                                                             })}
@@ -6550,6 +6625,13 @@
                                                             {shift.notes&&<p className="text-xs text-gray-500 italic mt-0.5">📝 {shift.notes}</p>}
                                                             {hasConflict&&<p className="text-xs text-red-600 font-bold">⚠️ {language==="es"?"Conflicto con descanso aprobado":"Conflict with approved time off"}</p>}
                                                             {availStatus===false&&<p className="text-xs text-yellow-700 font-bold">⚠️ {language==="es"?"Fuera de disponibilidad":"Outside availability"}</p>}
+                                                            {mgrAccess && !isOpen && (()=>{
+                                                                const act = shiftActual(shift);
+                                                                if (act.status === "late") return <p className="text-xs font-bold text-orange-600">⏰ {language==="es"?"Tarde ":"Late "}{act.lateMin}{language==="es"?" min":" min"} · {language==="es"?"marcó":"in"} {new Date(act.inTime).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</p>;
+                                                                if (act.status === "nopunch") return <p className="text-xs font-bold text-red-600">🚫 {language==="es"?"No marcó entrada":"No clock-in"}</p>;
+                                                                if (act.status === "ontime") return <p className="text-xs font-bold text-green-600">✓ {language==="es"?"A tiempo":"On time"}{act.hours?" · "+act.hours.toFixed(1)+"h":""}</p>;
+                                                                return null;
+                                                            })()}
                                                         </div>
                                                         <div className="flex gap-1">
                                                             {isOpen && !mgrAccess && (
@@ -7192,17 +7274,20 @@
                         <div className="space-y-3">
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
                                 <p className="font-bold text-gray-800 text-sm">📊 {language==="es"?"Programado vs Real":"Scheduled vs Actual"}</p>
-                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Compara los turnos programados contra el reloj de tiempo real.":"Compare scheduled shifts against actual time clock punches."}</p>
+                                <p className="text-xs text-gray-400 mt-1">{language==="es"?"Compara los turnos programados contra las marcas reales de Toast.":"Compares scheduled shifts against real Toast clock-in/out punches."}</p>
                             </div>
                             {(()=>{
+                                const weekDates = [0,1,2,3,4,5,6].map(i=>getDateForDayKey(i));
                                 const locStaff = staffList.filter(s=>(s.location===schedLocation||s.location==="all") && !isOwner(s.name));
                                 const empData = locStaff.map(s => {
                                     const empShifts = shifts.filter(sh=>sh.employee===s.name);
                                     const scheduledHrs = empShifts.reduce((sum,sh)=>sum+calcHours(sh.startTime,sh.endTime),0);
-                                    const empClocks = timeClockEntries.filter(tc=>tc.employee===s.name);
-                                    const actualHrs = empClocks.reduce((sum,tc)=>sum+(tc.hoursWorked||0),0);
+                                    let actualHrs = 0, punchCount = 0;
+                                    weekDates.forEach(dt => { const p = punchFor(s.name, dt); if (p) { actualHrs += p.hours||0; punchCount++; } });
+                                    let lateCount = 0, noPunchCount = 0;
+                                    empShifts.forEach(sh => { const a = shiftActual(sh); if (a.status==="late") lateCount++; else if (a.status==="nopunch") noPunchCount++; });
                                     const variance = actualHrs - scheduledHrs;
-                                    return { name: s.name, scheduledHrs, actualHrs, variance, shifts: empShifts, clocks: empClocks };
+                                    return { name: s.name, scheduledHrs, actualHrs, variance, shifts: empShifts, punchCount, lateCount, noPunchCount };
                                 }).filter(e=>e.scheduledHrs>0||e.actualHrs>0).sort((a,b)=>Math.abs(b.variance)-Math.abs(a.variance));
 
                                 const totSched = empData.reduce((s,e)=>s+e.scheduledHrs,0);
@@ -7211,6 +7296,12 @@
 
                                 return (
                                     <>
+                                        {unmatchedToastNames.length > 0 && (
+                                            <div className="rounded-2xl p-3" style={{background:"#fffbeb", border:"1px solid #fde68a"}}>
+                                                <p className="text-xs font-bold" style={{color:"#92400e"}}>⚠️ {language==="es"?"Nombres de Toast sin coincidencia":"Toast names that didn't match"}</p>
+                                                <p className="text-[11px] mt-1" style={{color:"#92400e"}}>{language==="es"?"Marcaron en Toast pero su nombre no coincide con la app. Ajusta el nombre para que aparezcan:":"These people punched in on Toast but their name doesn't match the app. Fix the name so they show up:"} {unmatchedToastNames.join(", ")}</p>
+                                            </div>
+                                        )}
                                         {/* Summary */}
                                         <div className="bg-gradient-to-r from-poke-700 to-poke-600 rounded-2xl p-4 text-white">
                                             <div className="grid grid-cols-3 gap-2 text-center">
@@ -7238,22 +7329,23 @@
                                                     <div className="flex gap-4 text-xs" style={{color:"var(--text-muted)"}}>
                                                         <span>📅 {language==="es"?"Prog":"Sched"}: {emp.scheduledHrs.toFixed(1)}h</span>
                                                         <span>⏰ {language==="es"?"Real":"Actual"}: {emp.actualHrs.toFixed(1)}h</span>
-                                                        <span>{emp.clocks.length} {language==="es"?"registros":"punches"}</span>
+                                                        <span>{emp.punchCount} {language==="es"?"registros":"punches"}</span>
+                                                        {emp.lateCount>0 && <span className="font-bold text-orange-500">⏰ {emp.lateCount} {language==="es"?"tarde":"late"}</span>}
+                                                        {emp.noPunchCount>0 && <span className="font-bold text-red-500">🚫 {emp.noPunchCount}</span>}
                                                     </div>
                                                     {/* Show detail per day */}
                                                     {emp.shifts.map(sh => {
-                                                        const dayDate = getDateForDayKey(DAY_KEYS.indexOf(sh.day));
-                                                        const matchingClock = emp.clocks.find(c=>c.date===dayDate);
+                                                        const act = shiftActual(sh);
                                                         const schedH = calcHours(sh.startTime, sh.endTime);
-                                                        const actH = matchingClock?.hoursWorked || 0;
-                                                        const noClock = !matchingClock && dayDate <= window.fmtLocalDate();
                                                         return (
                                                             <div key={sh.id} className="flex items-center justify-between mt-1.5 pt-1.5" style={{borderTop:"1px solid var(--border-subtle)"}}>
                                                                 <span className="text-[11px]" style={{color:"var(--text-muted)"}}>{DAYS[DAY_KEYS.indexOf(sh.day)]?.slice(0,3)} {fmtTime(sh.startTime)}–{fmtTime(sh.endTime)}</span>
-                                                                {noClock ? (
-                                                                    <span className="text-[10px] font-bold text-orange-500">⚠️ {language==="es"?"Sin registro":"No punch"}</span>
-                                                                ) : matchingClock ? (
-                                                                    <span className={"text-[10px] font-bold " + (Math.abs(actH-schedH)>0.5?"text-red-500":"text-green-600")}>{actH.toFixed(1)}h {language==="es"?"real":"actual"}</span>
+                                                                {act.status==="nopunch" ? (
+                                                                    <span className="text-[10px] font-bold text-red-500">🚫 {language==="es"?"No marcó":"No clock-in"}</span>
+                                                                ) : act.status==="late" ? (
+                                                                    <span className="text-[10px] font-bold text-orange-500">⏰ {language==="es"?"Tarde ":"Late "}{act.lateMin}m · {act.hours?act.hours.toFixed(1)+"h":""}</span>
+                                                                ) : act.status==="ontime" ? (
+                                                                    <span className={"text-[10px] font-bold " + (Math.abs((act.hours||0)-schedH)>0.5?"text-red-500":"text-green-600")}>✓ {act.hours?act.hours.toFixed(1):"0"}h {language==="es"?"real":"actual"}</span>
                                                                 ) : (
                                                                     <span className="text-[10px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Futuro":"Upcoming"}</span>
                                                                 )}
