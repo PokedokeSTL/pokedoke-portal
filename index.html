@@ -14436,7 +14436,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
 `Al reconocer este manual, confirmo que he recibido y leído el Manual del Empleado de PokeDoke, entiendo las Normas de Conducta y las políticas que contiene, y acepto cumplirlas. Entiendo que este manual no es un contrato, que mi empleo es a voluntad (tanto yo como PokeDoke podemos terminarlo en cualquier momento, con o sin causa y con o sin aviso), y que PokeDoke puede cambiar estas políticas en cualquier momento.` },
         ];
 
-        function Onboarding({ language, staffName, staffList, setActiveTab }) {
+        function Onboarding({ language, staffName, staffList, setStaffList, setActiveTab }) {
             const es = language === "es";
             const L = (en, esT) => es ? esT : en;
             const isOwnerUser = isOwner(staffName);
@@ -14447,7 +14447,36 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const [ecRel, setEcRel] = useState("");
             const [saving, setSaving] = useState(false);
             const [openEmp, setOpenEmp] = useState(null);
+            const [showAdd, setShowAdd] = useState(false);
+            const [adding, setAdding] = useState(false);
+            const [addErr, setAddErr] = useState("");
+            const [nh, setNh] = useState({ name: "", role: "Line Server", location: "cwe", email: "", phone: "" });
             const myId = staffName.replace(/\s/g, "_");
+
+            const addNewHire = async () => {
+                setAddErr("");
+                const nm = nh.name.trim();
+                if (!nm) { setAddErr(L("Name is required", "El nombre es obligatorio")); return; }
+                if (!nh.email.trim()) { setAddErr(L("Email is required to send the app invite", "Se requiere email para enviar la invitación")); return; }
+                if (staffList.some(s => s.name.toLowerCase() === nm.toLowerCase())) { setAddErr(L("An employee with that name already exists", "Ya existe un empleado con ese nombre")); return; }
+                setAdding(true);
+                try {
+                    let pin; do { pin = String(Math.floor(1000 + Math.random() * 9000)); } while (staffList.some(s => s.pin === pin));
+                    const docId = nm.replace(/\s/g, "_");
+                    const newId = Math.max(0, ...staffList.map(s => s.id || 0)) + 1;
+                    const updated = [...staffList, { id: newId, name: nm, role: nh.role, pin, location: nh.location }];
+                    await db.collection("config").doc("staff").set({ list: updated });
+                    if (setStaffList) setStaffList(updated);
+                    await db.collection("employees").doc(docId).set({ name: nm, role: nh.role, location: nh.location, pin, email: nh.email.trim(), phone: nh.phone.trim(), status: "active", hireDate: window.fmtLocalDate(), createdAt: new Date().toISOString(), createdBy: staffName, inviteSentAt: new Date().toISOString() }, { merge: true });
+                    await db.collection("inviteQueue").add({ employee: nm, email: nh.email.trim(), phone: nh.phone.trim(), pin, portalUrl: "https://staff.pokedoke.com", sentBy: staffName, sentAt: new Date().toISOString(), status: "queued" });
+                    let emailed = false;
+                    try { emailed = await sendInviteEmail(nm, nh.email.trim(), pin, language); } catch (_) {}
+                    try { window.showToast(emailed ? L("📧 Added & invited " + nm, "📧 Agregado e invitado " + nm) : L("Added " + nm + " — PIN " + pin + " (couldn't auto-email)", "Agregado " + nm + " — PIN " + pin), "success"); } catch (_) {}
+                    setNh({ name: "", role: "Line Server", location: "cwe", email: "", phone: "" });
+                    setShowAdd(false);
+                } catch (e) { setAddErr(L("Error: ", "Error: ") + (e.message || String(e))); }
+                setAdding(false);
+            };
 
             useEffect(() => {
                 const u1 = db.collection("onboarding").onSnapshot(snap => { const m = {}; snap.docs.forEach(d => m[d.id] = d.data()); setOnbData(m); });
@@ -14486,6 +14515,32 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     <div className="p-4 pb-24 animate-in space-y-3">
                         <h2 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>📋 {L("Onboarding", "Incorporación")}</h2>
                         <p className="text-xs" style={{ color: "var(--text-muted)" }}>{L("Track each employee's onboarding progress. Tap a name to see details.", "Sigue el progreso de cada empleado. Toca un nombre para ver detalles.")}</p>
+                        {!showAdd ? (
+                            <button onClick={() => { setShowAdd(true); setAddErr(""); }} className="w-full py-3 rounded-2xl font-bold text-sm text-white" style={{ background: "var(--poke-600,#0891b2)" }}>➕ {L("Add new hire & send app invite", "Agregar empleado y enviar invitación")}</button>
+                        ) : (
+                            <div className="rounded-2xl p-3 space-y-2" style={{ background: "var(--bg-card)", border: "1px solid var(--poke-600,#0891b2)" }}>
+                                <p className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>➕ {L("New hire", "Nuevo empleado")}</p>
+                                <input value={nh.name} onChange={e => setNh({ ...nh, name: e.target.value })} placeholder={L("Full name", "Nombre completo")} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                                <input value={nh.email} onChange={e => setNh({ ...nh, email: e.target.value })} type="email" placeholder={L("Email (for the app invite)", "Email (para la invitación)")} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                                <input value={nh.phone} onChange={e => setNh({ ...nh, phone: e.target.value })} type="tel" placeholder={L("Phone (optional)", "Teléfono (opcional)")} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                                <div className="flex gap-2">
+                                    <select value={nh.role} onChange={e => setNh({ ...nh, role: e.target.value })} className="flex-1 min-w-0 px-2 py-2 border rounded-xl text-sm font-bold" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }}>
+                                        {ROLE_MASTER.filter(r => r !== "Owner").map(r => <option key={r} value={r}>{r}</option>)}
+                                    </select>
+                                    <select value={nh.location} onChange={e => setNh({ ...nh, location: e.target.value })} className="px-2 py-2 border rounded-xl text-sm font-bold" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", width: 120, fontSize: 16 }}>
+                                        <option value="cwe">CWE</option>
+                                        <option value="kirkwood">Kirkwood</option>
+                                        <option value="all">{L("Both", "Ambas")}</option>
+                                    </select>
+                                </div>
+                                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("A 4-digit PIN is generated automatically and included in the invite email.", "Se genera un PIN de 4 dígitos automáticamente y se incluye en el email de invitación.")}</p>
+                                {addErr && <p className="text-xs font-bold" style={{ color: "#dc2626" }}>{addErr}</p>}
+                                <div className="flex gap-2">
+                                    <button onClick={() => setShowAdd(false)} className="flex-1 py-2 rounded-xl font-bold text-sm" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>{L("Cancel", "Cancelar")}</button>
+                                    <button onClick={addNewHire} disabled={adding} className="flex-1 py-2 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>{adding ? L("Adding…", "Agregando…") : L("Add & invite", "Agregar e invitar")}</button>
+                                </div>
+                            </div>
+                        )}
                         {rows.map(r => (
                             <div key={r.id} className="rounded-2xl p-3" style={card}>
                                 <button onClick={() => setOpenEmp(openEmp === r.id ? null : r.id)} className="w-full flex items-center justify-between">
@@ -15366,7 +15421,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         {activeTab === "hiring" && staffIsOwner && <Hiring language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} />}
                         {activeTab === "records" && staffIsAdmin && <PersonnelRecords language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "handbook" && <Handbook language={language} staffName={staffName} staffList={staffList} />}
-                        {activeTab === "onboarding" && <Onboarding language={language} staffName={staffName} staffList={staffList} setActiveTab={setActiveTab} />}
+                        {activeTab === "onboarding" && <Onboarding language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} setActiveTab={setActiveTab} />}
                     </div>
 
                     {/* Bottom Navigation */}
