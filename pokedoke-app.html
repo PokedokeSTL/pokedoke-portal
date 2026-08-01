@@ -672,10 +672,11 @@
                 </div>
             );
         }
-        const canAccessRecipes = (name, atLocation) => {
+        const canAccessRecipes = (name, atLocation, hasRecipeFlag) => {
             if (isOwner(name)) return true; // Owner: always, no geolocation needed
-            if (isAdmin(name) && atLocation) return true; // Managers: only at location
-            return false; // Regular staff: never
+            if (isAdmin(name) && atLocation) return true; // Team Leaders: only at location
+            if (hasRecipeFlag && atLocation) return true; // Granted staff: only at location
+            return false; // Everyone else: never
         };
 
         const DEFAULT_STAFF = [
@@ -9765,6 +9766,20 @@
                 try { window.showToast(af && au ? (language === "es" ? "🏝️ Ausencia programada" : "🏝️ Away dates set") : (language === "es" ? "✅ De vuelta en el horario" : "✅ Back on the schedule"), "success"); } catch(_){}
             };
 
+            // Grant/revoke per-person recipe access (they'll still sign the NDA on first view).
+            const toggleRecipeAccess = async () => {
+                const docId = selectedEmp.name.replace(/\s/g, "_");
+                const next = !(selectedEmp.recipeAccess === true);
+                await db.collection("employees").doc(docId).set({ recipeAccess: next, updatedAt: new Date().toISOString() }, { merge: true });
+                if (setStaffList) {
+                    const updatedStaff = staffList.map(s => s.name === selectedEmp.name ? { ...s, recipeAccess: next } : s);
+                    await db.collection("config").doc("staff").set({ list: updatedStaff });
+                    setStaffList(updatedStaff);
+                }
+                setSelectedEmp({ ...selectedEmp, recipeAccess: next });
+                try { window.showToast(next ? (language === "es" ? "🔓 Acceso a recetas concedido" : "🔓 Recipe access granted") : (language === "es" ? "🔒 Acceso a recetas revocado" : "🔒 Recipe access revoked"), "success"); } catch(_){}
+            };
+
             // When an employee is deactivated, turn their upcoming shifts into open shifts so they
             // can be picked up. Only touches the current week and later (past weeks stay as history),
             // which keeps the current week usable as a week-over-week template with the slot now open.
@@ -9957,6 +9972,19 @@
                                                     onChange={(a,b)=>{ setAwayDraftFrom(a); setAwayDraftUntil(b); }} />
                                                 <button disabled={!awayDraftFrom||!awayDraftUntil||awayDraftFrom===awayDraftUntil} onClick={()=>setAway(awayDraftFrom, awayDraftUntil)}
                                                     className="mt-2 w-full py-2 rounded-xl font-bold text-xs disabled:opacity-50" style={{background:"#0d9488",color:"white"}}>🏝️ {language==="es"?"Marcar como ausente":"Mark as away"}</button>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                                {isOwner(staffName) && (
+                                    <div className="rounded-2xl p-3 mt-2" style={{background:"#fffbeb", border:"1px solid #fde68a"}}>
+                                        <p className="text-sm font-bold" style={{color:"#92400e"}}>📖 {language==="es"?"Acceso a Recetas":"Recipe Access"}</p>
+                                        {(isOwner(selectedEmp.name) || isAdmin(selectedEmp.name)) ? (
+                                            <p className="text-xs mt-1" style={{color:"#92400e"}}>{language==="es"?"Ya tiene acceso por su rol.":"Already has access via their role."}</p>
+                                        ) : (
+                                            <>
+                                                <p className="text-[11px] mt-1 mb-2" style={{color:"#92400e"}}>{selectedEmp.recipeAccess ? (language==="es"?"Puede ver las recetas (en el local, tras firmar el acuerdo).":"Can view recipes on-site, after signing the NDA.") : (language==="es"?"Sin acceso a las recetas.":"No recipe access.")}</p>
+                                                <button onClick={toggleRecipeAccess} className="w-full py-2 rounded-xl font-bold text-xs" style={{background: selectedEmp.recipeAccess?"#dc2626":"#d97706", color:"white"}}>{selectedEmp.recipeAccess ? (language==="es"?"🔒 Revocar acceso a recetas":"🔒 Revoke recipe access") : (language==="es"?"🔓 Conceder acceso a recetas":"🔓 Grant recipe access")}</button>
                                             </>
                                         )}
                                     </div>
@@ -14800,7 +14828,8 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     window.showToast(language === "es" ? "¡Turno tuyo!" : "Got it — the shift is yours!", "success");
                 } catch (e) { window.showToast(language === "es" ? "No se pudo tomar el turno" : "Couldn't pick up the shift", "error"); }
             };
-            const canViewRecipes = canAccessRecipes(staffName, isAtPokedoke);
+            const _myRec = (staffList || []).find(s => s.name === staffName);
+            const canViewRecipes = canAccessRecipes(staffName, isAtPokedoke, !!(_myRec && _myRec.recipeAccess === true));
 
             // Request push notification permission when staff logs in
             useEffect(() => {
