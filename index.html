@@ -7311,6 +7311,19 @@
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3">
                                 <p className="font-bold text-gray-800 text-sm">📊 {language==="es"?"Programado vs Real":"Scheduled vs Actual"}</p>
                                 <p className="text-xs text-gray-400 mt-1">{language==="es"?"Compara los turnos programados contra las marcas reales de Toast.":"Compares scheduled shifts against real Toast clock-in/out punches."}</p>
+                                {canToggleLocation && (
+                                    <div className="flex gap-2 mt-2">
+                                        {LOCATIONS.map(loc=>(
+                                            <button key={loc.id} onClick={()=>setSchedLocation(loc.id)}
+                                                className={"flex-1 py-2 rounded-xl text-xs font-bold transition "+(schedLocation===loc.id?"bg-poke-700 text-white":"bg-gray-200 text-gray-600")}>{loc.name}</button>
+                                        ))}
+                                    </div>
+                                )}
+                                <p className="text-[11px] mt-2" style={{color: toastShifts.length ? "#059669" : "#dc2626"}}>
+                                    {toastShifts.length
+                                        ? "📡 " + toastShifts.length + (language==="es"?" días de marcas de Toast cargados":" days of Toast punch data loaded")
+                                        : "⚠️ " + (language==="es"?"Sin datos de marcas de Toast — haz un Backfill en Contabilidad → En Vivo.":"No Toast punch data yet — run a Backfill in Bookkeeping → Live.")}
+                                </p>
                             </div>
                             {(()=>{
                                 const weekDates = [0,1,2,3,4,5,6].map(i=>getDateForDayKey(i));
@@ -14423,6 +14436,120 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
 `Al reconocer este manual, confirmo que he recibido y leído el Manual del Empleado de PokeDoke, entiendo las Normas de Conducta y las políticas que contiene, y acepto cumplirlas. Entiendo que este manual no es un contrato, que mi empleo es a voluntad (tanto yo como PokeDoke podemos terminarlo en cualquier momento, con o sin causa y con o sin aviso), y que PokeDoke puede cambiar estas políticas en cualquier momento.` },
         ];
 
+        function Onboarding({ language, staffName, staffList, setActiveTab }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const isOwnerUser = isOwner(staffName);
+            const [onbData, setOnbData] = useState({});
+            const [acks, setAcks] = useState([]);
+            const [ecName, setEcName] = useState("");
+            const [ecPhone, setEcPhone] = useState("");
+            const [ecRel, setEcRel] = useState("");
+            const [saving, setSaving] = useState(false);
+            const [openEmp, setOpenEmp] = useState(null);
+            const myId = staffName.replace(/\s/g, "_");
+
+            useEffect(() => {
+                const u1 = db.collection("onboarding").onSnapshot(snap => { const m = {}; snap.docs.forEach(d => m[d.id] = d.data()); setOnbData(m); });
+                const u2 = db.collection("handbookAck").onSnapshot(snap => setAcks(snap.docs.map(d => d.id)));
+                return () => { u1(); u2(); };
+            }, []);
+            useEffect(() => {
+                const mine = onbData[myId];
+                if (mine) { setEcName(mine.emergencyName || ""); setEcPhone(mine.emergencyPhone || ""); setEcRel(mine.emergencyRelationship || ""); }
+            }, [onbData, myId]);
+
+            const handbookSigned = (id) => acks.includes(id);
+            const emergencyDone = (id) => { const d = onbData[id]; return !!(d && d.emergencyName && d.emergencyPhone); };
+
+            const saveEmergency = async () => {
+                if (!ecName.trim() || !ecPhone.trim()) { try { window.showToast(L("Enter a name and phone number", "Ingresa nombre y teléfono"), "error"); } catch (_) {} return; }
+                setSaving(true);
+                try {
+                    await db.collection("onboarding").doc(myId).set({ name: staffName, emergencyName: ecName.trim(), emergencyPhone: ecPhone.trim(), emergencyRelationship: ecRel.trim(), updatedAt: new Date().toISOString() }, { merge: true });
+                    try { window.showToast(L("✓ Emergency contact saved", "✓ Contacto de emergencia guardado"), "success"); } catch (_) {}
+                } catch (e) { try { window.showToast(L("Couldn't save: ", "No se pudo guardar: ") + e.message, "error"); } catch (_) {} }
+                setSaving(false);
+            };
+
+            const card = { background: "var(--bg-card)", border: "1px solid var(--border-subtle)" };
+
+            if (isOwnerUser) {
+                const staff = (staffList || []).filter(s => !isOwner(s.name) && s.active !== false);
+                const rows = staff.map(s => {
+                    const id = s.name.replace(/\s/g, "_");
+                    const hb = handbookSigned(id), ec = emergencyDone(id);
+                    const done = [hb, ec].filter(Boolean).length;
+                    return { name: s.name, id, hb, ec, done, total: 2, d: onbData[id] };
+                }).sort((a, b) => a.done - b.done);
+                return (
+                    <div className="p-4 pb-24 animate-in space-y-3">
+                        <h2 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>📋 {L("Onboarding", "Incorporación")}</h2>
+                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>{L("Track each employee's onboarding progress. Tap a name to see details.", "Sigue el progreso de cada empleado. Toca un nombre para ver detalles.")}</p>
+                        {rows.map(r => (
+                            <div key={r.id} className="rounded-2xl p-3" style={card}>
+                                <button onClick={() => setOpenEmp(openEmp === r.id ? null : r.id)} className="w-full flex items-center justify-between">
+                                    <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{r.name}</span>
+                                    <span className="text-xs font-bold" style={{ color: r.done === r.total ? "#16a34a" : "#d97706" }}>{r.done === r.total ? "✓ " + L("Complete", "Completo") : r.done + "/" + r.total}</span>
+                                </button>
+                                <div className="flex gap-2 mt-2">
+                                    <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.hb ? "#dcfce7" : "#fef2f2", color: r.hb ? "#166534" : "#991b1b" }}>{r.hb ? "✓" : "✗"} {L("Handbook", "Manual")}</span>
+                                    <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.ec ? "#dcfce7" : "#fef2f2", color: r.ec ? "#166534" : "#991b1b" }}>{r.ec ? "✓" : "✗"} {L("Emergency contact", "Contacto emerg.")}</span>
+                                </div>
+                                {openEmp === r.id && (
+                                    <div className="mt-2 pt-2 text-xs" style={{ borderTop: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
+                                        {r.d && (r.d.emergencyName || r.d.emergencyPhone)
+                                            ? <p><span className="font-bold">{L("Emergency contact:", "Contacto de emergencia:")}</span> {r.d.emergencyName} {r.d.emergencyRelationship ? "(" + r.d.emergencyRelationship + ")" : ""} — {r.d.emergencyPhone}</p>
+                                            : <p style={{ color: "var(--text-muted)" }}>{L("No emergency contact on file yet.", "Sin contacto de emergencia todavía.")}</p>}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                        <div className="rounded-2xl p-3" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+                            <p className="text-xs font-bold" style={{ color: "#92400e" }}>🔒 {L("Tax forms & direct deposit — coming soon", "Impuestos y depósito directo — próximamente")}</p>
+                            <p className="text-[11px] mt-1" style={{ color: "#92400e" }}>{L("W-4, MO W-4 and direct deposit will be added as a separately-secured step.", "El W-4, MO W-4 y depósito directo se agregarán como un paso con seguridad separada.")}</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            const hb = handbookSigned(myId), ec = emergencyDone(myId);
+            const done = [hb, ec].filter(Boolean).length, total = 2;
+            return (
+                <div className="p-4 pb-24 animate-in space-y-3">
+                    <h2 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>👋 {L("Welcome to PokeDoke", "Bienvenido a PokeDoke")}</h2>
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{L("Let's get you set up — complete these steps to finish onboarding.", "Completa estos pasos para terminar tu incorporación.")}</p>
+                    <div className="rounded-2xl p-3" style={card}>
+                        <div className="flex items-center justify-between mb-1"><span className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Progress", "Progreso")}</span><span className="text-xs font-bold" style={{ color: done === total ? "#16a34a" : "#d97706" }}>{done}/{total}</span></div>
+                        <div style={{ height: 8, background: "var(--bg-subtle)", borderRadius: 4, overflow: "hidden" }}><div style={{ width: (100 * done / total) + "%", height: 8, background: "var(--poke-600,#0891b2)", transition: "width .3s" }} /></div>
+                    </div>
+                    <div className="rounded-2xl p-3" style={card}>
+                        <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{hb ? "✅" : "1️⃣"} {L("Sign the employee handbook", "Firma el manual del empleado")}</span>
+                        {hb ? <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Signed", "Firmado")}</p>
+                            : <button onClick={() => setActiveTab("handbook")} className="mt-2 w-full py-2 rounded-xl font-bold text-sm text-white" style={{ background: "var(--poke-600,#0891b2)" }}>{L("Read & sign the handbook →", "Leer y firmar el manual →")}</button>}
+                    </div>
+                    <div className="rounded-2xl p-3" style={card}>
+                        <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{ec ? "✅" : "2️⃣"} {L("Emergency contact", "Contacto de emergencia")}</span>
+                        <div className="space-y-2 mt-2">
+                            <input value={ecName} onChange={e => setEcName(e.target.value)} placeholder={L("Contact name", "Nombre del contacto")} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                            <input value={ecPhone} onChange={e => setEcPhone(e.target.value)} placeholder={L("Contact phone", "Teléfono del contacto")} type="tel" className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                            <input value={ecRel} onChange={e => setEcRel(e.target.value)} placeholder={L("Relationship (e.g. parent, spouse)", "Relación (ej. padre, cónyuge)")} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                            <button onClick={saveEmergency} disabled={saving} className="w-full py-2 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>{saving ? L("Saving…", "Guardando…") : (ec ? L("Update", "Actualizar") : L("Save", "Guardar"))}</button>
+                        </div>
+                    </div>
+                    <div className="rounded-2xl p-3" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+                        <span className="font-bold text-sm" style={{ color: "#92400e" }}>🔒 {L("Tax forms & direct deposit", "Impuestos y depósito directo")}</span>
+                        <p className="text-[11px] mt-1" style={{ color: "#92400e" }}>{L("Coming soon — your manager will set this up securely.", "Próximamente — tu gerente lo configurará de forma segura.")}</p>
+                    </div>
+                    {done === total && (
+                        <div className="rounded-2xl p-4 text-center" style={{ background: "#dcfce7", border: "1px solid #86efac" }}>
+                            <p className="font-bold" style={{ color: "#166534" }}>🎉 {L("Onboarding complete — welcome aboard!", "¡Incorporación completa — bienvenido!")}</p>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         function Handbook({ language, staffName, staffList }) {
             const L = (en, es) => language === "es" ? es : en;
             const ownerAccess = isOwner(staffName);
@@ -15046,6 +15173,14 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                         <div className="font-bold text-gray-800 text-sm">{t("scheduleTitle", language)}</div>
                                         <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Horarios" : "Shifts"}</div>
                                     </button>
+                                    <button
+                                        onClick={() => setActiveTab("onboarding")}
+                                        className="card-hover p-4 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
+                                    >
+                                        <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center text-2xl mb-3">{staffIsOwner ? "📋" : "👋"}</div>
+                                        <div className="font-bold text-gray-800 text-sm">{language === "es" ? "Incorporación" : "Onboarding"}</div>
+                                        <div className="text-xs text-gray-400 mt-0.5">{staffIsOwner ? (language === "es" ? "Progreso del equipo" : "Team progress") : (language === "es" ? "Completa tu registro" : "Finish your setup")}</div>
+                                    </button>
                                     {canViewRecipes ? (
                                         <button
                                             onClick={() => setActiveTab("recipes")}
@@ -15231,6 +15366,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         {activeTab === "hiring" && staffIsOwner && <Hiring language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} />}
                         {activeTab === "records" && staffIsAdmin && <PersonnelRecords language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "handbook" && <Handbook language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "onboarding" && <Onboarding language={language} staffName={staffName} staffList={staffList} setActiveTab={setActiveTab} />}
                     </div>
 
                     {/* Bottom Navigation */}
