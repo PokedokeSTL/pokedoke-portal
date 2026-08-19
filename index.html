@@ -14623,6 +14623,31 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const [ecRel, setEcRel] = useState("");
             const [saving, setSaving] = useState(false);
             const [openEmp, setOpenEmp] = useState(null);
+            const [bizInfo, setBizInfo] = useState({});
+            const [bizDraft, setBizDraft] = useState(null);
+            const [bizSaving, setBizSaving] = useState(false);
+            const [bizOpen, setBizOpen] = useState(false);
+            useEffect(() => {
+                if (!isOwnerUser) return;
+                const u = db.collection("bizInfo").onSnapshot(snap => { const m = {}; snap.docs.forEach(d => m[d.id] = d.data()); setBizInfo(m); });
+                return () => u();
+            }, [isOwnerUser]);
+            const saveBizInfo = async () => {
+                const d = bizDraft || bizInfo;
+                setBizSaving(true);
+                try {
+                    for (const loc of ["cwe","kirkwood"]) {
+                        await db.collection("bizInfo").doc(loc).set({ ...(d[loc]||{}), updatedAt: new Date().toISOString(), updatedBy: staffName }, { merge: true });
+                    }
+                    setBizDraft(null);
+                    try { window.showToast(L("✓ Business info saved","✓ Información guardada"),"success"); } catch(_){}
+                } catch(e) { try { window.showToast(L("Couldn't save: ","No se pudo guardar: ")+e.message,"error"); } catch(_){} }
+                setBizSaving(false);
+            };
+            const editBiz = (loc, field, val) => {
+                const base = bizDraft || bizInfo;
+                setBizDraft({ ...base, [loc]: { ...(base[loc]||{}), [field]: val } });
+            };
             const [showAdd, setShowAdd] = useState(false);
             const [adding, setAdding] = useState(false);
             const [addErr, setAddErr] = useState("");
@@ -14736,6 +14761,38 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 )}
                             </div>
                         ))}
+                        <div className="rounded-2xl p-3" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
+                            <button onClick={()=>setBizOpen(!bizOpen)} className="w-full flex items-center justify-between">
+                                <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>🏢 {L("Business info (per location)","Información del negocio (por local)")}</span>
+                                <span className="text-xs" style={{ color: "var(--text-muted)" }}>{bizOpen ? "▲" : "▼"}</span>
+                            </button>
+                            {!bizOpen && <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{L("Each location's LLC, EIN and Missouri Tax ID — used to prefill employer fields on tax forms.","LLC, EIN y Missouri Tax ID de cada local — para prellenar los formularios de impuestos.")}</p>}
+                            {bizOpen && (
+                                <div className="mt-2 space-y-3">
+                                    {[{id:"cwe", label:"Central West End"},{id:"kirkwood", label:"Kirkwood"}].map(loc => {
+                                        const d = (bizDraft || bizInfo)[loc.id] || {};
+                                        const inp = { border:"1px solid var(--border-subtle)", background:"var(--bg-card)", color:"var(--text-primary)", fontSize:16 };
+                                        return (
+                                            <div key={loc.id} className="rounded-xl p-2.5" style={{ border:"1px solid var(--border-subtle)" }}>
+                                                <p className="font-bold text-xs mb-2" style={{ color:"var(--text-secondary)" }}>{loc.label}</p>
+                                                <div className="space-y-2">
+                                                    <input value={d.legalName||""} onChange={e=>editBiz(loc.id,"legalName",e.target.value)} placeholder={L("Legal LLC name (e.g. ... LLC dba PokeDoke)","Nombre legal del LLC")} className="w-full px-3 py-2 rounded-xl text-sm" style={inp}/>
+                                                    <input value={d.address||""} onChange={e=>editBiz(loc.id,"address",e.target.value)} placeholder={L("Business address","Dirección del negocio")} className="w-full px-3 py-2 rounded-xl text-sm" style={inp}/>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <input value={d.ein||""} onChange={e=>editBiz(loc.id,"ein",e.target.value)} placeholder={L("Federal EIN","EIN federal")} inputMode="numeric" className="w-full px-3 py-2 rounded-xl text-sm" style={inp}/>
+                                                        <input value={d.moTin||""} onChange={e=>editBiz(loc.id,"moTin",e.target.value)} placeholder={L("Missouri Tax ID","Missouri Tax ID")} inputMode="numeric" className="w-full px-3 py-2 rounded-xl text-sm" style={inp}/>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    {bizDraft && (
+                                        <button onClick={saveBizInfo} disabled={bizSaving} className="w-full py-2 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background:"var(--poke-600,#0891b2)" }}>{bizSaving ? L("Saving…","Guardando…") : L("Save business info","Guardar información")}</button>
+                                    )}
+                                    <p className="text-[10px]" style={{ color:"var(--text-muted)" }}>{L("Owner-only. These prefill the employer section of W-4 / MO W-4 forms per the employee's location.","Solo para dueños. Prellenan la sección del empleador en los formularios W-4 / MO W-4 según el local del empleado.")}</p>
+                                </div>
+                            )}
+                        </div>
                         <div className="rounded-2xl p-3" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
                             <p className="text-xs font-bold" style={{ color: "#92400e" }}>🔒 {L("Tax forms & direct deposit — coming soon", "Impuestos y depósito directo — próximamente")}</p>
                             <p className="text-[11px] mt-1" style={{ color: "#92400e" }}>{L("W-4, MO W-4 and direct deposit will be added as a separately-secured step.", "El W-4, MO W-4 y depósito directo se agregarán como un paso con seguridad separada.")}</p>
