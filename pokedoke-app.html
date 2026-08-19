@@ -5800,19 +5800,19 @@
             const submitAvailabilityRequest = async () => {
                 const toast = (m,t)=>{ try { window.showToast(m, t||"info"); } catch(_) { try{ alert(m); }catch(__){} } };
                 const draft = availDraft || availability;
+                const effDate = availReqEffDate || toMinDate; // input defaults to the earliest allowed date
                 if (myAvailReq) { toast(language==="es"?"Ya tienes una solicitud pendiente — espera a que sea revisada":"You already have a pending request — wait for it to be reviewed","error"); return; }
-                if (!availReqEffDate) { toast(language==="es"?"Elige una fecha de inicio":"Pick an effective date","error"); return; }
-                if (availReqEffDate < toMinDate) { toast((language==="es"?"La fecha debe ser al menos ":"Date must be at least ")+toLeadLabel+(language==="es"?" en el futuro":" out"),"error"); return; }
+                if (effDate < toMinDate) { toast((language==="es"?"La fecha debe ser al menos ":"Date must be at least ")+toLeadLabel+(language==="es"?" en el futuro":" out"),"error"); return; }
                 setAvailReqBusy(true);
                 try {
                     await db.collection("availabilityRequests").add({
                         employee: staffName, requestedDays: draft, currentDays: availability,
-                        effectiveDate: availReqEffDate, submittedAt: new Date().toISOString(), status: "pending"
+                        effectiveDate: effDate, submittedAt: new Date().toISOString(), status: "pending"
                     });
                     // Notify owners (push) via the existing sendNotification → pdNotify pipeline.
                     try {
                         await sendNotification(OWNER_NAMES, "📅 Availability change request",
-                            staffName + " requested an availability change effective " + availReqEffDate,
+                            staffName + " requested an availability change effective " + effDate,
                             { type: "availabilityRequest" });
                     } catch(_){}
                     setAvailDraft(null); setAvailReqEffDate("");
@@ -7163,19 +7163,34 @@
                             {DAY_KEYS.map((dayKey,dayIdx) => {
                                 const wc = availDraft || availability;
                                 const dayAvail = wc[dayKey] || {available:false,start:"",end:""};
+                                const hasHours = !!(dayAvail.start || dayAvail.end);
                                 return (
-                                    <div key={dayKey} className={"bg-white rounded-xl border p-3 "+(dayAvail.available?"border-green-200 bg-green-50":"border-gray-100")}>
-                                        <div className="flex items-center justify-between mb-2">
+                                    <div key={dayKey} className="bg-white rounded-xl p-3" style={{border: dayAvail.available ? "1px solid rgba(34,197,94,.45)" : "1px solid var(--border-subtle)"}}>
+                                        <div className="flex items-center justify-between">
                                             <span className="font-bold text-sm text-gray-800">{DAYS[dayIdx]}</span>
-                                            <button onClick={()=>editAvailDraft(dayKey,{available:!dayAvail.available})}
+                                            <button onClick={()=>editAvailDraft(dayKey,{available:!dayAvail.available, ...(dayAvail.available?{start:"",end:""}:{})})}
                                                 className={"px-3 py-1.5 rounded-xl text-xs font-bold transition "+(dayAvail.available?"bg-green-600 text-white":"bg-gray-200 text-gray-500")}>
                                                 {dayAvail.available?(language==="es"?"✅ Disponible":"✅ Available"):(language==="es"?"❌ No disponible":"❌ Unavailable")}
                                             </button>
                                         </div>
                                         {dayAvail.available && (
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div><label className="text-xs text-gray-400">{language==="es"?"Desde":"From"}</label><input type="time" value={dayAvail.start||""} onChange={e=>editAvailDraft(dayKey,{start:e.target.value})} className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm"/></div>
-                                                <div><label className="text-xs text-gray-400">{language==="es"?"Hasta":"Until"}</label><input type="time" value={dayAvail.end||""} onChange={e=>editAvailDraft(dayKey,{end:e.target.value})} className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm"/></div>
+                                            <div className="mt-2 pt-2" style={{borderTop:"1px solid var(--border-subtle)"}}>
+                                                <div className="flex gap-2">
+                                                    <button onClick={()=>editAvailDraft(dayKey,{start:"",end:""})}
+                                                        className={"flex-1 py-1.5 rounded-lg text-xs font-bold transition "+(!hasHours?"bg-green-600 text-white":"bg-gray-200 text-gray-500")}>
+                                                        🌞 {language==="es"?"Todo el día":"All day"}
+                                                    </button>
+                                                    <button onClick={()=>{ if(!hasHours) editAvailDraft(dayKey,{start:"09:00",end:"17:00"}); }}
+                                                        className={"flex-1 py-1.5 rounded-lg text-xs font-bold transition "+(hasHours?"bg-green-600 text-white":"bg-gray-200 text-gray-500")}>
+                                                        🕐 {language==="es"?"Ciertas horas":"Set hours"}
+                                                    </button>
+                                                </div>
+                                                {hasHours && (
+                                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                                        <div><label className="text-xs text-gray-400">{language==="es"?"Desde":"From"}</label><input type="time" value={dayAvail.start||""} onChange={e=>editAvailDraft(dayKey,{start:e.target.value})} className="w-full px-2 py-1.5 rounded-lg text-sm" style={{border:"1px solid var(--border-subtle)", background:"var(--bg-card)", color:"var(--text-primary)", fontSize:16}}/></div>
+                                                        <div><label className="text-xs text-gray-400">{language==="es"?"Hasta":"Until"}</label><input type="time" value={dayAvail.end||""} onChange={e=>editAvailDraft(dayKey,{end:e.target.value})} className="w-full px-2 py-1.5 rounded-lg text-sm" style={{border:"1px solid var(--border-subtle)", background:"var(--bg-card)", color:"var(--text-primary)", fontSize:16}}/></div>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -7183,13 +7198,16 @@
                             })}
 
                             {availDirty && (
-                                <div className="bg-white rounded-2xl border-2 border-poke-200 shadow-sm p-3 space-y-2">
+                                <div className="bg-white rounded-2xl shadow-sm p-3 space-y-2" style={{border:"2px solid var(--poke-600,#0891b2)"}}>
                                     <p className="font-bold text-sm text-gray-800">{language==="es"?"Enviar cambio de disponibilidad":"Submit availability change"}</p>
                                     <label className="text-xs text-gray-500">{language==="es"?`Fecha de inicio (mín. ${toMinDisplay})`:`Effective date (earliest ${toMinDisplay})`}</label>
-                                    <input type="date" min={toMinDate} value={availReqEffDate} onChange={e=>setAvailReqEffDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" style={{fontSize:16}}/>
+                                    <input type="date" min={toMinDate} value={availReqEffDate || toMinDate} onChange={e=>setAvailReqEffDate(e.target.value)} className="w-full px-3 py-2 rounded-xl text-sm" style={{border:"1px solid var(--border-subtle)", background:"var(--bg-card)", color:"var(--text-primary)", fontSize:16}}/>
+                                    {availReqEffDate && availReqEffDate < toMinDate && (
+                                        <p className="text-xs font-bold" style={{color:"#dc2626"}}>⚠️ {language==="es"?`Muy pronto — la primera fecha disponible es ${toMinDisplay}.`:`Too soon — the earliest allowed date is ${toMinDisplay}.`}</p>
+                                    )}
                                     <div className="flex gap-2">
                                         <button onClick={()=>{ setAvailDraft(null); setAvailReqEffDate(""); }} className="flex-1 py-2 rounded-xl font-bold text-sm bg-gray-100 text-gray-600">{language==="es"?"Cancelar":"Cancel"}</button>
-                                        <button onClick={submitAvailabilityRequest} disabled={availReqBusy} className="flex-1 py-2 rounded-xl font-bold text-sm text-white bg-poke-600 disabled:opacity-60">{availReqBusy?(language==="es"?"Enviando…":"Submitting…"):(language==="es"?"Enviar para aprobación":"Submit for approval")}</button>
+                                        <button onClick={submitAvailabilityRequest} disabled={availReqBusy || (!!availReqEffDate && availReqEffDate < toMinDate)} className="flex-1 py-2 rounded-xl font-bold text-sm text-white bg-poke-600 disabled:opacity-60">{availReqBusy?(language==="es"?"Enviando…":"Submitting…"):(language==="es"?"Enviar para aprobación":"Submit for approval")}</button>
                                     </div>
                                 </div>
                             )}
