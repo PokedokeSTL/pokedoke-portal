@@ -54,6 +54,7 @@
         }
     </script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -365,6 +366,11 @@
 
         // Initialize Firebase
         firebase.initializeApp(firebaseConfig);
+        // App Check (monitoring mode — tokens are attached to requests but nothing is
+        // enforced/blocked until enforcement is explicitly turned on in the console).
+        try {
+            firebase.appCheck().activate("6LcwSo0tAAAAALTGbYMlkhKPw2wwn8_gANftCHTe", true); // true = auto-refresh tokens
+        } catch (e) { console.warn("App Check init skipped:", e && e.message); }
         const db = firebase.firestore();
         const storage = firebase.storage();
         const auth = firebase.auth();
@@ -5089,13 +5095,17 @@
             }, [mgrAccess]);
 
             // Pending availability-change requests: this user's own, and (for managers) the review queue.
+            const [myAvailHistory, setMyAvailHistory] = useState([]);
             useEffect(() => {
                 const unsub = db.collection("availabilityRequests").where("status","==","pending").onSnapshot(snap => {
                     const all = snap.docs.map(d=>({id:d.id,...d.data()}));
                     if (mgrAccess) setAvailReqs(all.sort((a,b)=>(a.submittedAt||"").localeCompare(b.submittedAt||"")));
                     setMyAvailReq(all.find(r=>r.employee===staffName) || null);
                 });
-                return () => unsub();
+                const unsubHist = db.collection("availabilityRequests").where("employee","==",staffName).onSnapshot(snap => {
+                    setMyAvailHistory(snap.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status!=="pending").sort((a,b)=>(b.submittedAt||"").localeCompare(a.submittedAt||"")).slice(0,10));
+                });
+                return () => { unsub(); unsubHist(); };
             }, [mgrAccess, staffName]);
 
             // Real clock in/out punches pulled from Toast (for schedule-vs-actual + late badges).
@@ -7191,6 +7201,17 @@
                                                         <div><label className="text-xs text-gray-400">{language==="es"?"Hasta":"Until"}</label><input type="time" value={dayAvail.end||""} onChange={e=>editAvailDraft(dayKey,{end:e.target.value})} className="w-full px-2 py-1.5 rounded-lg text-sm" style={{border:"1px solid var(--border-subtle)", background:"var(--bg-card)", color:"var(--text-primary)", fontSize:16}}/></div>
                                                     </div>
                                                 )}
+                                                {hasHours && dayAvail.start && dayAvail.end && (
+                                                    <button onClick={()=>{
+                                                        const base = availDraft || availability;
+                                                        const next = { ...base };
+                                                        DAY_KEYS.forEach(dk => { const d = next[dk]; if (d && d.available) next[dk] = { ...d, start: dayAvail.start, end: dayAvail.end }; });
+                                                        setAvailDraft(next);
+                                                        try { window.showToast(language==="es"?"Horas copiadas a todos los días disponibles":"Hours copied to all available days","success"); } catch(_){}
+                                                    }} className="mt-2 w-full py-1.5 rounded-lg text-xs font-bold" style={{background:"var(--bg-subtle)", color:"var(--text-secondary)", border:"1px dashed var(--border-subtle)"}}>
+                                                        📋 {language==="es"?"Copiar estas horas a todos los días disponibles":"Copy these hours to all available days"}
+                                                    </button>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -7208,6 +7229,20 @@
                                     <div className="flex gap-2">
                                         <button onClick={()=>{ setAvailDraft(null); setAvailReqEffDate(""); }} className="flex-1 py-2 rounded-xl font-bold text-sm bg-gray-100 text-gray-600">{language==="es"?"Cancelar":"Cancel"}</button>
                                         <button onClick={submitAvailabilityRequest} disabled={availReqBusy || (!!availReqEffDate && availReqEffDate < toMinDate)} className="flex-1 py-2 rounded-xl font-bold text-sm text-white bg-poke-600 disabled:opacity-60">{availReqBusy?(language==="es"?"Enviando…":"Submitting…"):(language==="es"?"Enviar para aprobación":"Submit for approval")}</button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {myAvailHistory.length > 0 && (
+                                <div className="bg-white rounded-2xl p-3" style={{border:"1px solid var(--border-subtle)"}}>
+                                    <p className="font-bold text-sm text-gray-800 mb-2">🗂 {language==="es"?"Mis solicitudes anteriores":"My past requests"}</p>
+                                    <div className="space-y-1.5">
+                                        {myAvailHistory.map(r => (
+                                            <div key={r.id} className="flex items-center justify-between text-xs py-1" style={{borderBottom:"1px solid var(--border-subtle)"}}>
+                                                <span style={{color:"var(--text-secondary)"}}>{new Date(r.submittedAt).toLocaleDateString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric"})} · {language==="es"?"vigente ":"eff. "}{r.effectiveDate}</span>
+                                                <span className="font-bold px-2 py-0.5 rounded-full" style={r.status==="approved"?{background:"#dcfce7",color:"#166534"}:{background:"#fee2e2",color:"#991b1b"}}>{r.status==="approved"?(language==="es"?"✓ Aprobada":"✓ Approved"):(language==="es"?"✗ Rechazada":"✗ Denied")}</span>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
                             )}
