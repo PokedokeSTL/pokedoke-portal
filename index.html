@@ -5285,6 +5285,8 @@
             // ── Toast punches: match real clock in/out to scheduled shifts ──────────
             const LATE_THRESHOLD_MIN = 15;
             const normName = (n) => (n||"").toLowerCase().replace(/[^a-z\s]/g,"").replace(/\s+/g," ").trim();
+            // Matching key ignores spaces entirely, so "Mary Wyatt" / "Marywyatt" / "MaryWyatt" all line up.
+            const normKey = (n) => normName(n).replace(/\s/g,"");
             // Map "normalizedName|YYYY-MM-DD" -> {inTime, outTime, hours}
             const punchMap = React.useMemo(() => {
                 const m = {};
@@ -5294,7 +5296,7 @@
                     const dateStr = bd.slice(0,4)+"-"+bd.slice(4,6)+"-"+bd.slice(6,8);
                     (d.shifts||[]).forEach(s => {
                         if (!s.employee || !s.inTime) return;
-                        const key = normName(s.employee)+"|"+dateStr;
+                        const key = normKey(s.employee)+"|"+dateStr;
                         const hrs = (s.regularHours||0)+(s.otHours||0);
                         if (!m[key]) m[key] = { inTime:s.inTime, outTime:s.outTime||null, hours:hrs, location:d.location };
                         else { // multiple punches same day: earliest in, latest out, sum hours
@@ -5308,14 +5310,14 @@
             }, [toastShifts]);
             // Names Toast reported that don't match anyone in staffList (so they're visible, not silently dropped).
             const unmatchedToastNames = React.useMemo(() => {
-                const staffNorms = new Set(staffList.map(s=>normName(s.name)));
+                const staffNorms = new Set(staffList.map(s=>normKey(s.name)));
                 const out = new Set();
                 toastShifts.forEach(d => (d.shifts||[]).forEach(s => {
-                    if (s.employee && !staffNorms.has(normName(s.employee))) out.add(s.employee);
+                    if (s.employee && !staffNorms.has(normKey(s.employee))) out.add(s.employee);
                 }));
                 return Array.from(out);
             }, [toastShifts, staffList]);
-            const punchFor = (empName, dateStr) => punchMap[normName(empName)+"|"+dateStr] || null;
+            const punchFor = (empName, dateStr) => punchMap[normKey(empName)+"|"+dateStr] || null;
             // Compare a scheduled shift to the real punch. Returns status + minutes late.
             const shiftActual = (shift) => {
                 const dayIdx = DAY_KEYS.indexOf(shift.day);
