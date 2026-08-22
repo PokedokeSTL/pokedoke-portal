@@ -1770,7 +1770,7 @@
         }
 
         // Reusable inline date-range picker: preset chips + two-tap calendar (no confirm buttons).
-        function InlineDateRange({ start, end, onChange, language }) {
+        function InlineDateRange({ start, end, onChange, language, allowFuture }) {
             const es = language === "es";
             const parse = (s) => { const p=(s||"").split("-").map(Number); return (p[0]&&p[1]&&p[2]) ? new Date(p[0],p[1]-1,p[2]) : null; };
             const fmt = (dt) => window.fmtLocalDate(dt);
@@ -1807,17 +1807,17 @@
                         <div className="flex items-center justify-between mb-1">
                             <button onClick={()=>setViewM(new Date(year,mon-1,1))} className="px-3 py-1 rounded text-lg" style={{color:"var(--text-secondary)"}}>‹</button>
                             <span className="text-sm font-bold capitalize" style={{color:"var(--text-primary)"}}>{monthName}</span>
-                            <button onClick={()=>{ const nm=new Date(year,mon+1,1); if(nm<=new Date(today.getFullYear(),today.getMonth(),1)) setViewM(nm); }} className="px-3 py-1 rounded text-lg" style={{color:"var(--text-secondary)"}}>›</button>
+                            <button onClick={()=>{ const nm=new Date(year,mon+1,1); if(allowFuture || nm<=new Date(today.getFullYear(),today.getMonth(),1)) setViewM(nm); }} className="px-3 py-1 rounded text-lg" style={{color:"var(--text-secondary)"}}>›</button>
                         </div>
                         <div className="grid grid-cols-7 gap-0.5 text-center">
                             {wk.map((w,i)=>(<div key={i} className="text-[10px] font-bold py-1" style={{color:"var(--text-muted)"}}>{w}</div>))}
                             {cells.map((dt,i)=> dt ? (
-                                <button key={i} onClick={()=>dayTap(dt)} disabled={dt>today}
+                                <button key={i} onClick={()=>dayTap(dt)} disabled={!allowFuture && dt>today}
                                     className="text-xs py-1.5 rounded-lg font-medium"
                                     style={{
                                         background: isEnd(dt) ? "var(--poke-600,#0891b2)" : inRange(dt) ? "rgba(8,145,178,0.15)" : "transparent",
-                                        color: isEnd(dt) ? "#fff" : (dt>today ? "var(--text-muted)" : "var(--text-primary)"),
-                                        opacity: dt>today ? 0.35 : 1
+                                        color: isEnd(dt) ? "#fff" : ((!allowFuture && dt>today) ? "var(--text-muted)" : "var(--text-primary)"),
+                                        opacity: (!allowFuture && dt>today) ? 0.35 : 1
                                     }}>{dt.getDate()}</button>
                             ) : <div key={i}/>)}
                         </div>
@@ -10157,7 +10157,7 @@
                                         ) : (
                                             <>
                                                 <p className="text-[11px] mt-1 mb-2" style={{color:"#0f766e"}}>{language==="es"?"Fija un rango (p. ej. temporada universitaria). Se oculta del horario solo en ese periodo; sus turnos ya programados no se tocan.":"Set a range (e.g. college semester). They drop off the schedule only during that window; their already-scheduled shifts are untouched."}</p>
-                                                <InlineDateRange start={awayDraftFrom} end={awayDraftUntil} language={language}
+                                                <InlineDateRange allowFuture={true} start={awayDraftFrom} end={awayDraftUntil} language={language}
                                                     onChange={(a,b)=>{ setAwayDraftFrom(a); setAwayDraftUntil(b); }} />
                                                 <button disabled={!awayDraftFrom||!awayDraftUntil||awayDraftFrom===awayDraftUntil} onClick={()=>setAway(awayDraftFrom, awayDraftUntil)}
                                                     className="mt-2 w-full py-2 rounded-xl font-bold text-xs disabled:opacity-50" style={{background:"#0d9488",color:"white"}}>🏝️ {language==="es"?"Marcar como ausente":"Mark as away"}</button>
