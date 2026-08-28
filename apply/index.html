@@ -13623,7 +13623,7 @@
                     setPostings(snap.docs.map(d => ({ id: d.id, ...d.data() }))
                         .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
                 });
-                return () => { u1(); u2(); };
+                return () => { u1(); u2(); u3(); };
             }, [authUser]);
 
             // keep selectedApp in sync with live data
@@ -14618,6 +14618,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const isOwnerUser = isOwner(staffName);
             const [onbData, setOnbData] = useState({});
             const [acks, setAcks] = useState([]);
+            const [onbHbVer, setOnbHbVer] = useState(null);
             const [ecName, setEcName] = useState("");
             const [ecPhone, setEcPhone] = useState("");
             const [ecRel, setEcRel] = useState("");
@@ -14681,7 +14682,8 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
 
             useEffect(() => {
                 const u1 = db.collection("onboarding").onSnapshot(snap => { const m = {}; snap.docs.forEach(d => m[d.id] = d.data()); setOnbData(m); });
-                const u2 = db.collection("handbookAck").onSnapshot(snap => setAcks(snap.docs.map(d => d.id)));
+                const u2 = db.collection("handbookAck").onSnapshot(snap => setAcks(snap.docs.map(d => ({ id: d.id, version: d.data().version || 0 }))));
+                const u3 = db.collection("ops").doc("handbook").onSnapshot(d => setOnbHbVer(d.exists ? (d.data().version || 1) : null));
                 return () => { u1(); u2(); };
             }, []);
             useEffect(() => {
@@ -14689,7 +14691,8 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 if (mine) { setEcName(mine.emergencyName || ""); setEcPhone(mine.emergencyPhone || ""); setEcRel(mine.emergencyRelationship || ""); }
             }, [onbData, myId]);
 
-            const handbookSigned = (id) => acks.includes(id);
+            // Signed means signed the CURRENT handbook version (stale signatures don't count).
+            const handbookSigned = (id) => { const a = acks.find(x => x.id === id); return !!a && (onbHbVer == null || a.version === onbHbVer); };
             const emergencyDone = (id) => { const d = onbData[id]; return !!(d && d.emergencyName && d.emergencyPhone); };
 
             const saveEmergency = async () => {
@@ -14892,6 +14895,19 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const saveEdit = async () => {
                 setSaving(true);
                 await db.collection("ops").doc("handbook").set({ sections: draft, version: version + 1, updatedAt: new Date().toISOString(), updatedBy: staffName }, { merge: true });
+                // Offer to notify everyone that a re-sign is needed.
+                try {
+                    const notify = await window.askConfirm({
+                        title: L("Notify all staff?", "¿Notificar a todo el personal?"),
+                        body: L("Send a push notification asking everyone to review and re-sign the updated handbook.", "Enviar una notificación pidiendo a todos revisar y volver a firmar el manual actualizado.")
+                    });
+                    if (notify) {
+                        const names = (staffList || []).filter(x => x.active !== false).map(x => x.name);
+                        await sendNotification(names, "📖 " + L("Handbook updated", "Manual actualizado"),
+                            L("A new policy was added. Please review and sign the handbook in the app.", "Se agregó una nueva política. Por favor revisa y firma el manual en la app."),
+                            { type: "handbookUpdate" });
+                    }
+                } catch(_){}
                 setSaving(false); setEdit(false);
                 window.showToast(L("Handbook updated — staff will be asked to re-acknowledge", "Manual actualizado — se pedirá reconocer de nuevo"), "success");
             };
@@ -15243,6 +15259,17 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     window.showToast(language === "es" ? "¡Turno tuyo!" : "Got it — the shift is yours!", "success");
                 } catch (e) { window.showToast(language === "es" ? "No se pudo tomar el turno" : "Couldn't pick up the shift", "error"); }
             };
+            // Handbook re-sign nudge: current version vs my signed version.
+            const [hbVer, setHbVer] = useState(null);
+            const [myHbAckVer, setMyHbAckVer] = useState(undefined);
+            useEffect(() => {
+                if (!staffName) return;
+                const u1 = db.collection("ops").doc("handbook").onSnapshot(d => setHbVer(d.exists ? (d.data().version || 1) : null));
+                const u2 = db.collection("handbookAck").doc(staffName.replace(/\s/g, "_")).onSnapshot(d => setMyHbAckVer(d.exists ? (d.data().version || 0) : 0));
+                return () => { u1(); u2(); };
+            }, [staffName]);
+            const hbNeedsSign = hbVer != null && myHbAckVer !== undefined && myHbAckVer !== hbVer;
+
             const _myRec = (staffList || []).find(s => s.name === staffName);
             const canViewRecipes = canAccessRecipes(staffName, isAtPokedoke, !!(_myRec && _myRec.recipeAccess === true));
 
@@ -15312,6 +15339,12 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
 
                     {/* Content */}
                     <div className={activeTab === "schedule" ? "max-w-screen-2xl mx-auto" : "max-w-lg mx-auto"}>
+                        {activeTab === "home" && hbNeedsSign && (
+                            <button onClick={() => setActiveTab("handbook")} className="w-full text-left rounded-2xl p-3 mb-3 mx-4 mt-4" style={{ background: "#fffbeb", border: "2px solid #f59e0b", width: "calc(100% - 2rem)" }}>
+                                <p className="text-sm font-bold" style={{ color: "#92400e" }}>📖 {language === "es" ? "El manual del empleado se actualizó" : "The employee handbook was updated"}</p>
+                                <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>{language === "es" ? "Hay una nueva política. Toca aquí para revisarla y firmar." : "There's a new policy. Tap here to review and sign."}</p>
+                            </button>
+                        )}
                         {activeTab === "home" && (
                             <div className="p-4 pb-24 animate-in">
                                 {/* Inventory Alert Banner — Owner only */}
