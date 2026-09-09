@@ -4898,10 +4898,11 @@
             const [showSettings, setShowSettings] = useState(false);
             const [tempCloseTime, setTempCloseTime] = useState("20:00");
             const [timeOffMinDays, setTimeOffMinDays] = useState(14);
-            const [toBlackouts, setToBlackouts] = useState([]);      // [{from,to,label}]
-            const [toMaxPerDay, setToMaxPerDay] = useState(2);       // 0 = no cap
-            const [tempMaxPerDay, setTempMaxPerDay] = useState("2");
-            const [nbFrom, setNbFrom] = useState(""); const [nbTo, setNbTo] = useState(""); const [nbLabel, setNbLabel] = useState("");
+            const [toBlackouts, setToBlackouts] = useState([]);      // [{from,to,label,loc}]
+            const [toCaps, setToCaps] = useState({ cwe: 2, kirkwood: 2 });        // 0 = no cap
+            const [toMgrCaps, setToMgrCaps] = useState({ cwe: 0, kirkwood: 0 });  // 0 = no limit on Team Leaders
+            const [tempCaps, setTempCaps] = useState({ cwe: "2", kirkwood: "2", mgrCwe: "0", mgrKirkwood: "0" });
+            const [nbFrom, setNbFrom] = useState(""); const [nbTo, setNbTo] = useState(""); const [nbLabel, setNbLabel] = useState(""); const [nbLoc, setNbLoc] = useState("all");
             const [remCfg, setRemCfg] = useState({ master:true, dayBefore:true, dayBeforeHour:18, morning:true, morningHour:9, lead:true, leadMin:120 });
             const [tempTimeOffDays, setTempTimeOffDays] = useState(14);
             const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
@@ -5160,7 +5161,16 @@
                         setTempTimeOffDays(doc.data().timeOffMinDays);
                     }
                     if (doc.exists && Array.isArray(doc.data().toBlackouts)) setToBlackouts(doc.data().toBlackouts);
-                    if (doc.exists && typeof doc.data().toMaxPerDay === "number") { setToMaxPerDay(doc.data().toMaxPerDay); setTempMaxPerDay(String(doc.data().toMaxPerDay)); }
+                    if (doc.exists) {
+                        const x = doc.data();
+                        const legacy = (typeof x.toMaxPerDay === "number") ? x.toMaxPerDay : 2;
+                        const caps = { cwe: (typeof x.toCapCwe === "number") ? x.toCapCwe : legacy,
+                                       kirkwood: (typeof x.toCapKirkwood === "number") ? x.toCapKirkwood : legacy };
+                        const mgr  = { cwe: (typeof x.toMgrCapCwe === "number") ? x.toMgrCapCwe : 0,
+                                       kirkwood: (typeof x.toMgrCapKirkwood === "number") ? x.toMgrCapKirkwood : 0 };
+                        setToCaps(caps); setToMgrCaps(mgr);
+                        setTempCaps({ cwe: String(caps.cwe), kirkwood: String(caps.kirkwood), mgrCwe: String(mgr.cwe), mgrKirkwood: String(mgr.kirkwood) });
+                    }
                     if (doc.exists) {
                         const x = doc.data();
                         setRemCfg({
@@ -5248,10 +5258,13 @@
                 const parsed = parseInt(tempTimeOffDays, 10);
                 // If the field is blank/invalid, keep the current minimum — never silently disable the blackout by writing 0.
                 const days = isNaN(parsed) ? (typeof timeOffMinDays === "number" ? timeOffMinDays : 14) : Math.max(0, Math.min(120, parsed));
-                const capParsed = parseInt(tempMaxPerDay, 10);
-                const cap = isNaN(capParsed) ? (typeof toMaxPerDay === "number" ? toMaxPerDay : 2) : Math.max(0, Math.min(50, capParsed));
+                const pc = (v, fb) => { const n = parseInt(v, 10); return isNaN(n) ? fb : Math.max(0, Math.min(50, n)); };
+                const caps = { cwe: pc(tempCaps.cwe, toCaps.cwe), kirkwood: pc(tempCaps.kirkwood, toCaps.kirkwood) };
+                const mgrCaps = { cwe: pc(tempCaps.mgrCwe, toMgrCaps.cwe), kirkwood: pc(tempCaps.mgrKirkwood, toMgrCaps.kirkwood) };
                 await db.collection("ops").doc("scheduleSettings").set({
-                    closeTime: tempCloseTime, timeOffMinDays: days, toMaxPerDay: cap,
+                    closeTime: tempCloseTime, timeOffMinDays: days,
+                    toCapCwe: caps.cwe, toCapKirkwood: caps.kirkwood,
+                    toMgrCapCwe: mgrCaps.cwe, toMgrCapKirkwood: mgrCaps.kirkwood,
                     shiftRemindersEnabled: remCfg.master,
                     reminderDayBeforeEnabled: remCfg.dayBefore, reminderDayBeforeHour: remCfg.dayBeforeHour,
                     reminderMorningEnabled: remCfg.morning, reminderMorningHour: remCfg.morningHour,
@@ -5260,7 +5273,7 @@
                 }, {merge: true});
                 setCloseTime(tempCloseTime);
                 setTimeOffMinDays(days);
-                setToMaxPerDay(cap);
+                setToCaps(caps); setToMgrCaps(mgrCaps);
                 setShowSettings(false);
                 window.showToast(language==="es"?"Ajustes guardados":"Settings saved","success");
             };
@@ -5870,38 +5883,54 @@
             };
 
             const fmtDateNice = (ds) => new Date(ds + "T12:00:00").toLocaleDateString(language === "es" ? "es-ES" : "en-US", { month: "short", day: "numeric" });
-            // Instant feedback: is the currently-picked date range blocked (blackout) or full (cap)?
-            const toDateIssue = (() => {
-                if (ownerAccess || !toStartDate) return null;
-                const reqStart = toStartDate, reqEnd = (toAllDay ? (toEndDate || toStartDate) : toStartDate);
+            // Location-aware conflict check, shared by the inline warning and submit.
+            const dateConflictMsg = (reqStart, reqEnd) => {
+                if (ownerAccess || !reqStart) return null;
                 if (reqEnd < reqStart) return null;
-                const hit = (toBlackouts || []).find(b => b.from <= reqEnd && (b.to || b.from) >= reqStart);
+                const meRec = (staffList || []).find(x => x.name === staffName) || {};
+                const myLocs = meRec.location === "all" ? ["cwe", "kirkwood"] : [meRec.location || "cwe"];
+                const worksAt = (name, loc) => { const r = (staffList || []).find(x => x.name === name); return !r || r.location === "all" || r.location === loc; };
+                const locName = (l) => l === "cwe" ? "Central West End" : "Kirkwood";
+                // Blackouts (global or matching one of the requester's locations)
+                const hit = (toBlackouts || []).find(b => (!b.loc || b.loc === "all" || myLocs.includes(b.loc)) && b.from <= reqEnd && (b.to || b.from) >= reqStart);
                 if (hit) {
                     const span = hit.from === (hit.to || hit.from) ? fmtDateNice(hit.from) : fmtDateNice(hit.from) + "–" + fmtDateNice(hit.to);
                     return language === "es" ? "🚫 No se aceptan solicitudes para " + span + " — " + hit.label
                                              : "🚫 Time off can't be requested for " + span + " — " + hit.label;
                 }
-                const cap = (typeof toMaxPerDay === "number") ? toMaxPerDay : 2;
-                if (cap > 0) {
-                    let d = new Date(reqStart + "T12:00:00"); const endD = new Date(reqEnd + "T12:00:00");
-                    let guard = 0;
-                    while (d <= endD && guard++ < 400) {
-                        const ds = window.fmtLocalDate(d);
-                        const n = timeOffRequests.filter(r => r.employee !== staffName && (r.status === "pending" || r.status === "approved") && r.startDate <= ds && (r.endDate || r.startDate) >= ds).length;
-                        if (n >= cap) return language === "es"
-                            ? "⚠️ " + fmtDateNice(ds) + " ya tiene el número máximo de solicitudes — elige otra fecha"
-                            : "⚠️ " + fmtDateNice(ds) + " already has the maximum number of requests — please pick another date";
-                        d.setDate(d.getDate() + 1);
+                const overlapping = (ds) => timeOffRequests.filter(r => r.employee !== staffName && (r.status === "pending" || r.status === "approved") && r.startDate <= ds && (r.endDate || r.startDate) >= ds);
+                let d = new Date(reqStart + "T12:00:00"); const endD = new Date(reqEnd + "T12:00:00");
+                let guard = 0;
+                while (d <= endD && guard++ < 400) {
+                    const ds = window.fmtLocalDate(d);
+                    const dayReqs = overlapping(ds);
+                    for (const loc of myLocs) {
+                        // Per-location staff cap
+                        const cap = (toCaps && typeof toCaps[loc] === "number") ? toCaps[loc] : 2;
+                        if (cap > 0 && dayReqs.filter(r => worksAt(r.employee, loc)).length >= cap) {
+                            return language === "es"
+                                ? "⚠️ " + fmtDateNice(ds) + " ya tiene el número máximo de solicitudes en " + locName(loc) + " — elige otra fecha"
+                                : "⚠️ " + fmtDateNice(ds) + " already has the maximum number of requests at " + locName(loc) + " — please pick another date";
+                        }
+                        // Per-location Team Leader cap (only applies when the requester is a Team Leader)
+                        const mgrCap = (toMgrCaps && typeof toMgrCaps[loc] === "number") ? toMgrCaps[loc] : 0;
+                        if (mgrCap > 0 && isAdmin(staffName) && dayReqs.filter(r => isAdmin(r.employee) && worksAt(r.employee, loc)).length >= mgrCap) {
+                            return language === "es"
+                                ? "⚠️ " + fmtDateNice(ds) + " ya tiene un Team Leader con descanso en " + locName(loc) + " — coordina con tu equipo u otra fecha"
+                                : "⚠️ " + fmtDateNice(ds) + " already has a Team Leader off at " + locName(loc) + " — coordinate coverage or pick another date";
+                        }
                     }
+                    d.setDate(d.getDate() + 1);
                 }
                 return null;
-            })();
+            };
+            const toDateIssue = dateConflictMsg(toStartDate, (toAllDay ? (toEndDate || toStartDate) : toStartDate));
             const addBlackout = async () => {
                 if (!nbFrom || !nbLabel.trim()) { try{window.showToast(language==="es"?"Fecha y motivo requeridos":"Date and reason required","error");}catch(_){}; return; }
                 const to = nbTo && nbTo >= nbFrom ? nbTo : nbFrom;
-                const arr = [...(toBlackouts || []), { from: nbFrom, to, label: nbLabel.trim() }].sort((a, b) => a.from.localeCompare(b.from));
+                const arr = [...(toBlackouts || []), { from: nbFrom, to, label: nbLabel.trim(), loc: nbLoc }].sort((a, b) => a.from.localeCompare(b.from));
                 await db.collection("ops").doc("scheduleSettings").set({ toBlackouts: arr }, { merge: true });
-                setToBlackouts(arr); setNbFrom(""); setNbTo(""); setNbLabel("");
+                setToBlackouts(arr); setNbFrom(""); setNbTo(""); setNbLabel(""); setNbLoc("all");
                 try{window.showToast(language==="es"?"🚫 Fecha bloqueada agregada":"🚫 Blackout added","success");}catch(_){}
             };
             const delBlackout = async (idx) => {
@@ -5925,32 +5954,8 @@
                     return;
                 }
                 if (!ownerAccess) {
-                    const reqStart = toStartDate, reqEnd = (toAllDay ? (toEndDate || toStartDate) : toStartDate);
-                    // Blackout dates: requests are blocked outright, with the reason shown.
-                    const hit = (toBlackouts || []).find(b => b.from <= reqEnd && (b.to || b.from) >= reqStart);
-                    if (hit) {
-                        const span = hit.from === (hit.to || hit.from) ? fmtDateNice(hit.from) : fmtDateNice(hit.from) + "–" + fmtDateNice(hit.to);
-                        toast(language === "es"
-                            ? "No se aceptan solicitudes para " + span + " — " + hit.label
-                            : "Time off can't be requested for " + span + " — " + hit.label, "error");
-                        return;
-                    }
-                    // Per-day cap: block when a day in the range is already full.
-                    const cap = (typeof toMaxPerDay === "number") ? toMaxPerDay : 2;
-                    if (cap > 0) {
-                        let d = new Date(reqStart + "T12:00:00"); const endD = new Date(reqEnd + "T12:00:00");
-                        while (d <= endD) {
-                            const ds = window.fmtLocalDate(d);
-                            const n = timeOffRequests.filter(r => r.employee !== staffName && (r.status === "pending" || r.status === "approved") && r.startDate <= ds && (r.endDate || r.startDate) >= ds).length;
-                            if (n >= cap) {
-                                toast(language === "es"
-                                    ? fmtDateNice(ds) + " ya tiene el número máximo de solicitudes pendientes/aprobadas — elige otra fecha"
-                                    : fmtDateNice(ds) + " already has the maximum number of pending/approved requests — please pick another date", "error");
-                                return;
-                            }
-                            d.setDate(d.getDate() + 1);
-                        }
-                    }
+                    const conflict = dateConflictMsg(toStartDate, (toAllDay ? (toEndDate || toStartDate) : toStartDate));
+                    if (conflict) { toast(conflict, "error"); return; }
                 }
                 const rec = {employee:staffName, startDate:toStartDate, endDate:(toAllDay?(toEndDate||toStartDate):toStartDate), reason:toReason, allDay:toAllDay, status:"pending", requestedAt:new Date().toISOString()};
                 if(!toAllDay){ rec.startTime=toStartTime; rec.endTime=toEndTime; }
@@ -7027,19 +7032,26 @@
                                             </div>
                                             <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{language==="es"?"Los empleados no podrán solicitar descanso antes de este plazo. Gerentes y dueños pueden anularlo. (0 = sin límite)":"Staff can't request time off sooner than this. Managers & owners can override. (0 = no limit)"}</p>
 
-                                            <label className="text-xs font-bold block mt-3" style={{color: "var(--text-secondary)"}}>{language==="es"?"Máximo de solicitudes por día":"Max time-off requests per day"}</label>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <input type="number" min="0" max="50" value={tempMaxPerDay} onChange={e=>setTempMaxPerDay(e.target.value)} className="w-24 px-3 py-2 border rounded-xl text-sm" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/>
-                                                <span className="text-sm" style={{color:"var(--text-muted)"}}>{language==="es"?"personas por día (0 = sin límite)":"people per day (0 = no limit)"}</span>
+                                            <label className="text-xs font-bold block mt-3" style={{color: "var(--text-secondary)"}}>{language==="es"?"Máximo de solicitudes por día (por local)":"Max time-off requests per day (per location)"}</label>
+                                            <div className="grid grid-cols-2 gap-2 mt-1">
+                                                <div><label className="text-[11px]" style={{color:"var(--text-muted)"}}>Central West End</label><input type="number" min="0" max="50" value={tempCaps.cwe} onChange={e=>setTempCaps({...tempCaps, cwe: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-sm" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/></div>
+                                                <div><label className="text-[11px]" style={{color:"var(--text-muted)"}}>Kirkwood</label><input type="number" min="0" max="50" value={tempCaps.kirkwood} onChange={e=>setTempCaps({...tempCaps, kirkwood: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-sm" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/></div>
                                             </div>
-                                            <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{language==="es"?"Cuando un día ya tiene este número de solicitudes (pendientes o aprobadas), nadie más puede solicitarlo.":"Once a day has this many pending/approved requests, no one else can request it off."}</p>
+                                            <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{language==="es"?"Cuando un día llega a este número de solicitudes (pendientes o aprobadas) en un local, nadie más de ese local puede solicitarlo. (0 = sin límite)":"Once a day hits this many pending/approved requests at a location, no one else there can request it off. (0 = no limit)"}</p>
+
+                                            <label className="text-xs font-bold block mt-3" style={{color: "var(--text-secondary)"}}>{language==="es"?"Máximo de Team Leaders con descanso por día":"Max Team Leaders off per day"}</label>
+                                            <div className="grid grid-cols-2 gap-2 mt-1">
+                                                <div><label className="text-[11px]" style={{color:"var(--text-muted)"}}>Central West End</label><input type="number" min="0" max="10" value={tempCaps.mgrCwe} onChange={e=>setTempCaps({...tempCaps, mgrCwe: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-sm" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/></div>
+                                                <div><label className="text-[11px]" style={{color:"var(--text-muted)"}}>Kirkwood</label><input type="number" min="0" max="10" value={tempCaps.mgrKirkwood} onChange={e=>setTempCaps({...tempCaps, mgrKirkwood: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-sm" style={{background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)"}}/></div>
+                                            </div>
+                                            <p className="text-xs mt-1" style={{color: "var(--text-muted)"}}>{language==="es"?"Limita cuántos Team Leaders pueden tener descanso el mismo día en cada local. (0 = sin límite)":"Limits how many Team Leaders can be off the same day at each location. (0 = no limit)"}</p>
 
                                             <label className="text-xs font-bold block mt-3" style={{color: "var(--text-secondary)"}}>🚫 {language==="es"?"Fechas bloqueadas (sin solicitudes)":"Blackout dates (no requests)"}</label>
                                             {(toBlackouts||[]).length > 0 && (
                                                 <div className="space-y-1 mt-1">
                                                     {(toBlackouts||[]).map((b,i) => (
                                                         <div key={i} className="flex items-center justify-between text-xs rounded-lg px-2 py-1.5" style={{background:"var(--bg-subtle)"}}>
-                                                            <span style={{color:"var(--text-secondary)"}}><span className="font-bold">{b.from === (b.to||b.from) ? fmtDateNice(b.from) : fmtDateNice(b.from)+"–"+fmtDateNice(b.to)}</span> — {b.label}</span>
+                                                            <span style={{color:"var(--text-secondary)"}}><span className="font-bold">{b.from === (b.to||b.from) ? fmtDateNice(b.from) : fmtDateNice(b.from)+"–"+fmtDateNice(b.to)}</span> — {b.label} <span className="opacity-70">({!b.loc||b.loc==="all"?(language==="es"?"ambos":"both"):(b.loc==="cwe"?"CWE":"Kirkwood")})</span></span>
                                                             <button onClick={()=>delBlackout(i)} className="px-2 py-0.5 rounded" style={{background:"#fee2e2", color:"#991b1b"}}>🗑</button>
                                                         </div>
                                                     ))}
@@ -7049,7 +7061,12 @@
                                                 <div><label className="text-[11px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Desde":"From"}</label><input type="date" value={nbFrom} onChange={e=>setNbFrom(e.target.value)} className="w-full px-2 py-1.5 border rounded-lg text-sm" style={{background:"var(--bg-card)", borderColor:"var(--border-subtle)", color:"var(--text-primary)", fontSize:16}}/></div>
                                                 <div><label className="text-[11px]" style={{color:"var(--text-muted)"}}>{language==="es"?"Hasta (opcional)":"To (optional)"}</label><input type="date" value={nbTo} onChange={e=>setNbTo(e.target.value)} className="w-full px-2 py-1.5 border rounded-lg text-sm" style={{background:"var(--bg-card)", borderColor:"var(--border-subtle)", color:"var(--text-primary)", fontSize:16}}/></div>
                                             </div>
-                                            <input value={nbLabel} onChange={e=>setNbLabel(e.target.value)} placeholder={language==="es"?"Motivo mostrado a los empleados (ej. Halloween — todos trabajan)":"Reason shown to staff (e.g. Halloween — all hands on deck)"} className="w-full px-3 py-2 border rounded-xl text-sm mt-2" style={{background:"var(--bg-card)", borderColor:"var(--border-subtle)", color:"var(--text-primary)", fontSize:16}}/>
+                                            <input value={nbLabel} onChange={e=>setNbLabel(e.target.value)} placeholder={language==="es"?"Motivo mostrado a los empleados (ej. Día festivo ocupado — se necesita todo el equipo)":"Reason shown to staff (e.g. Busy holiday — full staffing needed)"} className="w-full px-3 py-2 border rounded-xl text-sm mt-2" style={{background:"var(--bg-card)", borderColor:"var(--border-subtle)", color:"var(--text-primary)", fontSize:16}}/>
+                                            <select value={nbLoc} onChange={e=>setNbLoc(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm mt-2 font-bold" style={{background:"var(--bg-card)", borderColor:"var(--border-subtle)", color:"var(--text-primary)", fontSize:16}}>
+                                                <option value="all">{language==="es"?"Ambos locales":"Both locations"}</option>
+                                                <option value="cwe">Central West End</option>
+                                                <option value="kirkwood">Kirkwood</option>
+                                            </select>
                                             <button onClick={addBlackout} className="w-full py-2 rounded-xl font-bold text-xs text-white mt-2" style={{background:"#dc2626"}}>🚫 {language==="es"?"Agregar fecha bloqueada":"Add blackout date"}</button>
                                         </div>
                                     )}
@@ -7432,10 +7449,10 @@
                                             : "Requests must be made at least " + toLeadLabel + " in advance. The earliest date you can request is " + toMinDisplay + "."}
                                     </div>
                                 )}
-                                {(toBlackouts||[]).filter(b => (b.to||b.from) >= window.fmtLocalDate()).length > 0 && (
+                                {(toBlackouts||[]).filter(b => { const me=(staffList||[]).find(x=>x.name===staffName)||{}; const mine = !b.loc || b.loc==="all" || me.location==="all" || me.location===b.loc; return mine && (b.to||b.from) >= window.fmtLocalDate(); }).length > 0 && (
                                     <div className="text-xs rounded-lg px-3 py-2" style={{background:"#fef2f2", border:"1px solid #fecaca", color:"#991b1b"}}>
                                         🚫 {language==="es"?"Fechas bloqueadas (no se aceptan solicitudes):":"Blackout dates (no requests accepted):"}
-                                        {(toBlackouts||[]).filter(b => (b.to||b.from) >= window.fmtLocalDate()).map((b,i) => (
+                                        {(toBlackouts||[]).filter(b => { const me=(staffList||[]).find(x=>x.name===staffName)||{}; const mine = !b.loc || b.loc==="all" || me.location==="all" || me.location===b.loc; return mine && (b.to||b.from) >= window.fmtLocalDate(); }).map((b,i) => (
                                             <span key={i} className="block mt-0.5 font-bold">{b.from === (b.to||b.from) ? fmtDateNice(b.from) : fmtDateNice(b.from)+"–"+fmtDateNice(b.to)} — {b.label}</span>
                                         ))}
                                     </div>
