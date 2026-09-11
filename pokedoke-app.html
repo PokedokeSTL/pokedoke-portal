@@ -4902,7 +4902,7 @@
             const [toCaps, setToCaps] = useState({ cwe: 2, kirkwood: 2 });        // 0 = no cap
             const [toMgrCaps, setToMgrCaps] = useState({ cwe: 0, kirkwood: 0 });  // 0 = no limit on Team Leaders
             const [tempCaps, setTempCaps] = useState({ cwe: "2", kirkwood: "2", mgrCwe: "0", mgrKirkwood: "0" });
-            const [nbFrom, setNbFrom] = useState(""); const [nbTo, setNbTo] = useState(""); const [nbLabel, setNbLabel] = useState(""); const [nbLoc, setNbLoc] = useState("all");
+            const [nbFrom, setNbFrom] = useState(""); const [nbTo, setNbTo] = useState(""); const [nbLabel, setNbLabel] = useState(""); const [nbLoc, setNbLoc] = useState("all"); const [nbEditIdx, setNbEditIdx] = useState(null);
             const [remCfg, setRemCfg] = useState({ master:true, dayBefore:true, dayBeforeHour:18, morning:true, morningHour:9, lead:true, leadMin:120 });
             const [tempTimeOffDays, setTempTimeOffDays] = useState(14);
             const [isDesktop, setIsDesktop] = useState(typeof window !== "undefined" && window.innerWidth >= 1024);
@@ -5928,10 +5928,17 @@
             const addBlackout = async () => {
                 if (!nbFrom || !nbLabel.trim()) { try{window.showToast(language==="es"?"Fecha y motivo requeridos":"Date and reason required","error");}catch(_){}; return; }
                 const to = nbTo && nbTo >= nbFrom ? nbTo : nbFrom;
-                const arr = [...(toBlackouts || []), { from: nbFrom, to, label: nbLabel.trim(), loc: nbLoc }].sort((a, b) => a.from.localeCompare(b.from));
+                const entry = { from: nbFrom, to, label: nbLabel.trim(), loc: nbLoc };
+                const base = (toBlackouts || []).filter((_, i) => i !== nbEditIdx); // drop the one being edited (no-op when adding)
+                const arr = [...base, entry].sort((a, b) => a.from.localeCompare(b.from));
                 await db.collection("ops").doc("scheduleSettings").set({ toBlackouts: arr }, { merge: true });
-                setToBlackouts(arr); setNbFrom(""); setNbTo(""); setNbLabel(""); setNbLoc("all");
-                try{window.showToast(language==="es"?"🚫 Fecha bloqueada agregada":"🚫 Blackout added","success");}catch(_){}
+                const wasEdit = nbEditIdx != null;
+                setToBlackouts(arr); setNbFrom(""); setNbTo(""); setNbLabel(""); setNbLoc("all"); setNbEditIdx(null);
+                try{window.showToast(wasEdit ? (language==="es"?"✏️ Fecha bloqueada actualizada":"✏️ Blackout updated") : (language==="es"?"🚫 Fecha bloqueada agregada":"🚫 Blackout added"),"success");}catch(_){}
+            };
+            const startEditBlackout = (i) => {
+                const b = (toBlackouts || [])[i]; if (!b) return;
+                setNbFrom(b.from); setNbTo((b.to && b.to !== b.from) ? b.to : ""); setNbLabel(b.label || ""); setNbLoc(b.loc || "all"); setNbEditIdx(i);
             };
             const delBlackout = async (idx) => {
                 const arr = (toBlackouts || []).filter((_, i) => i !== idx);
@@ -7052,7 +7059,10 @@
                                                     {(toBlackouts||[]).map((b,i) => (
                                                         <div key={i} className="flex items-center justify-between text-xs rounded-lg px-2 py-1.5" style={{background:"var(--bg-subtle)"}}>
                                                             <span style={{color:"var(--text-secondary)"}}><span className="font-bold">{b.from === (b.to||b.from) ? fmtDateNice(b.from) : fmtDateNice(b.from)+"–"+fmtDateNice(b.to)}</span> — {b.label} <span className="opacity-70">({!b.loc||b.loc==="all"?(language==="es"?"ambos":"both"):(b.loc==="cwe"?"CWE":"Kirkwood")})</span></span>
-                                                            <button onClick={()=>delBlackout(i)} className="px-2 py-0.5 rounded" style={{background:"#fee2e2", color:"#991b1b"}}>🗑</button>
+                                                            <span className="flex gap-1">
+                                                                <button onClick={()=>startEditBlackout(i)} className="px-2 py-0.5 rounded" style={{background:"var(--bg-card)", border:"1px solid var(--border-subtle)"}}>✏️</button>
+                                                                <button onClick={()=>delBlackout(i)} className="px-2 py-0.5 rounded" style={{background:"#fee2e2", color:"#991b1b"}}>🗑</button>
+                                                            </span>
                                                         </div>
                                                     ))}
                                                 </div>
@@ -7067,7 +7077,12 @@
                                                 <option value="cwe">Central West End</option>
                                                 <option value="kirkwood">Kirkwood</option>
                                             </select>
-                                            <button onClick={addBlackout} className="w-full py-2 rounded-xl font-bold text-xs text-white mt-2" style={{background:"#dc2626"}}>🚫 {language==="es"?"Agregar fecha bloqueada":"Add blackout date"}</button>
+                                            <div className="flex gap-2 mt-2">
+                                                {nbEditIdx != null && (
+                                                    <button onClick={()=>{ setNbFrom(""); setNbTo(""); setNbLabel(""); setNbLoc("all"); setNbEditIdx(null); }} className="flex-1 py-2 rounded-xl font-bold text-xs" style={{background:"var(--bg-subtle)", color:"var(--text-secondary)"}}>{language==="es"?"Cancelar edición":"Cancel edit"}</button>
+                                                )}
+                                                <button onClick={addBlackout} className="flex-1 py-2 rounded-xl font-bold text-xs text-white" style={{background: nbEditIdx != null ? "#0891b2" : "#dc2626"}}>{nbEditIdx != null ? "💾 " + (language==="es"?"Guardar cambios":"Save changes") : "🚫 " + (language==="es"?"Agregar fecha bloqueada":"Add blackout date")}</button>
+                                            </div>
                                         </div>
                                     )}
 
@@ -13754,7 +13769,7 @@
                     setPostings(snap.docs.map(d => ({ id: d.id, ...d.data() }))
                         .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
                 });
-                return () => { u1(); u2(); u3(); };
+                return () => { u1(); u2(); };
             }, [authUser]);
 
             // keep selectedApp in sync with live data
@@ -14227,7 +14242,82 @@
         // =================== END HR / HIRING MODULE ===================
 
         // ===== Personnel Records: per-employee documentation, coaching & disciplinary =====
-        function PersonnelRecords({ language, staffName, staffList }) {
+        // Reusable owner sign-in gate. Wraps any module that shows sensitive HR data.
+        // Same Firebase email/password account the Hiring tab uses.
+        function OwnerGate({ language, title, note, children }) {
+            const es = language === "es";
+            const [authUser, setAuthUser] = useState(auth.currentUser);
+            const [authReady, setAuthReady] = useState(false);
+            const [signin, setSignin] = useState({ email: "", pass: "", err: "", busy: false });
+
+            useEffect(() => {
+                const unsub = auth.onAuthStateChanged(u => { setAuthUser(u); setAuthReady(true); });
+                return () => unsub();
+            }, []);
+
+            const doSignIn = async () => {
+                setSignin(s => ({ ...s, err: "", busy: true }));
+                try {
+                    await auth.signInWithEmailAndPassword(signin.email.trim(), signin.pass);
+                } catch (e) {
+                    let msg = es ? "No se pudo iniciar sesión" : "Could not sign in";
+                    if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential") msg = es ? "Correo o contraseña incorrectos" : "Wrong email or password";
+                    else if (e.code === "auth/user-not-found") msg = es ? "No existe esa cuenta" : "No account with that email";
+                    else if (e.code === "auth/too-many-requests") msg = es ? "Demasiados intentos, espera un momento" : "Too many attempts, wait a moment";
+                    setSignin(s => ({ ...s, err: msg, busy: false }));
+                    return;
+                }
+                setSignin({ email: "", pass: "", err: "", busy: false });
+            };
+
+            if (!authReady) {
+                return <div className="p-4 pb-24"><Skeleton count={3} /></div>;
+            }
+
+            if (!authUser) {
+                return (
+                    <div className="p-4 pb-24 animate-in">
+                        <div className="max-w-sm mx-auto mt-10 bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                            <div className="text-center text-4xl mb-3">🔒</div>
+                            <h2 className="text-lg font-bold text-gray-800 text-center mb-1">{title || (es ? "Acceso restringido" : "Restricted access")}</h2>
+                            <p className="text-xs text-gray-400 text-center mb-5">{es ? "Inicia sesión para continuar" : "Sign in to continue"}</p>
+                            <div className="space-y-3">
+                                <input type="email" autoComplete="username"
+                                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm"
+                                    placeholder={es ? "Correo" : "Email"}
+                                    value={signin.email}
+                                    onChange={e => setSignin(s => ({ ...s, email: e.target.value }))} />
+                                <input type="password" autoComplete="current-password"
+                                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm"
+                                    placeholder={es ? "Contraseña" : "Password"}
+                                    value={signin.pass}
+                                    onChange={e => setSignin(s => ({ ...s, pass: e.target.value }))}
+                                    onKeyDown={e => { if (e.key === "Enter") doSignIn(); }} />
+                                {signin.err && <div className="text-red-600 text-sm font-medium bg-red-50 rounded-lg px-3 py-2">{signin.err}</div>}
+                                <button onClick={doSignIn} disabled={signin.busy}
+                                    className={"w-full py-3 rounded-xl font-bold text-sm transition " + (signin.busy ? "bg-gray-300 text-gray-500" : "bg-poke-600 text-white hover:bg-poke-700")}>
+                                    {signin.busy ? (es ? "Entrando..." : "Signing in...") : (es ? "Iniciar Sesión" : "Sign In")}
+                                </button>
+                            </div>
+                            <p className="text-[11px] text-gray-400 mt-4 text-center">
+                                {note || (es ? "Esta cuenta es independiente de tu PIN." : "This login is separate from your PIN.")}
+                            </p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div>
+                    <div className="flex justify-end px-4 pt-3">
+                        <button onClick={() => auth.signOut()} className="text-[11px] font-bold text-gray-400 hover:text-gray-600">🔓 {es ? "Bloquear" : "Lock"}</button>
+                    </div>
+                    {children}
+                </div>
+            );
+        }
+
+        function PersonnelRecordsInner({ language, staffName, staffList }) {
             const L = (en, es) => language === "es" ? es : en;
             const ownerAccess = isOwner(staffName);
             const myLoc = (staffList.find(s => s.name === staffName) || {}).location || "all";
@@ -14742,6 +14832,18 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
 `By acknowledging this handbook, I confirm that I have received and read the PokeDoke Employee Handbook, understand the Standards of Conduct and the policies it contains, and agree to abide by them. I understand this handbook is not a contract, that my employment is at-will (either I or PokeDoke may end it at any time, with or without cause or notice), and that PokeDoke may change these policies at any time.`, bodyEs:
 `Al reconocer este manual, confirmo que he recibido y leído el Manual del Empleado de PokeDoke, entiendo las Normas de Conducta y las políticas que contiene, y acepto cumplirlas. Entiendo que este manual no es un contrato, que mi empleo es a voluntad (tanto yo como PokeDoke podemos terminarlo en cualquier momento, con o sin causa y con o sin aviso), y que PokeDoke puede cambiar estas políticas en cualquier momento.` },
         ];
+
+        // Gated entry point for Personnel Records (see OwnerGate above)
+        function PersonnelRecords(props) {
+            const es = props.language === "es";
+            return (
+                <OwnerGate language={props.language}
+                    title={es ? "Expedientes de Personal" : "Personnel Records"}
+                    note={es ? "Protege documentos confidenciales de empleados." : "Protects confidential employee documents."}>
+                    <PersonnelRecordsInner {...props} />
+                </OwnerGate>
+            );
+        }
 
         function Onboarding({ language, staffName, staffList, setStaffList, setActiveTab }) {
             const es = language === "es";
