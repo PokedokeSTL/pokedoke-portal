@@ -1064,6 +1064,7 @@
             operations: { en: "Operations", es: "Operaciones" },
             menu: { en: "Menu", es: "Menú" },
             schedule: { en: "Schedule", es: "Horario" },
+            scheduleTitle: { en: "Schedule", es: "Horario" },
 
             // Home
             welcome: { en: "Welcome", es: "Bienvenido" },
@@ -15383,7 +15384,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             );
         }
 
-        function Handbook({ language, staffName, staffList }) {
+        function Handbook({ language, staffName, staffList, setActiveTab }) {
             const L = (en, es) => language === "es" ? es : en;
             const ownerAccess = isOwner(staffName);
             const [doc, setDoc] = useState(null);
@@ -15564,7 +15565,14 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
 
                     <div className="mt-4 card p-4" style={{ background: acknowledged ? "#f0fdf4" : "#fffbeb" }}>
                         {acknowledged ? (
-                            <p className="text-sm font-bold text-green-700 text-center">✓ {L("You acknowledged this handbook on", "Reconociste este manual el")} {new Date(myAck.signedAt).toLocaleDateString()}</p>
+                            <div>
+                                <p className="text-sm font-bold text-green-700 text-center">✓ {L("You acknowledged this handbook on", "Reconociste este manual el")} {new Date(myAck.signedAt).toLocaleDateString()}</p>
+                                {setActiveTab && (
+                                    <button onClick={() => setActiveTab("onboarding")} className="mt-3 w-full py-2.5 rounded-xl font-bold text-sm text-white" style={{ background: "var(--poke-600,#0891b2)" }}>
+                                        ← {L("Back to onboarding", "Volver al registro")}
+                                    </button>
+                                )}
+                            </div>
                         ) : (
                             <div>
                                 <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{myAck ? L("The handbook has been updated since you last acknowledged. Please review and acknowledge again.", "El manual se actualizó desde tu último reconocimiento. Por favor revísalo y reconoce de nuevo.") : L("Please read the handbook, then acknowledge below.", "Por favor lee el manual y luego reconoce abajo.")}</p>
@@ -15750,7 +15758,17 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 const now = new Date();
                 const todayStr = window.fmtLocalDate(now);
                 const curHM = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
-                const fmtHM = (t) => { if (!t) return ""; const [h, m] = String(t).split(":").map(Number); const p = h >= 12 ? "pm" : "am"; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? h12 + p : h12 + ":" + String(m).padStart(2, "0") + p; };
+                const fmtHM = (t) => {
+                    if (t === undefined || t === null || t === "") return "";
+                    const str = String(t).trim();
+                    // Already human-readable (e.g. "3pm", "11:30 am") — leave it alone
+                    if (/[ap]\.?m/i.test(str)) return str.toLowerCase().replace(/\s+/g, "");
+                    let [h, m] = str.split(":").map(Number);
+                    if (Number.isNaN(h)) return str;
+                    if (Number.isNaN(m)) m = 0;
+                    const p = h >= 12 ? "pm" : "am"; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+                    return m === 0 ? h12 + p : h12 + ":" + String(m).padStart(2, "0") + p;
+                };
                 const mine = [];
                 const openShifts = [];
                 const cov = { cwe: new Set(), kirkwood: new Set() };
@@ -16228,7 +16246,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         {activeTab === "activity" && staffIsOwner && <ActivityLog language={language} staffName={staffName} onNavigate={navigateTo} />}
                         {activeTab === "hiring" && staffIsOwner && <Hiring language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} />}
                         {activeTab === "records" && staffIsAdmin && <PersonnelRecords language={language} staffName={staffName} staffList={staffList} />}
-                        {activeTab === "handbook" && <Handbook language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "handbook" && <Handbook language={language} staffName={staffName} staffList={staffList} setActiveTab={setActiveTab} />}
                         {activeTab === "onboarding" && <Onboarding language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} setActiveTab={setActiveTab} />}
                     </div>
 
