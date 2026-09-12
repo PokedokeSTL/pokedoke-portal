@@ -13854,7 +13854,7 @@
 
             const inputCls = "w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-poke-400 transition";
             const labelCls = "block text-xs font-bold text-gray-600 mb-1.5";
-            const publicUrl = (typeof window !== "undefined" ? window.location.origin : "") + "/apply";
+            const publicUrl = "https://apply.pokedoke.com"; // short public link; redirects to staff.pokedoke.com/apply
 
             // Gate: require Firebase owner sign-in before showing any applicant data
             if (!authReady) {
