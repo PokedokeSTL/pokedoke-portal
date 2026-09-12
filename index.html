@@ -13506,6 +13506,55 @@
             { id: "rejected",  en: "Rejected",  es: "Rechazado",   color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
         ];
         const hireStage = (id) => HIRE_PIPELINE.find(s => s.id === id) || HIRE_PIPELINE[0];
+        // Interview guide for line / counter roles. "listen" = what a good answer sounds like.
+        const INTERVIEW_QUESTIONS = [
+            { id: "why",      en: "Tell me a little about yourself. Why did you apply here?",
+                              es: "Cuéntame un poco de ti. ¿Por qué aplicaste aquí?",
+                              listenEn: "Genuine interest, can hold a conversation, mentions something specific about us.",
+                              listenEs: "Interés real, mantiene una conversación, menciona algo específico de nosotros." },
+            { id: "avail",    en: "Walk me through your availability. Any weeks coming up you can't work? Sports, finals, trips?",
+                              es: "Explícame tu disponibilidad. ¿Hay semanas próximas en las que no puedas trabajar? ¿Deportes, exámenes, viajes?",
+                              listenEn: "Matches the posting. Honest about conflicts now beats surprises later.",
+                              listenEs: "Coincide con la publicación. Ser honesto ahora es mejor que sorpresas después." },
+            { id: "transport",en: "How will you get to work? What's your backup if that falls through?",
+                              es: "¿Cómo llegarás al trabajo? ¿Cuál es tu plan B si eso falla?",
+                              listenEn: "Has a real plan and a backup. Vague answers usually become no-shows.",
+                              listenEs: "Tiene un plan real y un plan B. Respuestas vagas suelen volverse ausencias." },
+            { id: "customer", en: "Tell me about a time you dealt with a difficult customer, classmate, or teammate. What did you do?",
+                              es: "Cuéntame de una vez que trataste con un cliente, compañero o alguien difícil. ¿Qué hiciste?",
+                              listenEn: "Stayed calm, didn't escalate, focused on solving it. School and sports examples count.",
+                              listenEs: "Mantuvo la calma, no escaló, se enfocó en resolver. Ejemplos de escuela o deportes cuentan." },
+            { id: "mistake",  en: "Tell me about a mistake you made at work or school. What happened next?",
+                              es: "Cuéntame de un error que cometiste en el trabajo o la escuela. ¿Qué pasó después?",
+                              listenEn: "Owns it without blaming others. Says what they'd do differently.",
+                              listenEs: "Lo asume sin culpar a otros. Dice qué haría diferente." },
+            { id: "reliable", en: "When's the last time you had to cancel on a commitment? How did you handle it?",
+                              es: "¿Cuándo fue la última vez que tuviste que cancelar un compromiso? ¿Cómo lo manejaste?",
+                              listenEn: "Gave notice, found coverage or apologized. Watch for a pattern of last-minute cancels.",
+                              listenEs: "Avisó con tiempo, buscó cobertura o se disculpó. Ojo con un patrón de cancelaciones de último minuto." },
+            { id: "allergy",  en: "A customer asks if a bowl is safe for a shellfish allergy and you're not sure. What do you do?",
+                              es: "Un cliente pregunta si un bowl es seguro para alergia a mariscos y no estás seguro. ¿Qué haces?",
+                              listenEn: "Asks a lead or checks the allergen guide. Never guesses. Guessing here is a hard no.",
+                              listenEs: "Pregunta a un líder o revisa la guía de alérgenos. Nunca adivina. Adivinar aquí es un no rotundo." },
+            { id: "rush",     en: "It's a rush, the line is ten deep, and a coworker next to you is falling behind. What do you do?",
+                              es: "Hay mucha gente, la fila es de diez, y un compañero a tu lado se está atrasando. ¿Qué haces?",
+                              listenEn: "Helps without being asked, keeps their own station moving, doesn't get flustered.",
+                              listenEs: "Ayuda sin que se lo pidan, mantiene su estación en marcha, no se pone nervioso." },
+            { id: "eaten",    en: "Have you eaten here? What did you think, honestly?",
+                              es: "¿Has comido aquí? ¿Qué te pareció, sinceramente?",
+                              listenEn: "Not required, but a real opinion beats flattery. Shows they looked into the place.",
+                              listenEs: "No es requisito, pero una opinión real vale más que halagos. Muestra que investigó el lugar." },
+            { id: "questions",en: "What questions do you have for me?",
+                              es: "¿Qué preguntas tienes para mí?",
+                              listenEn: "Asking about the job, the team, or training is a good sign. Nothing at all is a small flag.",
+                              listenEs: "Preguntar sobre el trabajo, el equipo o el entrenamiento es buena señal. Nada en absoluto es una pequeña alerta." },
+        ];
+        const INTERVIEW_FLAGS = [
+            { id: "late",     en: "Late without a heads-up",            es: "Llegó tarde sin avisar" },
+            { id: "badmouth", en: "Badmouthed a past employer or coach", es: "Habló mal de un empleador o entrenador anterior" },
+            { id: "avail",    en: "Availability doesn't fit the posting", es: "Disponibilidad no coincide con la publicación" },
+            { id: "phone",    en: "On their phone during the interview", es: "En el teléfono durante la entrevista" },
+        ];
         const hireLocLabel = (loc, lang) => loc === "both" ? (lang === "es" ? "Ambas" : "Both") : loc === "cwe" ? "CWE" : "Kirkwood";
         // Applicant-facing version: full names, and "both" spelled out so it means something to a stranger
         const hireLocPublic = (loc, lang) => loc === "both" ? (lang === "es" ? "Central West End o Kirkwood" : "Central West End or Kirkwood") : loc === "cwe" ? "Central West End" : "Kirkwood";
@@ -13870,6 +13919,23 @@
             const [noteText, setNoteText] = useState("");
             const [hireForm, setHireForm] = useState(null); // { pin, role, location }
             const [hireErr, setHireErr] = useState("");
+            const [showInterview, setShowInterview] = useState(false);
+            const [iv, setIv] = useState(null); // local interview draft: { answers, scores, flags, verdict, next }
+            const [ivSaving, setIvSaving] = useState(false);
+            const openInterview = (app) => {
+                const base = app.interview || {};
+                setIv({ answers: base.answers || {}, scores: base.scores || {}, flags: base.flags || {}, verdict: base.verdict || "", next: base.next || "" });
+                setShowInterview(true);
+                setTimeout(() => { const el = document.getElementById("interview-guide-panel"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }, 80);
+            };
+            const saveInterview = async (app) => {
+                if (!iv) return;
+                setIvSaving(true);
+                const payload = { ...iv, by: staffName, at: new Date().toISOString() };
+                await updateApp(app.id, { interview: payload }, (es ? "Notas de entrevista guardadas" : "Interview notes saved"));
+                setIvSaving(false);
+                window.showToast(es ? "Entrevista guardada" : "Interview saved", "success");
+            };
 
             // Firebase owner sign-in gate (protects applicant PII via Firestore rules)
             const [authUser, setAuthUser] = useState(auth.currentUser);
@@ -13944,6 +14010,7 @@
                 const stage = hireStage(statusId);
                 updateApp(app.id, { status: statusId }, (es ? "Estado → " : "Status → ") + (es ? stage.es : stage.en));
                 window.showToast((es ? "Movido a " : "Moved to ") + (es ? stage.es : stage.en), "success");
+                if (statusId === "interview") openInterview(app);
             };
 
             const addNote = (app) => {
@@ -13985,7 +14052,19 @@
                     }, { merge: true });
                     await updateApp(app.id, { status: "hired", convertedToEmployee: true }, (es ? "Convertido a empleado (PIN asignado)" : "Converted to employee (PIN assigned)"));
                     setHireForm(null);
-                    window.showToast(es ? "¡Empleado agregado!" : "Employee added!", "success");
+                    // Send the app invite the same way the Onboarding "Add new hire" flow does
+                    const emailAddr = (app.email || "").trim();
+                    let emailed = false;
+                    try {
+                        await db.collection("inviteQueue").add({ employee: app.fullName.trim(), email: emailAddr, phone: app.phone || "", pin: f.pin, portalUrl: "https://staff.pokedoke.com", sentBy: staffName, sentAt: new Date().toISOString(), status: "queued", fromApplicationId: app.id });
+                        if (emailAddr) emailed = await sendInviteEmail(app.fullName.trim(), emailAddr, f.pin, language);
+                    } catch (_) {}
+                    if (emailed) {
+                        await updateApp(app.id, {}, (es ? "Invitación enviada por email a " : "Invite emailed to ") + emailAddr);
+                        window.showToast(es ? "¡Empleado agregado e invitación enviada!" : "Employee added and invite emailed!", "success");
+                    } else {
+                        window.showToast(es ? "Empleado agregado. No se pudo enviar el email; envía la invitación desde Empleados." : "Employee added. Email didn't send; use Send App Invite from Employees.", "error");
+                    }
                 } catch (e) { console.error(e); setHireErr(es ? "Error al guardar" : "Error saving"); }
             };
 
@@ -14163,14 +14242,14 @@
                         const st = hireStage(a.status);
                         const availDays = HIRE_DAYS.filter(d => a.availability && a.availability[d.k]).map(d => es ? d.es : d.en);
                         return (
-                            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { setSelectedApp(null); setHireForm(null); }}>
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { setSelectedApp(null); setHireForm(null); setShowInterview(false); setIv(null); }}>
                                 <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                                     <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between z-10">
                                         <div className="min-w-0">
                                             <div className="font-bold text-gray-800 truncate">{a.fullName}</div>
                                             <div className="text-xs text-gray-400">{a.position || a.postingTitle} · {hireLocLabel(a.location, language)}</div>
                                         </div>
-                                        <button onClick={() => { setSelectedApp(null); setHireForm(null); }} className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-1">×</button>
+                                        <button onClick={() => { setSelectedApp(null); setHireForm(null); setShowInterview(false); setIv(null); }} className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-1">×</button>
                                     </div>
 
                                     <div className="p-5 space-y-5">
@@ -14239,6 +14318,71 @@
                                                 </div>
                                             </div>
                                         )}
+
+                                        {/* Interview guide */}
+                                        <div>
+                                            <button onClick={() => showInterview ? setShowInterview(false) : openInterview(a)}
+                                                className={"w-full py-2.5 rounded-xl text-sm font-bold border transition flex items-center justify-between px-4 " + (showInterview ? "bg-purple-50 border-purple-200 text-purple-700" : "bg-white border-gray-200 text-gray-600 hover:border-purple-300")}>
+                                                <span>📝 {es ? "Guía de entrevista" : "Interview guide"}{a.interview && a.interview.verdict ? " · " + (a.interview.verdict === "yes" ? (es ? "Sí" : "Strong yes") : a.interview.verdict === "maybe" ? (es ? "Quizás" : "Maybe") : "No") : ""}</span>
+                                                <span className="text-xs">{showInterview ? "▴" : "▾"}</span>
+                                            </button>
+                                            {showInterview && iv && (
+                                                <div id="interview-guide-panel" className="mt-2 bg-purple-50/60 border border-purple-100 rounded-2xl p-4 space-y-4">
+                                                    <p className="text-[11px] text-purple-700">{es ? "Toca una calificación después de cada respuesta. Las notas se guardan con el botón abajo." : "Tap a rating after each answer. Notes save with the button at the bottom."}</p>
+                                                    {INTERVIEW_QUESTIONS.map((q, i) => (
+                                                        <div key={q.id} className="bg-white rounded-xl p-3 border border-purple-100">
+                                                            <div className="text-sm font-bold text-gray-800">{i + 1}. {es ? q.es : q.en}</div>
+                                                            <div className="text-[11px] text-gray-400 mt-0.5 italic">{es ? q.listenEs : q.listenEn}</div>
+                                                            <textarea rows="2" className={inputCls + " mt-2"} placeholder={es ? "Su respuesta..." : "Their answer..."}
+                                                                value={iv.answers[q.id] || ""} onChange={e => setIv(v => ({ ...v, answers: { ...v.answers, [q.id]: e.target.value } }))} />
+                                                            <div className="flex gap-1.5 mt-2">
+                                                                {[{ v: 1, en: "Weak", es: "Débil", cls: "bg-red-100 text-red-700" }, { v: 2, en: "OK", es: "Bien", cls: "bg-yellow-100 text-yellow-700" }, { v: 3, en: "Strong", es: "Fuerte", cls: "bg-green-100 text-green-700" }].map(o => (
+                                                                    <button key={o.v} onClick={() => setIv(v => ({ ...v, scores: { ...v.scores, [q.id]: v.scores[q.id] === o.v ? 0 : o.v } }))}
+                                                                        className={"px-3 py-1 rounded-lg text-xs font-bold transition " + (iv.scores[q.id] === o.v ? o.cls + " ring-2 ring-offset-1 ring-gray-300" : "bg-gray-100 text-gray-400")}>
+                                                                        {es ? o.es : o.en}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+
+                                                    <div>
+                                                        <div className={labelCls}>{es ? "Alertas" : "Red flags"}</div>
+                                                        <div className="flex flex-wrap gap-1.5">
+                                                            {INTERVIEW_FLAGS.map(f => (
+                                                                <button key={f.id} onClick={() => setIv(v => ({ ...v, flags: { ...v.flags, [f.id]: !v.flags[f.id] } }))}
+                                                                    className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (iv.flags[f.id] ? "bg-red-600 text-white" : "bg-white border border-gray-200 text-gray-500")}>
+                                                                    {iv.flags[f.id] ? "🚩 " : ""}{es ? f.es : f.en}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <div className={labelCls}>{es ? "Veredicto" : "Overall"}</div>
+                                                        <div className="flex gap-1.5">
+                                                            {[{ v: "yes", en: "Strong yes", es: "Sí", cls: "bg-green-600 text-white" }, { v: "maybe", en: "Maybe", es: "Quizás", cls: "bg-yellow-500 text-white" }, { v: "no", en: "No", es: "No", cls: "bg-red-600 text-white" }].map(o => (
+                                                                <button key={o.v} onClick={() => setIv(v => ({ ...v, verdict: v.verdict === o.v ? "" : o.v }))}
+                                                                    className={"flex-1 py-2 rounded-xl text-sm font-bold transition " + (iv.verdict === o.v ? o.cls : "bg-white border border-gray-200 text-gray-500")}>
+                                                                    {es ? o.es : o.en}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <div className={labelCls}>{es ? "Siguiente paso" : "Next step"}</div>
+                                                        <input className={inputCls} placeholder={es ? "ej. Turno de prueba el sábado, llamar a referencia" : "e.g. Trial shift Saturday, call reference"} value={iv.next} onChange={e => setIv(v => ({ ...v, next: e.target.value }))} />
+                                                    </div>
+
+                                                    {a.interview && a.interview.at && <p className="text-[11px] text-gray-400">{es ? "Última entrevista guardada por" : "Last saved by"} {a.interview.by} · {new Date(a.interview.at).toLocaleString()}</p>}
+                                                    <button onClick={() => saveInterview(a)} disabled={ivSaving}
+                                                        className={"w-full py-3 rounded-xl font-bold text-sm transition " + (ivSaving ? "bg-gray-300 text-gray-500" : "bg-purple-600 text-white hover:bg-purple-700")}>
+                                                        {ivSaving ? (es ? "Guardando..." : "Saving...") : (es ? "Guardar entrevista" : "Save interview notes")}
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
 
                                         {a.experience && (
                                             <div>
