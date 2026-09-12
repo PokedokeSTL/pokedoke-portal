@@ -13507,6 +13507,8 @@
         ];
         const hireStage = (id) => HIRE_PIPELINE.find(s => s.id === id) || HIRE_PIPELINE[0];
         const hireLocLabel = (loc, lang) => loc === "both" ? (lang === "es" ? "Ambas" : "Both") : loc === "cwe" ? "CWE" : "Kirkwood";
+        // Applicant-facing version: full names, and "both" spelled out so it means something to a stranger
+        const hireLocPublic = (loc, lang) => loc === "both" ? (lang === "es" ? "Central West End o Kirkwood" : "Central West End or Kirkwood") : loc === "cwe" ? "Central West End" : "Kirkwood";
         const HIRE_DAYS = [
             { k: "mon", en: "Mon", es: "Lun" }, { k: "tue", en: "Tue", es: "Mar" },
             { k: "wed", en: "Wed", es: "Mié" }, { k: "thu", en: "Thu", es: "Jue" },
@@ -13522,9 +13524,16 @@
             const [submitted, setSubmitted] = useState(false);
             const blank = {
                 fullName: "", email: "", phone: "", over18: false, legalToWork: false,
+                street: "", city: "", state: "MO", zip: "",
+                preferredType: "", ageGroup: "", applyLoc: "",
+                shifts: {}, isStudent: "", school: "", foodHandler: "",
+                lastJob: { employer: "", role: "", dates: "", mayContact: "" }, attest: false,
+                refs: [{ name: "", relation: "", phone: "" }, { name: "", relation: "", phone: "" }],
                 avail: {}, availNote: "", earliestStart: "", experience: "", howHeard: ""
             };
             const [form, setForm] = useState(blank);
+            const [showDesc, setShowDesc] = useState(false);
+            const setRef = (i, k, v) => setForm(prev => { const refs = prev.refs.map((r, j) => j === i ? { ...r, [k]: v } : r); return { ...prev, refs }; });
             const [resumeFile, setResumeFile] = useState(null);
             const [err, setErr] = useState("");
             const [submitting, setSubmitting] = useState(false);
@@ -13542,13 +13551,20 @@
 
             const setF = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
             const toggleDay = (k) => setForm(prev => ({ ...prev, avail: { ...prev.avail, [k]: !prev.avail[k] } }));
+            const toggleShift = (k) => setForm(prev => ({ ...prev, shifts: { ...prev.shifts, [k]: !prev.shifts[k] } }));
+            const setJob = (k, v) => setForm(prev => ({ ...prev, lastJob: { ...prev.lastJob, [k]: v } }));
 
             const submit = async () => {
                 setErr("");
                 if (!form.fullName.trim()) { setErr(es ? "Ingresa tu nombre" : "Please enter your name"); return; }
                 if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) { setErr(es ? "Correo inválido" : "Enter a valid email"); return; }
                 if (form.phone.replace(/\D/g, "").length < 10) { setErr(es ? "Teléfono inválido" : "Enter a valid phone number"); return; }
+                if (!form.street.trim() || !form.city.trim() || form.zip.replace(/\D/g, "").length < 5) { setErr(es ? "Ingresa tu dirección completa" : "Please enter your full address"); return; }
+                if (selected.location === "both" && !form.applyLoc) { setErr(es ? "Elige la ubicación a la que postulas" : "Please choose which location you're applying to"); return; }
+                if (!form.preferredType) { setErr(es ? "Indica si buscas tiempo completo o medio tiempo" : "Please tell us if you're looking for full-time or part-time"); return; }
+                if (!form.ageGroup) { setErr(es ? "Indica tu grupo de edad" : "Please select your age group"); return; }
                 if (!form.legalToWork) { setErr(es ? "Debes confirmar que puedes trabajar legalmente" : "You must confirm you're legally able to work"); return; }
+                if (!form.attest) { setErr(es ? "Confirma que la información es verdadera" : "Please confirm the information is true and complete"); return; }
                 if (resumeFile && resumeFile.size > 6 * 1024 * 1024) { setErr(es ? "El archivo debe ser menor a 6MB" : "File must be under 6MB"); return; }
                 setSubmitting(true);
                 try {
@@ -13565,11 +13581,22 @@
                         postingId: selected.id,
                         postingTitle: selected.title || "",
                         position: selected.role || "",
-                        location: selected.location || "cwe",
+                        location: selected.location === "both" ? form.applyLoc : (selected.location || "cwe"),
+                        postingLocation: selected.location || "cwe",
                         fullName: form.fullName.trim(),
                         email: form.email.trim(),
                         phone: form.phone.trim(),
-                        over18: !!form.over18,
+                        address: { street: form.street.trim(), city: form.city.trim(), state: form.state.trim().toUpperCase(), zip: form.zip.trim() },
+                        preferredType: form.preferredType,
+                        ageGroup: form.ageGroup,
+                        over18: form.ageGroup === "18+",
+                        shifts: form.shifts,
+                        isStudent: form.isStudent,
+                        school: form.school.trim(),
+                        foodHandler: form.foodHandler,
+                        lastJob: form.lastJob.employer.trim() ? { employer: form.lastJob.employer.trim(), role: form.lastJob.role.trim(), dates: form.lastJob.dates.trim(), mayContact: form.lastJob.mayContact } : null,
+                        attested: true,
+                        references: form.refs.filter(r => r.name.trim()).map(r => ({ name: r.name.trim(), relation: r.relation.trim(), phone: r.phone.trim() })),
                         legalToWork: !!form.legalToWork,
                         availability: form.avail,
                         availabilityNote: form.availNote.trim(),
@@ -13599,8 +13626,8 @@
                     <div className="max-w-lg mx-auto">
                         {/* Header */}
                         <div className="text-center mb-6">
-                            <div className="inline-flex items-center justify-center mb-2">
-                                <span className="text-3xl font-black text-white tracking-tight">Poke<span className="text-gold-400">Doke</span></span>
+                            <div className="inline-flex items-center justify-center mb-3">
+                                <img src="/icon-192.png" alt="PokeDoke" className="w-20 h-20 rounded-2xl shadow-lg" />
                             </div>
                             <p className="text-poke-100 text-sm font-semibold">{es ? "Únete a Nuestro Equipo 🌺" : "Join Our Team 🌺"}</p>
                             <button onClick={() => setLanguage(es ? "en" : "es")} className="mt-3 text-poke-200 text-xs font-medium hover:text-white transition">
@@ -13621,22 +13648,64 @@
                             </div>
                         ) : selected ? (
                             <div className="bg-white rounded-3xl shadow-xl p-6 animate-in">
-                                <button onClick={() => { setSelected(null); setErr(""); }} className="text-poke-600 text-sm font-bold mb-4 hover:text-poke-700">← {es ? "Atrás" : "Back"}</button>
+                                <button onClick={() => { setSelected(null); setErr(""); setShowDesc(false); }} className="text-poke-600 text-sm font-bold mb-4 hover:text-poke-700">← {es ? "Atrás" : "Back"}</button>
                                 <h2 className="text-lg font-bold text-gray-800">{selected.title}</h2>
-                                <div className="flex flex-wrap gap-2 mt-1 mb-5">
-                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-poke-50 text-poke-700">{selected.role}</span>
-                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{hireLocLabel(selected.location, language)}</span>
+                                <div className="flex flex-wrap gap-2 mt-1 mb-3">
+                                    {selected.role && (selected.role || "").trim().toLowerCase() !== (selected.title || "").trim().toLowerCase() && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-poke-50 text-poke-700">{selected.role}</span>}
+                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">📍 {hireLocPublic(selected.location, language)}</span>
                                     {selected.employmentType && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{selected.employmentType}</span>}
+                                    {selected.payRange && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-green-50 text-green-700">{selected.payRange}</span>}
                                 </div>
+                                {selected.description && (
+                                    <div className="mb-5">
+                                        <button onClick={() => setShowDesc(v => !v)} className="text-poke-600 text-xs font-bold hover:text-poke-700">
+                                            {showDesc ? (es ? "▾ Ocultar descripción del puesto" : "▾ Hide job details") : (es ? "▸ Ver descripción del puesto" : "▸ View job details")}
+                                        </button>
+                                        {showDesc && <p className="text-sm text-gray-600 whitespace-pre-line bg-gray-50 rounded-xl p-3 mt-2">{selected.description}</p>}
+                                    </div>
+                                )}
 
                                 <div className="space-y-4">
                                     <div><label className={labelCls}>{es ? "Nombre completo *" : "Full name *"}</label>
-                                        <input className={inputCls} value={form.fullName} onChange={e => setF("fullName", e.target.value)} /></div>
+                                        <input className={inputCls} autoComplete="name" value={form.fullName} onChange={e => setF("fullName", e.target.value)} /></div>
                                     <div className="grid grid-cols-2 gap-3">
                                         <div><label className={labelCls}>{es ? "Correo *" : "Email *"}</label>
-                                            <input type="email" className={inputCls} value={form.email} onChange={e => setF("email", e.target.value)} /></div>
+                                            <input type="email" inputMode="email" autoComplete="email" className={inputCls} value={form.email} onChange={e => setF("email", e.target.value)} /></div>
                                         <div><label className={labelCls}>{es ? "Teléfono *" : "Phone *"}</label>
-                                            <input type="tel" className={inputCls} value={form.phone} onChange={e => setF("phone", e.target.value)} /></div>
+                                            <input type="tel" inputMode="tel" autoComplete="tel" className={inputCls} value={form.phone} onChange={e => setF("phone", e.target.value)} /></div>
+                                    </div>
+                                    <div><label className={labelCls}>{es ? "Dirección *" : "Street address *"}</label>
+                                        <input className={inputCls} autoComplete="street-address" value={form.street} onChange={e => setF("street", e.target.value)} /></div>
+                                    <div className="grid grid-cols-6 gap-3">
+                                        <div className="col-span-3"><label className={labelCls}>{es ? "Ciudad *" : "City *"}</label>
+                                            <input className={inputCls} autoComplete="address-level2" value={form.city} onChange={e => setF("city", e.target.value)} /></div>
+                                        <div className="col-span-1"><label className={labelCls}>{es ? "Estado" : "State"}</label>
+                                            <input className={inputCls} autoComplete="address-level1" maxLength={2} value={form.state} onChange={e => setF("state", e.target.value)} /></div>
+                                        <div className="col-span-2"><label className={labelCls}>ZIP *</label>
+                                            <input className={inputCls} inputMode="numeric" autoComplete="postal-code" value={form.zip} onChange={e => setF("zip", e.target.value)} /></div>
+                                    </div>
+
+                                    {selected.location === "both" && (
+                                        <div><label className={labelCls}>{es ? "¿A qué ubicación postulas? *" : "Which location are you applying to? *"}</label>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {[{ v: "cwe", label: "Central West End" }, { v: "kirkwood", label: "Kirkwood" }].map(o => (
+                                                    <button key={o.v} onClick={() => setF("applyLoc", o.v)}
+                                                        className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.applyLoc === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                        📍 {o.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div><label className={labelCls}>{es ? "¿Qué buscas? *" : "What are you looking for? *"}</label>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {[{ v: "Full-time", en: "Full-time", es: "Tiempo completo" }, { v: "Part-time", en: "Part-time", es: "Medio tiempo" }, { v: "Either", en: "Either works", es: "Cualquiera" }].map(o => (
+                                                <button key={o.v} onClick={() => setF("preferredType", o.v)}
+                                                    className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.preferredType === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                    {es ? o.es : o.en}
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
 
                                     <div><label className={labelCls}>{es ? "Disponibilidad (días)" : "Availability (days)"}</label>
@@ -13649,14 +13718,85 @@
                                             ))}
                                         </div>
                                     </div>
+                                    <div><label className={labelCls}>{es ? "Turnos" : "Shifts"}</label>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {[{ k: "morning", en: "Mornings", es: "Mañanas" }, { k: "afternoon", en: "Afternoons", es: "Tardes" }, { k: "evening", en: "Evenings", es: "Noches" }, { k: "weekend", en: "Weekends", es: "Fines de semana" }].map(d => (
+                                                <button key={d.k} onClick={() => toggleShift(d.k)}
+                                                    className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.shifts[d.k] ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                    {es ? d.es : d.en}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
                                     <div><label className={labelCls}>{es ? "Notas de disponibilidad (turnos, horas)" : "Availability notes (shifts, hours)"}</label>
                                         <input className={inputCls} placeholder={es ? "ej. tardes y fines de semana" : "e.g. evenings & weekends"} value={form.availNote} onChange={e => setF("availNote", e.target.value)} /></div>
                                     <div><label className={labelCls}>{es ? "Fecha más temprana para empezar" : "Earliest start date"}</label>
                                         <input type="date" className={inputCls} value={form.earliestStart} onChange={e => setF("earliestStart", e.target.value)} /></div>
                                     <div><label className={labelCls}>{es ? "Experiencia relevante" : "Relevant experience"}</label>
                                         <textarea rows="3" className={inputCls} value={form.experience} onChange={e => setF("experience", e.target.value)} /></div>
+                                    <div><label className={labelCls}>{es ? "Empleo más reciente (opcional)" : "Most recent job (optional)"}</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <input className={inputCls} placeholder={es ? "Empleador" : "Employer"} value={form.lastJob.employer} onChange={e => setJob("employer", e.target.value)} />
+                                            <input className={inputCls} placeholder={es ? "Puesto" : "Role"} value={form.lastJob.role} onChange={e => setJob("role", e.target.value)} />
+                                            <input className={inputCls + " col-span-2"} placeholder={es ? "Fechas (ej. jun 2025 – ago 2026)" : "Dates (e.g. Jun 2025 – Aug 2026)"} value={form.lastJob.dates} onChange={e => setJob("dates", e.target.value)} />
+                                        </div>
+                                        {form.lastJob.employer.trim() && (
+                                            <div className="flex items-center gap-2 mt-2">
+                                                <span className="text-xs text-gray-500">{es ? "¿Podemos contactarlos?" : "May we contact them?"}</span>
+                                                {[{ v: "yes", en: "Yes", es: "Sí" }, { v: "no", en: "No", es: "No" }].map(o => (
+                                                    <button key={o.v} onClick={() => setJob("mayContact", o.v)}
+                                                        className={"px-3 py-1 rounded-lg text-xs font-bold transition " + (form.lastJob.mayContact === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                        {es ? o.es : o.en}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div><label className={labelCls}>{es ? "¿Eres estudiante?" : "Currently a student?"}</label>
+                                            <div className="flex gap-1.5">
+                                                {[{ v: "yes", en: "Yes", es: "Sí" }, { v: "no", en: "No", es: "No" }].map(o => (
+                                                    <button key={o.v} onClick={() => setF("isStudent", o.v)}
+                                                        className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.isStudent === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                        {es ? o.es : o.en}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div><label className={labelCls}>{es ? "¿Tienes tarjeta de manipulador de alimentos?" : "Food handler card?"}</label>
+                                            <div className="flex gap-1.5">
+                                                {[{ v: "yes", en: "Yes", es: "Sí" }, { v: "no", en: "Not yet", es: "Aún no" }].map(o => (
+                                                    <button key={o.v} onClick={() => setF("foodHandler", o.v)}
+                                                        className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.foodHandler === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                        {es ? o.es : o.en}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {form.isStudent === "yes" && (
+                                        <div><label className={labelCls}>{es ? "Escuela (opcional)" : "School (optional)"}</label>
+                                            <input className={inputCls} value={form.school} onChange={e => setF("school", e.target.value)} /></div>
+                                    )}
+                                    {form.foodHandler === "no" && <p className="text-[11px] text-gray-400 -mt-2">{es ? "No hay problema. Te ayudamos a obtenerla después de contratarte. ServSafe Food Handler cuenta." : "No problem. We'll help you get one after hire. ServSafe Food Handler counts."}</p>}
+
                                     <div><label className={labelCls}>{es ? "¿Cómo te enteraste de nosotros?" : "How did you hear about us?"}</label>
                                         <input className={inputCls} value={form.howHeard} onChange={e => setF("howHeard", e.target.value)} /></div>
+
+                                    <div>
+                                        <label className={labelCls}>{es ? "Referencias (opcional)" : "References (optional)"}</label>
+                                        <p className="text-[11px] text-gray-400 mb-2">{es ? "Un empleador anterior, maestro o entrenador. Hasta dos." : "A former employer, teacher, or coach. Up to two."}</p>
+                                        <div className="space-y-2">
+                                            {form.refs.map((r, i) => (
+                                                <div key={i} className="grid grid-cols-6 gap-2">
+                                                    <input className={inputCls + " col-span-3"} placeholder={es ? "Nombre" : "Name"} value={r.name} onChange={e => setRef(i, "name", e.target.value)} />
+                                                    <input className={inputCls + " col-span-3"} placeholder={es ? "Relación" : "Relationship"} value={r.relation} onChange={e => setRef(i, "relation", e.target.value)} />
+                                                    <input type="tel" inputMode="tel" className={inputCls + " col-span-6"} placeholder={es ? "Teléfono" : "Phone"} value={r.phone} onChange={e => setRef(i, "phone", e.target.value)} />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
 
                                     <div><label className={labelCls}>{es ? "Currículum (PDF/imagen, opcional)" : "Résumé (PDF/image, optional)"}</label>
                                         <label className="w-full p-3 rounded-xl border-2 border-dashed border-gray-300 text-gray-500 text-sm font-bold hover:border-poke-300 hover:text-poke-600 hover:bg-poke-50 transition flex items-center justify-center gap-2 cursor-pointer">
@@ -13665,13 +13805,24 @@
                                         </label>
                                     </div>
 
-                                    <label className="flex items-start gap-2.5 cursor-pointer">
-                                        <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={form.over18} onChange={e => setF("over18", e.target.checked)} />
-                                        <span className="text-xs text-gray-600">{es ? "Tengo 18 años o más" : "I am 18 years of age or older"}</span>
-                                    </label>
+                                    <div><label className={labelCls}>{es ? "Edad *" : "Age *"}</label>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {[{ v: "18+", en: "18 or older", es: "18 o más" }, { v: "<18", en: "Under 18", es: "Menos de 18" }].map(o => (
+                                                <button key={o.v} onClick={() => setF("ageGroup", o.v)}
+                                                    className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.ageGroup === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                    {es ? o.es : o.en}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <p className="text-[11px] text-gray-400 mt-1.5">{es ? "Debes tener al menos 16 años para postularte." : "You must be at least 16 to apply."}</p>
+                                    </div>
                                     <label className="flex items-start gap-2.5 cursor-pointer">
                                         <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={form.legalToWork} onChange={e => setF("legalToWork", e.target.checked)} />
                                         <span className="text-xs text-gray-600">{es ? "Estoy legalmente autorizado/a para trabajar en EE.UU. *" : "I am legally authorized to work in the U.S. *"}</span>
+                                    </label>
+                                    <label className="flex items-start gap-2.5 cursor-pointer">
+                                        <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={form.attest} onChange={e => setF("attest", e.target.checked)} />
+                                        <span className="text-xs text-gray-600">{es ? "Certifico que la información en esta solicitud es verdadera y completa. *" : "I certify that the information in this application is true and complete. *"}</span>
                                     </label>
 
                                     {err && <div className="text-red-600 text-sm font-medium bg-red-50 rounded-lg px-3 py-2">{err}</div>}
@@ -13701,7 +13852,7 @@
                                                 <div className="font-bold text-gray-800 text-sm">{p.title}</div>
                                                 <div className="flex flex-wrap gap-2 mt-1.5">
                                                     <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-poke-50 text-poke-700">{p.role}</span>
-                                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{hireLocLabel(p.location, language)}</span>
+                                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">📍 {hireLocPublic(p.location, language)}</span>
                                                     {p.employmentType && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{p.employmentType}</span>}
                                                     {p.payRange && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-green-50 text-green-700">{p.payRange}</span>}
                                                 </div>
@@ -14068,12 +14219,41 @@
                                             <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Correo" : "Email"}</span><a href={"mailto:" + a.email} className="text-poke-600 font-semibold truncate">{a.email}</a></div>
                                             <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Teléfono" : "Phone"}</span><a href={"tel:" + a.phone} className="text-poke-600 font-semibold">{a.phone}</a></div>
                                             {a.earliestStart && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Inicio" : "Earliest start"}</span><span className="text-gray-700 font-semibold">{a.earliestStart}</span></div>}
-                                            <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Mayor de 18" : "18 or older"}</span><span className="text-gray-700 font-semibold">{a.over18 ? (es ? "Sí" : "Yes") : "—"}</span></div>
+                                            <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Edad" : "Age"}</span><span className="text-gray-700 font-semibold">{a.ageGroup ? (a.ageGroup === "18+" ? (es ? "18 o más" : "18 or older") : (es ? "Menos de 18" : "Under 18")) : (a.over18 ? (es ? "18 o más" : "18 or older") : "—")}</span></div>
+                                            {a.preferredType && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Busca" : "Looking for"}</span><span className="text-gray-700 font-semibold">{a.preferredType === "Either" ? (es ? "Cualquiera" : "Either") : a.preferredType}</span></div>}
+                                            {a.address && a.address.street && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Dirección" : "Address"}</span><span className="text-gray-700 font-semibold text-right">{a.address.street}<br/>{a.address.city}, {a.address.state} {a.address.zip}</span></div>}
                                             <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Autorizado a trabajar" : "Work authorized"}</span><span className="text-gray-700 font-semibold">{a.legalToWork ? (es ? "Sí" : "Yes") : "—"}</span></div>
                                             {availDays.length > 0 && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Días" : "Days"}</span><span className="text-gray-700 font-semibold text-right">{availDays.join(", ")}</span></div>}
+                                            {a.shifts && Object.keys(a.shifts).some(k => a.shifts[k]) && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Turnos" : "Shifts"}</span><span className="text-gray-700 font-semibold text-right">{["morning","afternoon","evening","weekend"].filter(k => a.shifts[k]).map(k => es ? ({morning:"Mañanas",afternoon:"Tardes",evening:"Noches",weekend:"Fines de semana"})[k] : ({morning:"Mornings",afternoon:"Afternoons",evening:"Evenings",weekend:"Weekends"})[k]).join(", ")}</span></div>}
+                                            {a.isStudent && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Estudiante" : "Student"}</span><span className="text-gray-700 font-semibold text-right">{a.isStudent === "yes" ? ((es ? "Sí" : "Yes") + (a.school ? " · " + a.school : "")) : "No"}</span></div>}
+                                            {a.foodHandler && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Tarjeta de alimentos" : "Food handler card"}</span><span className="text-gray-700 font-semibold">{a.foodHandler === "yes" ? (es ? "Sí" : "Yes") : (es ? "Aún no" : "Not yet")}</span></div>}
                                             {a.availabilityNote && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Disponib." : "Availability"}</span><span className="text-gray-700 font-semibold text-right">{a.availabilityNote}</span></div>}
                                             {a.howHeard && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Nos conoció por" : "Heard via"}</span><span className="text-gray-700 font-semibold text-right">{a.howHeard}</span></div>}
                                         </div>
+
+                                        {a.lastJob && a.lastJob.employer && (
+                                            <div>
+                                                <div className={labelCls}>{es ? "Empleo más reciente" : "Most recent job"}</div>
+                                                <div className="bg-gray-50 rounded-xl p-3 text-sm">
+                                                    <div className="text-gray-700 font-semibold">{a.lastJob.employer}{a.lastJob.role ? <span className="text-gray-400 font-medium"> · {a.lastJob.role}</span> : null}</div>
+                                                    {a.lastJob.dates && <div className="text-xs text-gray-500 mt-0.5">{a.lastJob.dates}</div>}
+                                                    {a.lastJob.mayContact && <div className="text-xs text-gray-500 mt-0.5">{es ? "Contactar" : "May contact"}: {a.lastJob.mayContact === "yes" ? (es ? "Sí" : "Yes") : "No"}</div>}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {a.references && a.references.length > 0 && (
+                                            <div>
+                                                <div className={labelCls}>{es ? "Referencias" : "References"}</div>
+                                                <div className="bg-gray-50 rounded-xl p-3 space-y-2 text-sm">
+                                                    {a.references.map((r, i) => (
+                                                        <div key={i} className="flex justify-between gap-3">
+                                                            <span className="text-gray-700 font-semibold">{r.name}{r.relation ? <span className="text-gray-400 font-medium"> · {r.relation}</span> : null}</span>
+                                                            {r.phone && <a href={"tel:" + r.phone} className="text-poke-600 font-semibold whitespace-nowrap">{r.phone}</a>}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
 
                                         {a.experience && (
                                             <div>
