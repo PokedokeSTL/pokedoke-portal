@@ -13526,7 +13526,7 @@
                 fullName: "", email: "", phone: "", over18: false, legalToWork: false,
                 street: "", city: "", state: "MO", zip: "",
                 preferredType: "", ageGroup: "", applyLoc: "",
-                shifts: {}, isStudent: "", school: "", foodHandler: "",
+                shifts: {}, isStudent: "", school: "",
                 lastJob: { employer: "", role: "", dates: "", mayContact: "" }, attest: false,
                 refs: [{ name: "", relation: "", phone: "" }, { name: "", relation: "", phone: "" }],
                 avail: {}, availNote: "", earliestStart: "", experience: "", howHeard: ""
@@ -13593,7 +13593,6 @@
                         shifts: form.shifts,
                         isStudent: form.isStudent,
                         school: form.school.trim(),
-                        foodHandler: form.foodHandler,
                         lastJob: form.lastJob.employer.trim() ? { employer: form.lastJob.employer.trim(), role: form.lastJob.role.trim(), dates: form.lastJob.dates.trim(), mayContact: form.lastJob.mayContact } : null,
                         attested: true,
                         references: form.refs.filter(r => r.name.trim()).map(r => ({ name: r.name.trim(), relation: r.relation.trim(), phone: r.phone.trim() })),
@@ -13753,33 +13752,20 @@
                                         )}
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div><label className={labelCls}>{es ? "¿Eres estudiante?" : "Currently a student?"}</label>
-                                            <div className="flex gap-1.5">
-                                                {[{ v: "yes", en: "Yes", es: "Sí" }, { v: "no", en: "No", es: "No" }].map(o => (
-                                                    <button key={o.v} onClick={() => setF("isStudent", o.v)}
-                                                        className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.isStudent === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
-                                                        {es ? o.es : o.en}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div><label className={labelCls}>{es ? "¿Tienes tarjeta de manipulador de alimentos?" : "Food handler card?"}</label>
-                                            <div className="flex gap-1.5">
-                                                {[{ v: "yes", en: "Yes", es: "Sí" }, { v: "no", en: "Not yet", es: "Aún no" }].map(o => (
-                                                    <button key={o.v} onClick={() => setF("foodHandler", o.v)}
-                                                        className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.foodHandler === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
-                                                        {es ? o.es : o.en}
-                                                    </button>
-                                                ))}
-                                            </div>
+                                    <div><label className={labelCls}>{es ? "¿Eres estudiante?" : "Currently a student?"}</label>
+                                        <div className="flex gap-1.5">
+                                            {[{ v: "yes", en: "Yes", es: "Sí" }, { v: "no", en: "No", es: "No" }].map(o => (
+                                                <button key={o.v} onClick={() => setF("isStudent", o.v)}
+                                                    className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (form.isStudent === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
+                                                    {es ? o.es : o.en}
+                                                </button>
+                                            ))}
                                         </div>
                                     </div>
                                     {form.isStudent === "yes" && (
                                         <div><label className={labelCls}>{es ? "Escuela (opcional)" : "School (optional)"}</label>
                                             <input className={inputCls} value={form.school} onChange={e => setF("school", e.target.value)} /></div>
                                     )}
-                                    {form.foodHandler === "no" && <p className="text-[11px] text-gray-400 -mt-2">{es ? "No hay problema. Te ayudamos a obtenerla después de contratarte. ServSafe Food Handler cuenta." : "No problem. We'll help you get one after hire. ServSafe Food Handler counts."}</p>}
 
                                     <div><label className={labelCls}>{es ? "¿Cómo te enteraste de nosotros?" : "How did you hear about us?"}</label>
                                         <input className={inputCls} value={form.howHeard} onChange={e => setF("howHeard", e.target.value)} /></div>
@@ -14226,7 +14212,6 @@
                                             {availDays.length > 0 && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Días" : "Days"}</span><span className="text-gray-700 font-semibold text-right">{availDays.join(", ")}</span></div>}
                                             {a.shifts && Object.keys(a.shifts).some(k => a.shifts[k]) && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Turnos" : "Shifts"}</span><span className="text-gray-700 font-semibold text-right">{["morning","afternoon","evening","weekend"].filter(k => a.shifts[k]).map(k => es ? ({morning:"Mañanas",afternoon:"Tardes",evening:"Noches",weekend:"Fines de semana"})[k] : ({morning:"Mornings",afternoon:"Afternoons",evening:"Evenings",weekend:"Weekends"})[k]).join(", ")}</span></div>}
                                             {a.isStudent && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Estudiante" : "Student"}</span><span className="text-gray-700 font-semibold text-right">{a.isStudent === "yes" ? ((es ? "Sí" : "Yes") + (a.school ? " · " + a.school : "")) : "No"}</span></div>}
-                                            {a.foodHandler && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Tarjeta de alimentos" : "Food handler card"}</span><span className="text-gray-700 font-semibold">{a.foodHandler === "yes" ? (es ? "Sí" : "Yes") : (es ? "Aún no" : "Not yet")}</span></div>}
                                             {a.availabilityNote && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Disponib." : "Availability"}</span><span className="text-gray-700 font-semibold text-right">{a.availabilityNote}</span></div>}
                                             {a.howHeard && <div className="flex justify-between gap-3"><span className="text-gray-400 font-medium">{es ? "Nos conoció por" : "Heard via"}</span><span className="text-gray-700 font-semibold text-right">{a.howHeard}</span></div>}
                                         </div>
