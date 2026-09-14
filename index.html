@@ -13512,7 +13512,18 @@
         const onbId = (name) => String(name || "").replace(/\s/g, "_");
         const onbPacketComplete = (d) => !!(d && d.offer && d.offer.signedAt && d.w4 && d.w4.signedAt && d.mow4 && d.mow4.signedAt);
         // Locked = hired via the new flow, packet not signed, no owner override. Never applies to admins/owners or legacy staff.
-        const onbLocked = (d, name) => !!(d && d.hire && !isAdmin(name) && !onbPacketComplete(d) && !(d.lockOverride && d.lockOverride.at));
+        const onbLocked = (d, name) => !!(d && d.hire && !isAdmin(name) && !d.packetCompletedAt && !onbPacketComplete(d) && !(d.lockOverride && d.lockOverride.at));
+        // A step counts as done only if signed AND not re-issued by a manager
+        const onbStepDone = (d, key) => !!(d && d[key] && d[key].signedAt && !(d.reissue && d.reissue[key]));
+        const onbReissued = (d, key) => !!(d && d.reissue && d.reissue[key]);
+        // On (re)submit: archive the previous PDF, clear any re-issue flag
+        const onbArchivePatch = (d, key) => {
+            const patch = {};
+            if (d && d[key] && d[key].pdfPath) patch.history = firebase.firestore.FieldValue.arrayUnion({ doc: key, pdfPath: d[key].pdfPath, signedAt: d[key].signedAt || null, replacedAt: new Date().toISOString() });
+            if (d && d.reissue && d.reissue[key]) patch["reissue." + key] = firebase.firestore.FieldValue.delete();
+            return patch;
+        };
+        const parseAddr = (a) => { const parts = String(a || "").split(",").map(x => x.trim()); const m = (parts[2] || "").match(/([A-Z]{2})\s*(\d{5})?/i); return { street: parts[0] || "", city: parts[1] || "", state: m ? m[1].toUpperCase() : "MO", zip: m && m[2] ? m[2] : "" }; };
         const splitName = (full) => { const parts = String(full || "").trim().split(/\s+/); return { first: parts[0] || "", last: parts.slice(1).join(" ") }; };
         // Create/refresh the onboarding record at hire time. `app` is the application doc (may be null for manual adds).
         async function createOnboardingRecord({ name, role, location, payRate, startDate, email, phone, app, by }) {
@@ -15312,17 +15323,19 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
         }
 
         // Step 1: offer letter (employee side)
-        function OnbOfferStep({ language, staffName, mine, card, num }) {
+        function OnbOfferStep({ language, staffName, mine, card, num, session, onDone, forceOpen }) {
             const es = language === "es";
             const L = (en, esT) => es ? esT : en;
             const id = onbId(staffName);
-            const [open, setOpen] = useState(false);
+            const [open, setOpen] = useState(!!forceOpen);
+            useEffect(() => { if (forceOpen) setOpen(true); }, [forceOpen]);
             const [biz, setBiz] = useState(null);
-            const [sig, setSig] = useState(null);
+            const sig = session.sig; const setSig = session.setSig;
             const [agree, setAgree] = useState(false);
             const [busy, setBusy] = useState(false);
             const [err, setErr] = useState("");
-            const done = !!(mine.offer && mine.offer.signedAt);
+            const done = onbStepDone(mine, "offer");
+            const reissued = onbReissued(mine, "offer");
             const loc = (mine.hire && mine.hire.location) || "cwe";
             useEffect(() => { db.collection("bizInfo").doc(loc).get().then(d => setBiz(d.exists ? d.data() : {})).catch(() => setBiz({})); }, [loc]);
             useEffect(() => { if (open && !done) onbAudit(id, "offer", "viewed", staffName); }, [open]);
@@ -15340,11 +15353,12 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     const path = await uploadOnbPdf(id, "offer-letter.pdf", bytes);
                     await db.collection("onboarding").doc(id).set({
                         signature: { dataUrl: sig, at: signedAt },
-                        offer: { signedAt, pdfPath: path, docId, role: mine.hire.role, payRate: mine.hire.payRate, startDate: mine.hire.startDate, entity: lines.header[0] }
+                        offer: { signedAt, pdfPath: path, docId, role: mine.hire.role, payRate: mine.hire.payRate, startDate: mine.hire.startDate, entity: lines.header[0] },
+                        ...onbArchivePatch(mine, "offer")
                     }, { merge: true });
                     await onbAudit(id, "offer", "signed", staffName, { docId, pdfPath: path });
                     try { window.showToast(L("✓ Offer accepted", "✓ Oferta aceptada"), "success"); } catch (_) {}
-                    setOpen(false);
+                    setOpen(false); onDone && onDone("offer");
                 } catch (e) { console.error(e); setErr(L("Couldn't save: ", "No se pudo guardar: ") + (e.message || e)); }
                 setBusy(false);
             };
@@ -15355,6 +15369,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         <span className="text-xs" style={{ color: "var(--text-muted)" }}>{open ? "▲" : "▼"}</span>
                     </button>
                     {done && !open && <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Accepted", "Aceptada")} {new Date(mine.offer.signedAt).toLocaleDateString()}</p>}
+                    {reissued && <p className="text-xs mt-1 font-bold" style={{ color: "#b45309" }}>🔁 {L("Your manager asked you to review and sign this again.", "Tu gerente te pidió revisar y firmar esto de nuevo.")}</p>}
                     {open && (
                         <div className="mt-3 space-y-3">
                             {!lines ? <Skeleton count={3} /> : (
@@ -15368,7 +15383,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 <p className="text-xs" style={{ color: "#16a34a" }}>✓ {L("You accepted this offer on", "Aceptaste esta oferta el")} {new Date(mine.offer.signedAt).toLocaleString()}</p>
                             ) : (
                                 <div className="space-y-3">
-                                    <div><div className="text-xs font-bold mb-1.5" style={{ color: "var(--text-secondary)" }}>{L("Your signature", "Tu firma")}</div><SignaturePad language={language} onChange={setSig} /></div>
+                                    <OnbSigBlock language={language} session={session} />
                                     <label className="flex items-start gap-2.5 cursor-pointer">
                                         <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={agree} onChange={e => setAgree(e.target.checked)} />
                                         <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("I have read this offer letter and accept the position as described. I understand my signature here is legally binding.", "He leído esta carta de oferta y acepto el puesto descrito. Entiendo que mi firma aquí es legalmente vinculante.")}</span>
@@ -15383,6 +15398,171 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             );
         }
         window.OnbOfferStep = OnbOfferStep;
+
+        // Shared "apply your signature" block: shows the adopted signature with a one-tap re-sign
+        function OnbSigBlock({ language, session }) {
+            const es = language === "es";
+            const [editing, setEditing] = useState(!session.sig);
+            useEffect(() => { if (!session.sig) setEditing(true); }, [session.sig]);
+            return (
+                <div>
+                    <div className="text-xs font-bold mb-1.5" style={{ color: "var(--text-secondary)" }}>{es ? "Tu firma" : "Your signature"}</div>
+                    {!editing && session.sig ? (
+                        <div className="bg-white rounded-xl border border-gray-200 p-2 flex items-center justify-between gap-2">
+                            <img src={session.sig} alt="signature" style={{ height: 44 }} />
+                            <span className="text-[11px] text-green-700 font-bold">✓ {es ? "Se aplicará aquí" : "Will be applied here"}</span>
+                            <button onClick={() => setEditing(true)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-100 text-gray-500">{es ? "Cambiar" : "Change"}</button>
+                        </div>
+                    ) : (
+                        <div>
+                            <SignaturePad language={language} onChange={session.setSig} />
+                            {session.sig && <button onClick={() => setEditing(false)} className="mt-2 w-full py-2 rounded-xl text-xs font-bold bg-green-600 text-white">{es ? "Usar esta firma" : "Use this signature"}</button>}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // ---- Missouri W-4 (rev 12-2024) ----
+        async function buildMoW4Pdf({ blankBytes, f, ssnDigits, biz, hire, sigDataUrl, signedAtIso }) {
+            const { PDFDocument, StandardFonts } = window.PDFLib;
+            const pdf = await PDFDocument.load(blankBytes, { ignoreEncryption: true });
+            const form = pdf.getForm();
+            const T = (name, v) => safeSet(form, name, fld => fld.setText(String(v || "")));
+            // Button groups on this form aren't true radio groups to pdf-lib: set /V and each widget's /AS by hand
+            const { PDFName } = window.PDFLib;
+            const R = (name, v) => safeSet(form, name, fld => {
+                fld.acroField.dict.set(PDFName.of("V"), PDFName.of(v));
+                fld.acroField.getWidgets().forEach(w => { const on = w.getOnValue(); const isOn = on && on.decodeText ? on.decodeText() === v : (on && on.toString() === "/" + v); w.setAppearanceState(isOn ? on : PDFName.of("Off")); });
+            });
+            const when = new Date(signedAtIso);
+            const dateStr = `${String(when.getMonth() + 1).padStart(2, "0")}${String(when.getDate()).padStart(2, "0")}${when.getFullYear()}`; // comb field: MMDDYYYY, no slashes
+            T("Text1", `${f.first}${f.mi ? " " + f.mi : ""} ${f.last}`.trim());
+            T("Text2", ssnDigits); // comb field: 9 digits, no dashes
+            T("Text7.0", f.street); T("Text7.1.0", f.city); T("Text7.1.1.0", f.state); T("Text7.1.1.1", f.zip);
+            R("Filing Status", f.moFiling === "married" ? "Married - Spouse Does Not Work" : f.moFiling === "hoh" ? "Head of Household" : "single");
+            if (f.moExempt) { T("Text88", "EXEMPT"); R("Exempt", f.moExemptReason || "1"); }
+            else { T("Text8.4", money(f.moExtra)); T("Text8.6", money(f.moReduced)); }
+            T("Text11.0", dateStr);
+            const a = parseAddr(biz.address);
+            T("Text12.0", biz.legalName || "PokeDoke"); T("Text12.1.0", a.street); T("Text12.1.1", a.city); T("Text12.1.3", a.state); T("Text12.1.2", a.zip);
+            const sd = hire.startDate ? hire.startDate.split("-") : null;
+            T("Text11.1", sd ? `${sd[1]}${sd[2]}${sd[0]}` : ""); // comb field: MMDDYYYY
+            T("Text13", String(biz.ein || "").replace(/\D/g, "")); T("Text14", String(biz.moTin || "").replace(/\D/g, ""));
+            const font = await pdf.embedFont(StandardFonts.Helvetica);
+            try { form.updateFieldAppearances(font); } catch (e) {}
+            const page = pdf.getPages()[0];
+            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); const h = 22, w = h * (png.width / png.height); page.drawImage(png, { x: 270, y: 335, width: w, height: h }); }
+            try { form.flatten(); } catch (e) {}
+            return await pdf.save();
+        }
+
+        function OnbMoW4Step({ language, staffName, mine, card, num, session, onDone, forceOpen }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const id = onbId(staffName);
+            const done = onbStepDone(mine, "mow4"), reissued = onbReissued(mine, "mow4");
+            const [open, setOpen] = useState(!!forceOpen);
+            useEffect(() => { if (forceOpen) setOpen(true); }, [forceOpen]);
+            const [biz, setBiz] = useState(null);
+            const pf = mine.prefill || {};
+            const fedFiling = mine.w4 && mine.w4.filingStatus;
+            const [f, setF] = useState({ first: pf.firstName || "", mi: pf.middleInitial || "", last: pf.lastName || "", street: pf.street || "", city: pf.city || "", state: pf.state || "MO", zip: pf.zip || "",
+                moFiling: fedFiling === "hoh" ? "hoh" : fedFiling === "mfj" ? "" : "single", moExtra: "", moReduced: "", moExempt: false, moExemptReason: "1", more: false });
+            const [certify, setCertify] = useState(false);
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState("");
+            const loc = (mine.hire && mine.hire.location) || "cwe";
+            useEffect(() => { db.collection("bizInfo").doc(loc).get().then(d => setBiz(d.exists ? d.data() : {})).catch(() => setBiz({})); }, [loc]);
+            useEffect(() => { if (open && !done) onbAudit(id, "mow4", "viewed", staffName); }, [open]);
+            const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+            const inp = { background: "var(--bg-card)", color: "var(--text-primary)", borderColor: "var(--border-subtle)", fontSize: 16 };
+            const cls = "w-full px-3 py-2 border rounded-xl", lbl = "block text-xs font-bold mb-1";
+            const chip = (on) => "px-3 py-1.5 rounded-lg text-xs font-bold transition " + (on ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500");
+            const submit = async () => {
+                setErr("");
+                if (!f.first.trim() || !f.last.trim() || !f.street.trim() || !f.city.trim() || !f.zip.trim()) { setErr(L("Confirm your name and address", "Confirma tu nombre y dirección")); return; }
+                if (session.ssn.length !== 9) { setErr(L("Enter your 9-digit Social Security number", "Ingresa tu número de Seguro Social de 9 dígitos")); return; }
+                if (!f.moFiling) { setErr(L("Choose a filing status", "Elige un estado civil para impuestos")); return; }
+                if (!session.sig) { setErr(L("Please add your signature", "Agrega tu firma")); return; }
+                if (!certify) { setErr(L("Please check the certification box", "Marca la casilla de certificación")); return; }
+                if (!window.PDFLib) { setErr(L("PDF library didn't load. Refresh and try again.", "La librería PDF no cargó. Recarga e intenta.")); return; }
+                setBusy(true);
+                try {
+                    const blank = await fetch("/forms/mo-w4.pdf").then(r => { if (!r.ok) throw new Error("Blank MO W-4 not found"); return r.arrayBuffer(); });
+                    const signedAt = new Date().toISOString();
+                    const docId = "MOW4-" + id + "-" + Date.now().toString(36).toUpperCase();
+                    const bytes = await buildMoW4Pdf({ blankBytes: blank, f, ssnDigits: session.ssn, biz: biz || {}, hire: mine.hire || {}, sigDataUrl: session.sig, signedAtIso: signedAt });
+                    const path = await uploadOnbPdf(id, "mo-w4.pdf", bytes);
+                    const patch = { mow4: { signedAt, pdfPath: path, docId, filingStatus: f.moFiling, exempt: !!f.moExempt, ssnLast4: session.ssn.slice(-4) }, ...onbArchivePatch(mine, "mow4") };
+                    if (!(mine.signature && mine.signature.dataUrl === session.sig)) patch.signature = { dataUrl: session.sig, at: signedAt };
+                    await db.collection("onboarding").doc(id).set(patch, { merge: true });
+                    await onbAudit(id, "mow4", "signed", staffName, { docId, pdfPath: path });
+                    try { window.showToast(L("✓ MO W-4 submitted", "✓ MO W-4 enviado"), "success"); } catch (_) {}
+                    setOpen(false); onDone && onDone("mow4");
+                } catch (e) { console.error(e); setErr(L("Couldn't save: ", "No se pudo guardar: ") + (e.message || e)); }
+                setBusy(false);
+            };
+            return (
+                <div className="rounded-2xl p-3" style={card}>
+                    <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between text-left">
+                        <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{done ? "✅" : num} {L("Missouri W-4", "W-4 de Missouri")}</span>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>{open ? "▲" : "▼"}</span>
+                    </button>
+                    {done && !open && <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Submitted", "Enviado")} {new Date(mine.mow4.signedAt).toLocaleDateString()}</p>}
+                    {reissued && <p className="text-xs mt-1 font-bold" style={{ color: "#b45309" }}>🔁 {L("Your manager asked you to update this form.", "Tu gerente te pidió actualizar este formulario.")}</p>}
+                    {open && (done ? (
+                        <p className="text-xs mt-2" style={{ color: "#16a34a" }}>✓ {L("Submitted", "Enviado")} {new Date(mine.mow4.signedAt).toLocaleString()}</p>
+                    ) : (
+                        <div className="mt-3 space-y-4" style={{ color: "var(--text-primary)" }}>
+                            <p className="text-xs" style={{ color: "var(--text-muted)" }}>{L("Missouri's state version. Your name, address and SSN carry over from the federal form.", "La versión estatal de Missouri. Tu nombre, dirección y SSN vienen del formulario federal.")}</p>
+                            <div className="rounded-xl p-2.5 text-xs" style={{ background: "var(--bg-subtle)" }}>
+                                <div className="font-bold">{f.first} {f.mi} {f.last}</div>
+                                <div style={{ color: "var(--text-muted)" }}>{f.street}, {f.city}, {f.state} {f.zip} · SSN •••-••-{session.ssn.slice(-4) || "????"}</div>
+                                {session.ssn.length !== 9 && <div className="mt-1 font-bold" style={{ color: "#b45309" }}>{L("SSN needed again (it's never stored). Enter it on the federal W-4 step, or here:", "Se necesita el SSN otra vez (nunca se guarda). Ingrésalo en el W-4 federal o aquí:")}</div>}
+                                {session.ssn.length !== 9 && <input className={cls + " mt-1"} style={inp} type="password" inputMode="numeric" maxLength={9} autoComplete="off" placeholder="•••••••••" value={session.ssn} onChange={e => session.setSsn(e.target.value.replace(/\D/g, "").slice(0, 9))} />}
+                            </div>
+                            <div>
+                                <label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Filing status (Missouri)", "Estado civil (Missouri)")}</label>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {[{ v: "single", en: "Single, or married and spouse works, or married filing separately", es: "Soltero/a, o casado/a y el cónyuge trabaja, o declarando por separado" }, { v: "married", en: "Married and spouse does not work", es: "Casado/a y el cónyuge no trabaja" }, { v: "hoh", en: "Head of household", es: "Jefe/a de familia" }].map(o => (
+                                        <button key={o.v} onClick={() => set("moFiling", o.v)} className={chip(f.moFiling === o.v)}>{es ? o.es : o.en}</button>
+                                    ))}
+                                </div>
+                            </div>
+                            <button onClick={() => set("more", !f.more)} className="text-xs font-bold" style={{ color: "var(--poke-600,#0891b2)" }}>{f.more ? "▾ " : "▸ "}{L("More options (extra withholding, reduced withholding, exempt)", "Más opciones (retención extra, retención reducida, exento)")}</button>
+                            {f.more && (
+                                <div className="space-y-3">
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div><label className={lbl} style={{ color: "var(--text-muted)" }}>{L("Line 2 · Extra per paycheck", "Línea 2 · Extra por cheque")}</label><input className={cls} style={inp} inputMode="decimal" placeholder="$" value={f.moExtra} onChange={e => set("moExtra", e.target.value)} /></div>
+                                        <div><label className={lbl} style={{ color: "var(--text-muted)" }}>{L("Line 3 · Withhold only this amount", "Línea 3 · Retener solo esta cantidad")}</label><input className={cls} style={inp} inputMode="decimal" placeholder="$" value={f.moReduced} onChange={e => set("moReduced", e.target.value)} /></div>
+                                    </div>
+                                    <label className="flex items-start gap-2.5 cursor-pointer">
+                                        <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={f.moExempt} onChange={e => set("moExempt", e.target.checked)} />
+                                        <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("I am exempt from Missouri withholding (rare)", "Estoy exento de retención de Missouri (poco común)")}</span>
+                                    </label>
+                                    {f.moExempt && (
+                                        <div className="flex flex-col gap-1.5">
+                                            {[{ v: "1", en: "Full refund last year and no tax expected this year", es: "Reembolso total el año pasado y sin impuesto este año" }, { v: "2", en: "Military spouse (Servicemember Civil Relief Act)", es: "Cónyuge militar (Ley de Ayuda Civil)" }, { v: "3", en: "Active-duty military income", es: "Ingresos de servicio militar activo" }].map(o => (
+                                                <button key={o.v} onClick={() => set("moExemptReason", o.v)} className={chip(f.moExemptReason === o.v) + " text-left"}>{es ? o.es : o.en}</button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            <OnbSigBlock language={language} session={session} />
+                            <label className="flex items-start gap-2.5 cursor-pointer">
+                                <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={certify} onChange={e => setCertify(e.target.checked)} />
+                                <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("Under penalties of perjury, I certify that the information provided on this form is true and accurate.", "Bajo pena de perjurio, certifico que la información en este formulario es verdadera y exacta.")}</span>
+                            </label>
+                            {err && <p className="text-xs font-bold" style={{ color: "#dc2626" }}>{err}</p>}
+                            <button onClick={submit} disabled={busy} className="w-full py-3 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>{busy ? L("Building your MO W-4...", "Generando tu MO W-4...") : L("Sign & submit MO W-4", "Firmar y enviar MO W-4")}</button>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+        window.OnbMoW4Step = OnbMoW4Step;
 
         // ---- Federal W-4 (2026) ----
         const W4F = {
@@ -15435,19 +15615,20 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             return await pdf.save();
         }
 
-        function OnbW4Step({ language, staffName, mine, card, num }) {
+        function OnbW4Step({ language, staffName, mine, card, num, session, onDone, forceOpen }) {
             const es = language === "es";
             const L = (en, esT) => es ? esT : en;
             const id = onbId(staffName);
-            const done = !!(mine.w4 && mine.w4.signedAt);
-            const [open, setOpen] = useState(false);
+            const done = onbStepDone(mine, "w4"), reissued = onbReissued(mine, "w4");
+            const [open, setOpen] = useState(!!forceOpen);
+            useEffect(() => { if (forceOpen) setOpen(true); }, [forceOpen]);
+            const [more, setMore] = useState(false);
             const [biz, setBiz] = useState(null);
             const pf = mine.prefill || {};
             const [f, setF] = useState({ first: pf.firstName || "", mi: "", last: pf.lastName || "", street: pf.street || "", city: pf.city || "", state: pf.state || "MO", zip: pf.zip || "", filing: "single", twoJobs: false, kids: "", others: "", otherCredits: "", otherIncome: "", deductions: "", extra: "", exempt: false });
-            const [ssn, setSsn] = useState(""); // digits only, memory only
+            const ssn = session.ssn, setSsn = session.setSsn; // session-only, never stored
             const [showSsn, setShowSsn] = useState(false);
-            const [sig, setSig] = useState((mine.signature && mine.signature.dataUrl) || null);
-            const [useSaved, setUseSaved] = useState(!!(mine.signature && mine.signature.dataUrl));
+            const sig = session.sig;
             const [certify, setCertify] = useState(false);
             const [busy, setBusy] = useState(false);
             const [err, setErr] = useState("");
@@ -15475,13 +15656,13 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     const bytes = await buildW4Pdf({ blankBytes: blank, f, ssnDigits: ssn, biz: biz || {}, hire: mine.hire || {}, sigDataUrl: sig, signedAtIso: signedAt });
                     const path = await uploadOnbPdf(id, "w4.pdf", bytes);
                     const patch = { w4: { signedAt, pdfPath: path, docId, filingStatus: f.filing, exempt: !!f.exempt, ssnLast4: ssn.slice(-4), nameOnCard: (f.first + " " + f.last).trim() },
-                        prefill: { ...pf, firstName: f.first.trim(), lastName: f.last.trim(), middleInitial: f.mi.trim(), street: f.street.trim(), city: f.city.trim(), state: f.state.trim().toUpperCase(), zip: f.zip.trim() } };
-                    if (!(mine.signature && mine.signature.dataUrl)) patch.signature = { dataUrl: sig, at: signedAt };
+                        prefill: { ...pf, firstName: f.first.trim(), lastName: f.last.trim(), middleInitial: f.mi.trim(), street: f.street.trim(), city: f.city.trim(), state: f.state.trim().toUpperCase(), zip: f.zip.trim() },
+                        ...onbArchivePatch(mine, "w4") };
+                    if (!(mine.signature && mine.signature.dataUrl === sig)) patch.signature = { dataUrl: sig, at: signedAt };
                     await db.collection("onboarding").doc(id).set(patch, { merge: true });
                     await onbAudit(id, "w4", "signed", staffName, { docId, pdfPath: path });
-                    setSsn("");
                     try { window.showToast(L("✓ W-4 submitted", "✓ W-4 enviado"), "success"); } catch (_) {}
-                    setOpen(false);
+                    setOpen(false); onDone && onDone("w4");
                 } catch (e) { console.error(e); setErr(L("Couldn't save: ", "No se pudo guardar: ") + (e.message || e)); }
                 setBusy(false);
             };
@@ -15492,6 +15673,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         <span className="text-xs" style={{ color: "var(--text-muted)" }}>{open ? "▲" : "▼"}</span>
                     </button>
                     {done && !open && <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Submitted", "Enviado")} {new Date(mine.w4.signedAt).toLocaleDateString()}</p>}
+                    {reissued && <p className="text-xs mt-1 font-bold" style={{ color: "#b45309" }}>🔁 {L("Your manager asked you to update this form.", "Tu gerente te pidió actualizar este formulario.")}</p>}
                     {open && (done ? (
                         <p className="text-xs mt-2" style={{ color: "#16a34a" }}>✓ {L("You submitted your W-4 on", "Enviaste tu W-4 el")} {new Date(mine.w4.signedAt).toLocaleString()}. {L("Need to change it? Ask a manager.", "¿Necesitas cambiarlo? Habla con un gerente.")}</p>
                     ) : (
@@ -15537,7 +15719,8 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 </label>
                             </div>
 
-                            {!f.exempt && (
+                            {!f.exempt && <button onClick={() => setMore(v => !v)} className="text-xs font-bold" style={{ color: "var(--poke-600,#0891b2)" }}>{more ? "▾ " : "▸ "}{L("More options (second job, dependents, extra withholding)", "Más opciones (segundo empleo, dependientes, retención extra)")}</button>}
+                            {!f.exempt && more && (
                                 <div className="space-y-3">
                                     <div>
                                         <div className="text-xs font-bold mb-1" style={{ color: "var(--text-secondary)" }}>{L("Step 2 · Multiple jobs", "Paso 2 · Varios empleos")}</div>
@@ -15568,12 +15751,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
 
                             <div>
                                 <div className="text-xs font-bold mb-1.5" style={{ color: "var(--text-secondary)" }}>{L("Step 5 · Sign", "Paso 5 · Firma")}</div>
-                                {useSaved && sig ? (
-                                    <div className="bg-white rounded-xl border border-gray-200 p-2 flex items-center justify-between gap-2">
-                                        <img src={sig} alt="signature" style={{ height: 44 }} />
-                                        <button onClick={() => { setUseSaved(false); setSig(null); }} className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-100 text-gray-500">{L("Sign again", "Firmar de nuevo")}</button>
-                                    </div>
-                                ) : <SignaturePad language={language} onChange={setSig} />}
+                                <OnbSigBlock language={language} session={session} />
                                 <label className="flex items-start gap-2.5 cursor-pointer mt-3">
                                     <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={certify} onChange={e => setCertify(e.target.checked)} />
                                     <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("Under penalties of perjury, I declare that this certificate, to the best of my knowledge and belief, is true, correct, and complete.", "Bajo pena de perjurio, declaro que este certificado, a mi leal saber y entender, es verdadero, correcto y completo.")}</span>
@@ -15597,9 +15775,16 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 d && d.mow4 && d.mow4.pdfPath && { key: "mow4", label: "MO W-4", path: d.mow4.pdfPath, at: d.mow4.signedAt },
             ].filter(Boolean);
             const openFile = async (f) => { try { const url = await storage.ref().child(f.path).getDownloadURL(); window.open(url, "_blank"); } catch (e) { window.showToast((es ? "No se pudo abrir: " : "Couldn't open: ") + e.message, "error"); } };
-            if (!files.length) return <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{es ? "Aún no hay documentos firmados." : "No signed documents yet."}</p>;
+            const hist = (d && d.history) || [];
+            if (!files.length && !hist.length) return <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{es ? "Aún no hay documentos firmados." : "No signed documents yet."}</p>;
             return (
                 <div className="space-y-1.5">
+                    {hist.map((h, i) => (
+                        <div key={"h" + i} className="flex items-center justify-between gap-2" style={{ opacity: 0.6 }}>
+                            <span>🗂 {h.doc === "offer" ? (es ? "Carta de oferta" : "Offer letter") : h.doc === "w4" ? "Federal W-4" : "MO W-4"} <span style={{ color: "var(--text-muted)" }}>· {es ? "reemplazada" : "replaced"} {h.replacedAt ? new Date(h.replacedAt).toLocaleDateString() : ""}</span></span>
+                            <button onClick={() => openFile({ path: h.pdfPath })} className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>{es ? "Abrir" : "Open"}</button>
+                        </div>
+                    ))}
                     {files.map(f => (
                         <div key={f.key} className="flex items-center justify-between gap-2">
                             <span>📄 {f.label} <span style={{ color: "var(--text-muted)" }}>· {new Date(f.at).toLocaleDateString()}</span></span>
@@ -15700,7 +15885,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 if (!ecName.trim() || !ecPhone.trim()) { try { window.showToast(L("Enter a name and phone number", "Ingresa nombre y teléfono"), "error"); } catch (_) {} return; }
                 setSaving(true);
                 try {
-                    await db.collection("onboarding").doc(myId).set({ name: staffName, emergencyName: ecName.trim(), emergencyPhone: ecPhone.trim(), emergencyRelationship: ecRel.trim(), updatedAt: new Date().toISOString() }, { merge: true });
+                    await db.collection("onboarding").doc(myId).set({ name: staffName, emergencyName: ecName.trim(), emergencyPhone: ecPhone.trim(), emergencyRelationship: ecRel.trim(), updatedAt: new Date().toISOString(), "reissue.emergency": firebase.firestore.FieldValue.delete() }, { merge: true });
                     try { window.showToast(L("✓ Emergency contact saved", "✓ Contacto de emergencia guardado"), "success"); } catch (_) {}
                 } catch (e) { try { window.showToast(L("Couldn't save: ", "No se pudo guardar: ") + e.message, "error"); } catch (_) {} }
                 setSaving(false);
@@ -15713,9 +15898,9 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 const rows = staff.map(s => {
                     const id = s.name.replace(/\s/g, "_");
                     const d = onbData[id];
-                    const hb = handbookSigned(id), ec = emergencyDone(id);
+                    const hb = handbookSigned(id) && !onbReissued(d, "handbook"), ec = emergencyDone(id) && !onbReissued(d, "emergency");
                     const isNew = !!(d && d.hire);
-                    const offer = !!(d && d.offer && d.offer.signedAt), w4 = !!(d && d.w4 && d.w4.signedAt), mow4 = !!(d && d.mow4 && d.mow4.signedAt);
+                    const offer = onbStepDone(d, "offer"), w4 = onbStepDone(d, "w4"), mow4 = onbStepDone(d, "mow4");
                     const parts = isNew ? [offer, w4, mow4, hb, ec] : [hb, ec];
                     const done = parts.filter(Boolean).length;
                     return { name: s.name, id, hb, ec, offer, w4, mow4, isNew, locked: onbLocked(d, s.name), done, total: parts.length, d };
@@ -15725,6 +15910,28 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     if (!ok) return;
                     await db.collection("onboarding").doc(r.id).set({ lockOverride: { by: staffName, at: new Date().toISOString() } }, { merge: true });
                     try { window.showToast(L("Unlocked " + r.name, "Desbloqueado " + r.name), "success"); } catch (_) {}
+                };
+                const reissueStep = async (r, key, label) => {
+                    const ok = await window.askConfirm({ title: L("Re-issue " + label + "?", "¿Reenviar " + label + "?"), body: L(r.name + " will be asked to complete this step again. The previous version stays on file.", r.name + " deberá completar este paso de nuevo. La versión anterior se conserva.") });
+                    if (!ok) return;
+                    await db.collection("onboarding").doc(r.id).set({ reissue: { [key]: { by: staffName, at: new Date().toISOString() } } }, { merge: true });
+                    if (key === "handbook") { try { await db.collection("handbookAck").doc(r.id).delete(); } catch (_) {} }
+                    await onbAudit(r.id, key, "reissued", staffName);
+                    try { window.showToast(L("Re-issued " + label + " to " + r.name, "Reenviado " + label + " a " + r.name), "success"); } catch (_) {}
+                };
+                const resetOnboarding = async (r) => {
+                    const ok = await window.askConfirm({ title: L("Reset " + r.name + "'s onboarding?", "¿Reiniciar la incorporación de " + r.name + "?"), body: L("This deletes their signed documents and progress. Only use for test accounts or a true do-over. Not for departed employees (tax forms must be kept 4 years).", "Esto borra sus documentos firmados y su progreso. Solo para cuentas de prueba o un verdadero reinicio. No para empleados que se fueron (los formularios de impuestos se guardan 4 años).") });
+                    if (!ok) return;
+                    try {
+                        const d = r.d || {};
+                        const paths = [d.offer && d.offer.pdfPath, d.w4 && d.w4.pdfPath, d.mow4 && d.mow4.pdfPath, ...((d.history || []).map(h => h.pdfPath))].filter(Boolean);
+                        for (const pth of paths) { try { await storage.ref().child(pth).delete(); } catch (_) {} }
+                        const keep = { name: r.name, hire: d.hire || null, prefill: d.prefill || null, createdAt: d.createdAt || new Date().toISOString(), resetBy: staffName, resetAt: new Date().toISOString() };
+                        await db.collection("onboarding").doc(r.id).set(keep);
+                        try { await db.collection("handbookAck").doc(r.id).delete(); } catch (_) {}
+                        await onbAudit(r.id, "packet", "reset", staffName);
+                        try { window.showToast(L("Onboarding reset for " + r.name, "Incorporación reiniciada para " + r.name), "success"); } catch (_) {}
+                    } catch (e) { try { window.showToast(L("Reset failed: ", "Error: ") + e.message, "error"); } catch (_) {} }
                 };
                 const relock = async (r) => {
                     await db.collection("onboarding").doc(r.id).set({ lockOverride: firebase.firestore.FieldValue.delete() }, { merge: true });
@@ -15788,6 +15995,16 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                             </div>
                                         )}
                                         {r.isNew && r.d.hire && <p><span className="font-bold">{L("Hired:", "Contratado:")}</span> {r.d.hire.role} · {r.d.hire.location === "cwe" ? "CWE" : "Kirkwood"} · ${r.d.hire.payRate}/hr · {L("starts", "inicia")} {r.d.hire.startDate || "—"}</p>}
+                                        <div className="rounded-xl p-2" style={{ background: "var(--bg-subtle)" }}>
+                                            <div className="font-bold mb-1">{L("Re-issue a step", "Reenviar un paso")} <span className="font-normal" style={{ color: "var(--text-muted)" }}>· {L("asks them to redo it; old version kept", "les pide repetirlo; se conserva la versión anterior")}</span></div>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {(r.isNew ? [["offer", L("Offer letter", "Carta de oferta")], ["w4", "W-4"], ["mow4", "MO W-4"], ["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]] : [["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]]).map(([k, label]) => (
+                                                    <button key={k} onClick={() => reissueStep(r, k, label)} disabled={onbReissued(r.d, k)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg disabled:opacity-50" style={{ background: onbReissued(r.d, k) ? "#fef3c7" : "var(--bg-card)", color: onbReissued(r.d, k) ? "#92400e" : "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}>{onbReissued(r.d, k) ? "🔁 " : ""}{label}</button>
+                                                ))}
+                                            </div>
+                                            {r.d && r.d.history && r.d.history.length > 0 && <p className="mt-1.5" style={{ color: "var(--text-muted)" }}>{r.d.history.length} {L("previous version(s) on file", "versión(es) anterior(es) archivadas")}</p>}
+                                        </div>
+                                        {r.isNew && <button onClick={() => resetOnboarding(r)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#fef2f2", color: "#991b1b" }}>🗑 {L("Reset onboarding (test accounts)", "Reiniciar incorporación (pruebas)")}</button>}
                                         {r.isNew && (r.locked
                                             ? <div className="flex items-center justify-between gap-2"><span style={{ color: "#b45309" }}>🔒 {L("App locked until packet is signed", "App bloqueada hasta firmar el paquete")}</span><button onClick={() => overrideLock(r)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#fef3c7", color: "#92400e" }}>{L("Unlock early", "Desbloquear")}</button></div>
                                             : r.d.lockOverride && r.d.lockOverride.at
@@ -15840,12 +16057,26 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 );
             }
 
-            const hb = handbookSigned(myId), ec = emergencyDone(myId);
+            const hb0 = handbookSigned(myId), ec0 = emergencyDone(myId);
             const mine = onbData[myId] || {};
             const isNewHire = !!mine.hire;
-            const offerDone = !!(mine.offer && mine.offer.signedAt), w4Done = !!(mine.w4 && mine.w4.signedAt), mow4Done = !!(mine.mow4 && mine.mow4.signedAt);
+            const hb = hb0 && !onbReissued(mine, "handbook"), ec = ec0 && !onbReissued(mine, "emergency");
+            const offerDone = onbStepDone(mine, "offer"), w4Done = onbStepDone(mine, "w4"), mow4Done = onbStepDone(mine, "mow4");
             const parts = isNewHire ? [offerDone, w4Done, mow4Done, hb, ec] : [hb, ec];
             const done = parts.filter(Boolean).length, total = parts.length;
+            // DocuSign-style session: signature + SSN live only in memory for this visit, shared by every step
+            const [sessSig, setSessSig] = useState((mine.signature && mine.signature.dataUrl) || null);
+            const [sessSsn, setSessSsn] = useState("");
+            useEffect(() => { if (!sessSig && mine.signature && mine.signature.dataUrl) setSessSig(mine.signature.dataUrl); }, [mine.signature && mine.signature.dataUrl]);
+            const session = { sig: sessSig, setSig: setSessSig, ssn: sessSsn, setSsn: setSessSsn };
+            const [focus, setFocus] = useState(null); // which step is force-opened (auto-advance)
+            const stepKeys = isNewHire ? ["offer", "w4", "mow4", "handbook", "emergency"] : ["handbook", "emergency"];
+            const stepState = { offer: offerDone, w4: w4Done, mow4: mow4Done, handbook: hb, emergency: ec };
+            const nextKey = stepKeys.find(k => !stepState[k]) || null;
+            const onDone = (k) => { const i = stepKeys.indexOf(k); const nxt = stepKeys.slice(i + 1).find(x => !stepState[x]); setFocus(nxt || null); if (nxt === "handbook") setTimeout(() => setActiveTab("handbook"), 400); };
+            // First time the three signed documents are all in, stamp the packet as complete (unlocks the app)
+            useEffect(() => { if (isNewHire && offerDone && w4Done && mow4Done && !mine.packetCompletedAt) db.collection("onboarding").doc(myId).set({ packetCompletedAt: new Date().toISOString() }, { merge: true }); }, [isNewHire, offerDone, w4Done, mow4Done]);
+            const stepLabel = { offer: L("Offer letter", "Carta de oferta"), w4: L("Federal W-4", "W-4 federal"), mow4: L("Missouri W-4", "W-4 de Missouri"), handbook: L("Handbook", "Manual"), emergency: L("Emergency contact", "Contacto de emergencia") };
             const stepNum = (i) => ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"][i];
             const hbIdx = isNewHire ? 3 : 0, ecIdx = isNewHire ? 4 : 1;
             const pendingCard = (title, sub) => (
@@ -15862,12 +16093,14 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         <div className="flex items-center justify-between mb-1"><span className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Progress", "Progreso")}</span><span className="text-xs font-bold" style={{ color: done === total ? "#16a34a" : "#d97706" }}>{done}/{total}</span></div>
                         <div style={{ height: 8, background: "var(--bg-subtle)", borderRadius: 4, overflow: "hidden" }}><div style={{ width: (100 * done / total) + "%", height: 8, background: "var(--poke-600,#0891b2)", transition: "width .3s" }} /></div>
                     </div>
-                    {isNewHire && !window.OnbOfferStep && pendingCard((offerDone ? "✅ " : stepNum(0) + " ") + L("Review & sign your offer letter", "Revisa y firma tu carta de oferta"), L("Available in the next app update.", "Disponible en la próxima actualización."))}
-                    {isNewHire && window.OnbOfferStep && <window.OnbOfferStep language={language} staffName={staffName} mine={mine} card={card} num={stepNum(0)} />}
-                    {isNewHire && !window.OnbW4Step && pendingCard((w4Done ? "✅ " : stepNum(1) + " ") + L("Federal W-4", "W-4 federal"), L("Available in the next app update.", "Disponible en la próxima actualización."))}
-                    {isNewHire && window.OnbW4Step && <window.OnbW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(1)} />}
-                    {isNewHire && !window.OnbMoW4Step && pendingCard((mow4Done ? "✅ " : stepNum(2) + " ") + L("Missouri W-4", "W-4 de Missouri"), L("Available in the next app update.", "Disponible en la próxima actualización."))}
-                    {isNewHire && window.OnbMoW4Step && <window.OnbMoW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(2)} />}
+                    {nextKey && (
+                        <button onClick={() => { setFocus(nextKey); if (nextKey === "handbook") setActiveTab("handbook"); }} className="w-full py-3 rounded-2xl font-bold text-sm text-white" style={{ background: "var(--poke-600,#0891b2)" }}>
+                            {L("Next: ", "Siguiente: ")}{stepLabel[nextKey]} →
+                        </button>
+                    )}
+                    {isNewHire && <OnbOfferStep language={language} staffName={staffName} mine={mine} card={card} num={stepNum(0)} session={session} onDone={onDone} forceOpen={focus === "offer"} />}
+                    {isNewHire && <OnbW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(1)} session={session} onDone={onDone} forceOpen={focus === "w4"} />}
+                    {isNewHire && <OnbMoW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(2)} session={session} onDone={onDone} forceOpen={focus === "mow4"} />}
                     <div className="rounded-2xl p-3" style={card}>
                         <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{hb ? "✅" : stepNum(hbIdx)} {L("Sign the employee handbook", "Firma el manual del empleado")}</span>
                         {hb ? <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Signed", "Firmado")}</p>
@@ -15889,8 +16122,10 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     </div>
                     )}
                     {done === total && (
-                        <div className="rounded-2xl p-4 text-center" style={{ background: "#dcfce7", border: "1px solid #86efac" }}>
-                            <p className="font-bold" style={{ color: "#166534" }}>🎉 {L("Onboarding complete — welcome aboard!", "¡Incorporación completa — bienvenido!")}</p>
+                        <div className="rounded-2xl p-4 text-center space-y-2" style={{ background: "#dcfce7", border: "1px solid #86efac" }}>
+                            <p className="font-bold" style={{ color: "#166534" }}>🎉 {L("All done — welcome aboard!", "¡Todo listo — bienvenido!")}</p>
+                            {isNewHire && <p className="text-xs" style={{ color: "#166534" }}>{L("Your offer letter, federal W-4 and Missouri W-4 are signed and on file. Your manager will review them. You now have full access to the app.", "Tu carta de oferta, W-4 federal y W-4 de Missouri están firmados y archivados. Tu gerente los revisará. Ya tienes acceso completo a la app.")}</p>}
+                            {isNewHire && <button onClick={() => setActiveTab("home")} className="w-full py-2.5 rounded-xl font-bold text-sm text-white" style={{ background: "#16a34a" }}>{L("Go to the app →", "Ir a la app →")}</button>}
                         </div>
                     )}
                 </div>
