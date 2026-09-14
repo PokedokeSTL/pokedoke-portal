@@ -16034,7 +16034,6 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 dob: "", email: pf.email || "", phone: pf.phone || "",
                 status: "", aNumber: "", i94: "", passport: "", passportCountry: "", workExp: "", noExp: false, alienIdType: "a"
             });
-            const [useSsn, setUseSsn] = useState(false);
             const sig = session.sig;
             const [attest, setAttest] = useState(false);
             const [busy, setBusy] = useState(false);
@@ -16063,7 +16062,6 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     if (f.alienIdType === "i94" && !f.i94.trim()) { setErr(L("Enter your I-94 admission number", "Ingresa tu número de admisión I-94")); return; }
                     if (f.alienIdType === "passport" && (!f.passport.trim() || !f.passportCountry.trim())) { setErr(L("Enter your passport number and country", "Ingresa tu número de pasaporte y país")); return; }
                 }
-                if (useSsn && session.ssn.length !== 9) { setErr(L("Enter all 9 digits, or turn the Social Security number off (it's optional here)", "Ingresa los 9 dígitos, o desactiva el número de Seguro Social (es opcional aquí)")); return; }
                 if (!sig) { setErr(L("Please add your signature", "Agrega tu firma")); return; }
                 if (!attest) { setErr(L("Please check the attestation box", "Marca la casilla de declaración")); return; }
                 if (!window.PDFLib) { setErr(L("PDF library didn't load. Refresh and try again.", "La librería PDF no cargó. Recarga e intenta.")); return; }
@@ -16079,13 +16077,13 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         status: f.status, aNumber: f.aNumber.trim(), i94: f.i94.trim(),
                         passport: f.passport.trim(), passportCountry: f.passportCountry.trim(),
                         workExp: f.noExp ? "" : f.workExp, alienIdType: f.alienIdType,
-                        ssn: useSsn ? session.ssn : "", signedAt
+                        ssn: "", signedAt
                     };
                     const bytes = await buildI9Pdf({ blankBytes: blank, s1, s2: null, empSig: sig });
                     const path = await uploadOnbPdf(id, "i9-section1.pdf", bytes);
-                    const stored = { ...s1 }; delete stored.ssn; // the I-9 SSN is optional and never persisted
+                    const stored = { ...s1 };
                     const patch = {
-                        i9: { ...(mine.i9 || {}), signedAt, s1: stored, s1PdfPath: path, docId, ssnProvided: !!useSsn },
+                        i9: { ...(mine.i9 || {}), signedAt, s1: stored, s1PdfPath: path, docId },
                         prefill: { ...pf, firstName: s1.first, lastName: s1.last, middleInitial: s1.mi, street: s1.street, city: s1.city, state: s1.state, zip: s1.zip },
                         ...onbArchivePatch(mine, "i9")
                     };
@@ -16142,14 +16140,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 <input className={cls} style={inp} type="tel" placeholder={L("Phone (optional)", "Teléfono (opcional)")} value={f.phone} onChange={e => set("phone", e.target.value)} />
                             </div>
 
-                            <div className="rounded-xl p-2.5" style={{ background: "var(--bg-subtle)" }}>
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-bold">{L("Social Security number", "Número de Seguro Social")}</span>
-                                    <button onClick={() => setUseSsn(v => !v)} className={chip(useSsn)}>{useSsn ? L("Included", "Incluido") : L("Left blank", "En blanco")}</button>
-                                </div>
-                                <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{L("On the I-9 this is optional, because PokeDoke doesn't use E-Verify. Your W-4 already has it. You can leave it blank here with no effect on your job.", "En el I-9 esto es opcional, porque PokeDoke no usa E-Verify. Tu W-4 ya lo tiene. Puedes dejarlo en blanco sin ningún efecto en tu trabajo.")}</p>
-                                {useSsn && <input className={cls + " mt-2"} style={inp} inputMode="numeric" placeholder="123-45-6789" value={fmtSSN(session.ssn)} onChange={e => session.setSsn(e.target.value.replace(/\D/g, "").slice(0, 9))} />}
-                            </div>
+                            <p className="text-[11px] rounded-xl p-2.5" style={{ background: "var(--bg-subtle)", color: "var(--text-muted)" }}>{L("The I-9 asks for a Social Security number only if the employer uses E-Verify. PokeDoke doesn't, so this form leaves it blank. Your W-4 already has it.", "El I-9 pide el número de Seguro Social solo si el empleador usa E-Verify. PokeDoke no lo usa, así que este formulario lo deja en blanco. Tu W-4 ya lo tiene.")}</p>
 
                             <div>
                                 <div className="text-xs font-bold mb-2" style={{ color: "var(--text-secondary)" }}>{L("I am (check one):", "Yo soy (marca uno):")}</div>
@@ -16269,6 +16260,232 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         </div>
                     ))}
                     {err && <p className="text-[11px] font-bold" style={{ color: "#dc2626" }}>{err}</p>}
+                </div>
+            );
+        }
+
+        // Section 2 is due by the end of the third business day AFTER the first day of work.
+        // Federal holidays aren't accounted for, so this is the conservative (earlier) date.
+        const i9DueDate = (startDate) => {
+            if (!startDate) return null;
+            const d = new Date(startDate + "T12:00:00");
+            if (isNaN(d)) return null;
+            let added = 0;
+            while (added < 3) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w !== 0 && w !== 6) added++; }
+            return d;
+        };
+        // "verified" | "overdue" | "due-soon" | "open" | null
+        const i9DueStatus = (d) => {
+            if (!d || !d.i9 || !d.i9.signedAt) return null;
+            if (d.i9.s2 && d.i9.s2.signedAt) return { key: "verified", due: null, days: 0 };
+            const due = i9DueDate(d.hire && d.hire.startDate);
+            if (!due) return { key: "open", due: null, days: null };
+            const today = new Date(); today.setHours(12, 0, 0, 0);
+            const days = Math.round((due - today) / 86400000);
+            return { key: days < 0 ? "overdue" : days <= 1 ? "due-soon" : "open", due, days };
+        };
+        // Common documents, with the issuing authority USCIS expects. Everything stays editable.
+        const I9_DOCS = {
+            A: [
+                { t: "U.S. Passport", a: "U.S. Department of State" },
+                { t: "U.S. Passport Card", a: "U.S. Department of State" },
+                { t: "Permanent Resident Card (Form I-551)", a: "U.S. Citizenship and Immigration Services" },
+                { t: "Employment Authorization Document (Form I-766)", a: "U.S. Citizenship and Immigration Services" }
+            ],
+            B: [
+                { t: "Driver's License", a: "Missouri Department of Revenue" },
+                { t: "State-Issued ID Card", a: "Missouri Department of Revenue" },
+                { t: "School ID Card With Photograph", a: "" },
+                { t: "U.S. Military Card", a: "U.S. Department of Defense" },
+                { t: "School Record or Report Card (under 18)", a: "" },
+                { t: "Doctor, Hospital or Clinic Record (under 18)", a: "" }
+            ],
+            C: [
+                { t: "Social Security Account Number Card", a: "Social Security Administration" },
+                { t: "Certified Birth Certificate", a: "" },
+                { t: "Consular Report of Birth Abroad (Form FS-240)", a: "U.S. Department of State" },
+                { t: "Employment Authorization Document (Form I-766)", a: "U.S. Citizenship and Immigration Services" }
+            ]
+        };
+        // Cached in memory so an owner verifying several people in a row signs once per visit.
+        let i9SignerCache = { name: "", title: "", sig: null };
+
+        function OnbI9Section2({ language, staffName, r, onDone }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const d = r.d || {};
+            const i9 = d.i9 || {}, s1 = i9.s1 || {};
+            const id = r.id;
+            const verified = !!(i9.s2 && i9.s2.signedAt);
+            const [biz, setBiz] = useState(null);
+            const [listUsed, setListUsed] = useState((i9.docPlan === "A") ? "A" : "BC");
+            const [a, setA] = useState([{ title: "", auth: "", num: "", exp: "" }, { title: "", auth: "", num: "", exp: "" }, { title: "", auth: "", num: "", exp: "" }]);
+            const [b, setB] = useState({ title: "", auth: "", num: "", exp: "" });
+            const [c, setC] = useState({ title: "", auth: "", num: "", exp: "" });
+            const [addl, setAddl] = useState("");
+            const [firstDay, setFirstDay] = useState((d.hire && d.hire.startDate) || "");
+            const [inspected, setInspected] = useState(false);
+            const [signer, setSigner] = useState({ name: i9SignerCache.name || staffName, title: i9SignerCache.title || "Owner" });
+            const [sig, setSig] = useState(i9SignerCache.sig);
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState("");
+            const loc = (d.hire && d.hire.location) || "cwe";
+            useEffect(() => { db.collection("bizInfo").doc(loc).get().then(x => setBiz(x.exists ? x.data() : {})).catch(() => setBiz({})); }, [loc]);
+            const inp = { background: "var(--bg-card)", color: "var(--text-primary)", borderColor: "var(--border-subtle)", fontSize: 16 };
+            const cls = "w-full px-2.5 py-2 border rounded-xl text-xs";
+            const chip = (on) => "px-3 py-1.5 rounded-lg text-xs font-bold transition " + (on ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500");
+            const minor = s1.dob ? ageOn(s1.dob, (d.hire && d.hire.startDate) || null) < 18 : false;
+            const openPhoto = async (p) => { try { const url = await storage.ref().child(p).getDownloadURL(); window.open(url, "_blank"); } catch (e) { window.showToast((es ? "No se pudo abrir: " : "Couldn't open: ") + e.message, "error"); } };
+            const docRow = (label, val, setVal, bank) => (
+                <div className="space-y-1.5">
+                    <div className="text-[11px] font-bold" style={{ color: "var(--text-secondary)" }}>{label}</div>
+                    <select className={cls} style={inp} value={bank.some(x => x.t === val.title) ? val.title : ""} onChange={e => { const pick = bank.find(x => x.t === e.target.value); setVal({ ...val, title: e.target.value, auth: pick && pick.a ? pick.a : val.auth }); }}>
+                        <option value="">{L("— choose a document —", "— elige un documento —")}</option>
+                        {bank.map(x => <option key={x.t} value={x.t}>{x.t}</option>)}
+                    </select>
+                    <input className={cls} style={inp} placeholder={L("Document title (or type your own)", "Título del documento")} value={val.title} onChange={e => setVal({ ...val, title: e.target.value })} />
+                    <input className={cls} style={inp} placeholder={L("Issuing authority", "Autoridad emisora")} value={val.auth} onChange={e => setVal({ ...val, auth: e.target.value })} />
+                    <div className="grid grid-cols-2 gap-1.5">
+                        <input className={cls} style={inp} placeholder={L("Document number", "Número")} value={val.num} onChange={e => setVal({ ...val, num: e.target.value })} />
+                        <input className={cls} style={inp} type="date" placeholder={L("Expiration", "Expiración")} value={val.exp} onChange={e => setVal({ ...val, exp: e.target.value })} />
+                    </div>
+                </div>
+            );
+            const submit = async () => {
+                setErr("");
+                const need = (x, what) => { if (!x.title.trim() || !x.auth.trim() || !x.num.trim()) throw new Error(L("Fill in title, issuing authority and number for the " + what + " document", "Completa título, autoridad y número del documento " + what)); };
+                try {
+                    if (!firstDay) throw new Error(L("Enter their first day of employment", "Ingresa su primer día de empleo"));
+                    if (listUsed === "A") need(a[0], "List A"); else { need(b, "List B"); need(c, "List C"); }
+                    if (!signer.name.trim()) throw new Error(L("Enter your name", "Ingresa tu nombre"));
+                    if (!inspected) throw new Error(L("Confirm you examined the original documents in person", "Confirma que examinaste los documentos originales en persona"));
+                    if (!sig) throw new Error(L("Add your signature", "Agrega tu firma"));
+                    if (!window.PDFLib) throw new Error(L("PDF library didn't load. Refresh and try again.", "La librería PDF no cargó. Recarga e intenta."));
+                } catch (e) { setErr(e.message); return; }
+                setBusy(true);
+                try {
+                    const blank = await fetch("/forms/i-9.pdf").then(x => { if (!x.ok) throw new Error("Blank I-9 not found"); return x.arrayBuffer(); });
+                    const signedAt = new Date().toISOString();
+                    const bz = biz || {};
+                    const s2 = {
+                        listUsed,
+                        a: listUsed === "A" ? a.filter(x => x.title.trim()) : [],
+                        b: listUsed === "BC" ? b : null, c: listUsed === "BC" ? c : null,
+                        addl: addl.trim(), firstDay,
+                        byName: signer.name.trim(), byTitle: signer.title.trim(),
+                        bizName: bz.legalName || "PokeDoke", bizAddr: bz.address || "",
+                        inspectedInPerson: true, signedAt
+                    };
+                    const bytes = await buildI9Pdf({ blankBytes: blank, s1, s2, empSig: (d.signature && d.signature.dataUrl) || null, erSig: sig });
+                    const path = await uploadOnbPdf(id, "i9.pdf", bytes);
+                    i9SignerCache = { name: s2.byName, title: s2.byTitle, sig };
+                    await db.collection("onboarding").doc(id).set({ i9: { ...i9, s2, pdfPath: path, s2SignedAt: signedAt } }, { merge: true });
+                    await onbAudit(id, "i9", "section2-verified", staffName, { pdfPath: path, listUsed, firstDay, section: 2 });
+                    try { window.showToast(L("✓ I-9 verified", "✓ I-9 verificado"), "success"); } catch (_) {}
+                    onDone && onDone();
+                } catch (e) { console.error(e); setErr(L("Couldn't save: ", "No se pudo guardar: ") + (e.message || e)); }
+                setBusy(false);
+            };
+            if (!i9.signedAt) return <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("Waiting on the employee to sign Section 1.", "Esperando que el empleado firme la Sección 1.")}</p>;
+            const st = i9DueStatus(d);
+            return (
+                <div className="space-y-2.5">
+                    <div className="rounded-xl p-2" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }}>
+                        <div className="text-[11px] font-bold mb-1" style={{ color: "var(--text-secondary)" }}>{L("Section 1, as they entered it", "Sección 1, como la ingresaron")}</div>
+                        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                            {s1.first} {s1.mi} {s1.last}{s1.other ? " · " + L("also known as ", "también conocido como ") + s1.other : ""}<br />
+                            {s1.street}{s1.apt ? " #" + s1.apt : ""}, {s1.city}, {s1.state} {s1.zip}<br />
+                            {L("Born", "Nacido")} {onbFmtDate(s1.dob)}{minor ? " · " + L("UNDER 18", "MENOR DE 18") : ""}<br />
+                            {s1.status === "citizen" ? L("U.S. citizen", "Ciudadano estadounidense")
+                                : s1.status === "national" ? L("U.S. noncitizen national", "Nacional no ciudadano")
+                                    : s1.status === "lpr" ? L("Lawful permanent resident · ", "Residente permanente · ") + (s1.aNumber || "")
+                                        : L("Work authorized until ", "Autorizado hasta ") + (s1.workExp ? onbFmtDate(s1.workExp) : L("no expiration", "sin expiración"))}
+                        </p>
+                    </div>
+                    {(i9.docs || []).length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                            {(i9.docs || []).map(x => (
+                                <button key={x.slot} onClick={() => openPhoto(x.path)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "var(--bg-card)", color: "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}>🖼 {x.slot.toUpperCase()}</button>
+                            ))}
+                        </div>
+                    )}
+                    {verified ? (
+                        <div className="rounded-xl p-2" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+                            <p className="text-[11px] font-bold" style={{ color: "#166534" }}>✓ {L("Verified by", "Verificado por")} {i9.s2.byName} {L("on", "el")} {new Date(i9.s2.signedAt).toLocaleDateString()}</p>
+                            <p className="text-[11px] mt-0.5" style={{ color: "#166534" }}>{i9.s2.listUsed === "A" ? (i9.s2.a[0] && i9.s2.a[0].title) : [(i9.s2.b && i9.s2.b.title), (i9.s2.c && i9.s2.c.title)].filter(Boolean).join(" + ")}</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-2.5">
+                            {st && st.due && (
+                                <p className="text-[11px] font-bold" style={{ color: st.key === "overdue" ? "#b91c1c" : st.key === "due-soon" ? "#b45309" : "var(--text-muted)" }}>
+                                    {st.key === "overdue" ? L("Overdue — was due ", "Vencido — venció el ") + st.due.toLocaleDateString() : L("Due by ", "Vence el ") + st.due.toLocaleDateString()}
+                                </p>
+                            )}
+                            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("You must physically examine the original documents with the employee present. The photos above are a record, not a substitute.", "Debes examinar físicamente los documentos originales con el empleado presente. Las fotos son un registro, no un sustituto.")}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                                <button onClick={() => setListUsed("A")} className={chip(listUsed === "A")}>{L("List A (one document)", "Lista A (un documento)")}</button>
+                                <button onClick={() => setListUsed("BC")} className={chip(listUsed === "BC")}>{L("List B + C (two documents)", "Lista B + C (dos documentos)")}</button>
+                            </div>
+                            {listUsed === "A"
+                                ? docRow(L("List A document", "Documento de Lista A"), a[0], (v) => setA([v, a[1], a[2]]), I9_DOCS.A)
+                                : (<div className="space-y-2.5">
+                                    {docRow(L("List B · identity", "Lista B · identidad"), b, setB, I9_DOCS.B)}
+                                    {minor && <p className="text-[11px]" style={{ color: "#b45309" }}>{L("Under 18: a school record, report card, or clinic record counts as List B.", "Menor de 18: un registro escolar, boleta o registro médico cuenta como Lista B.")}</p>}
+                                    {docRow(L("List C · work authorization", "Lista C · autorización"), c, setC, I9_DOCS.C)}
+                                </div>)}
+                            <input className={cls} style={inp} placeholder={L("Additional information (optional)", "Información adicional (opcional)")} value={addl} onChange={e => setAddl(e.target.value)} />
+                            <div>
+                                <div className="text-[11px] font-bold mb-1" style={{ color: "var(--text-secondary)" }}>{L("First day of employment", "Primer día de empleo")}</div>
+                                <input className={cls} style={inp} type="date" value={firstDay} onChange={e => setFirstDay(e.target.value)} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5">
+                                <input className={cls} style={inp} placeholder={L("Your name", "Tu nombre")} value={signer.name} onChange={e => setSigner({ ...signer, name: e.target.value })} />
+                                <input className={cls} style={inp} placeholder={L("Your title", "Tu cargo")} value={signer.title} onChange={e => setSigner({ ...signer, title: e.target.value })} />
+                            </div>
+                            <SignaturePad language={language} initial={sig} onChange={setSig} />
+                            <button onClick={() => setInspected(v => !v)} className="w-full text-left flex gap-2 items-start">
+                                <span className="text-lg leading-none mt-0.5">{inspected ? "☑" : "☐"}</span>
+                                <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{L("I attest, under penalty of perjury, that I have examined the documents presented by the above-named employee, that the documents appear to be genuine and to relate to the employee named, and that to the best of my knowledge the employee is authorized to work in the United States.", "Declaro, bajo pena de perjurio, que he examinado los documentos presentados por el empleado nombrado, que parecen ser genuinos y corresponder a esa persona, y que según mi conocimiento el empleado está autorizado para trabajar en los Estados Unidos.")}</span>
+                            </button>
+                            {err && <p className="text-[11px] font-bold" style={{ color: "#dc2626" }}>{err}</p>}
+                            <button onClick={submit} disabled={busy} className="w-full py-2.5 rounded-xl font-bold text-xs text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>
+                                {busy ? L("Saving…", "Guardando…") : L("Verify & countersign I-9", "Verificar y firmar el I-9")}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // I-9 events only. The tax packet has its own trail under the other doc keys.
+        function OnbI9Audit({ language, employeeId }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const [rows, setRows] = useState(null);
+            useEffect(() => {
+                let live = true;
+                db.collection("onboardingAudit").where("employee", "==", employeeId).get()
+                    .then(snap => { if (!live) return; setRows(snap.docs.map(x => x.data()).filter(x => x.doc === "i9").sort((p, q) => String(q.at).localeCompare(String(p.at)))); })
+                    .catch(() => { if (live) setRows([]); });
+                return () => { live = false; };
+            }, [employeeId]);
+            const label = (e) => ({
+                viewed: L("Opened the form", "Abrió el formulario"),
+                signed: L("Signed Section 1", "Firmó la Sección 1"),
+                "document-uploaded": L("Uploaded a document photo", "Subió foto de documento"),
+                "section2-verified": L("Section 2 verified & countersigned", "Sección 2 verificada y firmada"),
+                reissued: L("Re-issued by a manager", "Reenviado por un gerente")
+            })[e] || e;
+            if (rows === null) return <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("Loading…", "Cargando…")}</p>;
+            if (!rows.length) return <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("No I-9 activity yet.", "Sin actividad de I-9 todavía.")}</p>;
+            return (
+                <div className="space-y-1">
+                    {rows.map((x, i) => (
+                        <div key={i} className="text-[11px] flex justify-between gap-2" style={{ color: "var(--text-muted)" }}>
+                            <span>{label(x.event)}{x.by ? " · " + x.by : ""}</span>
+                            <span style={{ whiteSpace: "nowrap" }}>{new Date(x.at).toLocaleString()}</span>
+                        </div>
+                    ))}
                 </div>
             );
         }
@@ -16415,8 +16632,8 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     const showPay = isNew || onbReissued(d, "pay") || !!(d && d.pay && d.pay.signedAt);
                     const parts = isNew ? [offer, i9, w4, mow4, pay, hb, ec] : (showPay ? [pay, hb, ec] : [hb, ec]);
                     const done = parts.filter(Boolean).length;
-                    return { name: s.name, id, hb, ec, offer, i9, w4, mow4, pay, showPay, isNew, locked: onbLocked(d, s.name), done, total: parts.length, d };
-                }).sort((a, b) => (a.done / a.total) - (b.done / b.total));
+                    return { name: s.name, id, hb, ec, offer, i9, w4, mow4, pay, showPay, isNew, locked: onbLocked(d, s.name), done, total: parts.length, d, i9st: i9DueStatus(d) };
+                }).sort((a, b) => { const rank = (x) => x.i9st && x.i9st.key === "overdue" ? 0 : x.i9st && x.i9st.key === "due-soon" ? 1 : 2; return rank(a) - rank(b) || (a.done / a.total) - (b.done / b.total); });
                 const overrideLock = async (r) => {
                     const ok = await window.askConfirm({ title: L("Unlock the app early?", "¿Desbloquear la app antes?"), body: L(r.name + " will get full app access before finishing their paperwork. This is logged.", r.name + " tendrá acceso completo antes de terminar su papeleo. Esto queda registrado.") });
                     if (!ok) return;
@@ -16492,6 +16709,13 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 <div className="flex flex-wrap gap-2 mt-2">
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.offer ? "#dcfce7" : "#fef2f2", color: r.offer ? "#166534" : "#991b1b" }}>{r.offer ? "✓" : "✗"} {L("Offer", "Oferta")}</span>}
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.i9 ? "#dcfce7" : "#fef2f2", color: r.i9 ? "#166534" : "#991b1b" }}>{r.i9 ? "✓" : "✗"} I-9 §1</span>}
+                                    {r.isNew && r.i9st && <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{
+                                        background: r.i9st.key === "verified" ? "#dcfce7" : r.i9st.key === "overdue" ? "#fee2e2" : r.i9st.key === "due-soon" ? "#fef3c7" : "var(--bg-subtle)",
+                                        color: r.i9st.key === "verified" ? "#166534" : r.i9st.key === "overdue" ? "#991b1b" : r.i9st.key === "due-soon" ? "#92400e" : "var(--text-muted)"
+                                    }}>{r.i9st.key === "verified" ? L("✓ I-9 verified", "✓ I-9 verificado")
+                                        : r.i9st.key === "overdue" ? L("⚠ I-9 §2 overdue", "⚠ I-9 §2 vencido")
+                                            : r.i9st.days === null ? L("I-9 §2 needed", "I-9 §2 pendiente")
+                                                : L("I-9 §2 in ", "I-9 §2 en ") + r.i9st.days + L("d", "d")}</span>}
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.w4 ? "#dcfce7" : "#fef2f2", color: r.w4 ? "#166534" : "#991b1b" }}>{r.w4 ? "✓" : "✗"} W-4</span>}
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.mow4 ? "#dcfce7" : "#fef2f2", color: r.mow4 ? "#166534" : "#991b1b" }}>{r.mow4 ? "✓" : "✗"} MO W-4</span>}
                                     {r.showPay && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.pay ? "#dcfce7" : "#fef2f2", color: r.pay ? "#166534" : "#991b1b" }}>{r.pay ? "✓" : "✗"} {r.d && r.d.pay && r.d.pay.method === "check" ? L("Check", "Cheque") : L("Direct deposit", "Depósito")}{r.pay && r.d.pay.method === "dd" && r.d.pay.acctLast4 ? " ···" + r.d.pay.acctLast4 : ""}</span>}
@@ -16506,6 +16730,20 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                                 <OwnerGate language={language} title={L("Onboarding packet", "Paquete de incorporación")} note={L("Protects tax forms and signed documents.", "Protege formularios de impuestos y documentos firmados.")}>
                                                     <OnbPacketFiles language={language} d={r.d} />
                                                 </OwnerGate>
+                                            </div>
+                                        )}
+                                        {r.isNew && r.d.i9 && r.d.i9.signedAt && (
+                                            <div className="rounded-xl p-2" style={{ background: "var(--bg-subtle)" }}>
+                                                <div className="font-bold mb-1">{L("I-9 · Section 2 (employer)", "I-9 · Sección 2 (empleador)")}</div>
+                                                <OwnerGate language={language} title={L("I-9 verification", "Verificación I-9")} note={L("Protects identity documents.", "Protege documentos de identidad.")}>
+                                                    <OnbI9Section2 language={language} staffName={staffName} r={r} onDone={() => setOpenEmp(null)} />
+                                                </OwnerGate>
+                                            </div>
+                                        )}
+                                        {r.isNew && r.d.i9 && (
+                                            <div className="rounded-xl p-2" style={{ background: "var(--bg-subtle)" }}>
+                                                <div className="font-bold mb-1">{L("I-9 audit trail", "Registro del I-9")}</div>
+                                                <OnbI9Audit language={language} employeeId={r.id} />
                                             </div>
                                         )}
                                         {r.isNew && r.d.hire && <p><span className="font-bold">{L("Hired:", "Contratado:")}</span> {r.d.hire.role} · {r.d.hire.location === "cwe" ? "CWE" : "Kirkwood"} · ${r.d.hire.payRate}/hr · {L("starts", "inicia")} {r.d.hire.startDate || "—"}</p>}
