@@ -15187,6 +15187,225 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             );
         }
 
+
+        // =====================================================================
+        // Onboarding packet: shared pieces (signature pad, PDF helpers, audit)
+        // =====================================================================
+        const onbAudit = async (employeeId, docKey, event, by, extra) => {
+            try { await db.collection("onboardingAudit").add({ employee: employeeId, doc: docKey, event, by, at: new Date().toISOString(), ua: navigator.userAgent, ...(extra || {}) }); } catch (e) { console.error("audit", e); }
+        };
+        const onbFmtDate = (iso) => { if (!iso) return ""; const [y, m, d] = String(iso).split("-"); return (y && m && d) ? `${parseInt(m)}/${parseInt(d)}/${y}` : iso; };
+        const onbToday = () => { const n = new Date(); return `${n.getMonth() + 1}/${n.getDate()}/${n.getFullYear()}`; };
+        const dataUrlToBytes = (dataUrl) => { const b64 = dataUrl.split(",")[1]; const bin = atob(b64); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; };
+        // Word-wrap helper for pdf-lib
+        const pdfWrap = (text, font, size, maxW) => {
+            const out = [];
+            String(text).split("\n").forEach(par => {
+                if (!par.trim()) { out.push(""); return; }
+                let line = "";
+                par.split(/\s+/).forEach(w => {
+                    const test = line ? line + " " + w : w;
+                    if (font.widthOfTextAtSize(test, size) > maxW && line) { out.push(line); line = w; } else line = test;
+                });
+                if (line) out.push(line);
+            });
+            return out;
+        };
+        const uploadOnbPdf = async (employeeId, fileName, bytes) => {
+            const path = "onboarding/" + employeeId + "/" + fileName;
+            await storage.ref().child(path).put(bytes, { contentType: "application/pdf" });
+            return path;
+        };
+
+        // Draw-or-type signature capture. Calls onChange(dataUrl|null).
+        function SignaturePad({ language, initial, onChange }) {
+            const es = language === "es";
+            const canvasRef = useRef(null);
+            const [mode, setMode] = useState("draw");
+            const [typed, setTyped] = useState("");
+            const [hasInk, setHasInk] = useState(false);
+            const drawing = useRef(false);
+            const W = 600, H = 180;
+            const blank = () => { const c = canvasRef.current; if (!c) return; const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); g.strokeStyle = "#e5e7eb"; g.lineWidth = 1; g.beginPath(); g.moveTo(30, H - 40); g.lineTo(W - 30, H - 40); g.stroke(); };
+            useEffect(() => { blank(); if (initial) { const img = new Image(); img.onload = () => { const g = canvasRef.current.getContext("2d"); g.drawImage(img, 0, 0, W, H); setHasInk(true); onChange && onChange(initial); }; img.src = initial; } }, []);
+            const pos = (e) => { const c = canvasRef.current; const r = c.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e; return { x: (t.clientX - r.left) * (W / r.width), y: (t.clientY - r.top) * (H / r.height) }; };
+            const start = (e) => { e.preventDefault(); drawing.current = true; const g = canvasRef.current.getContext("2d"); const p = pos(e); g.strokeStyle = "#111827"; g.lineWidth = 2.5; g.lineCap = "round"; g.lineJoin = "round"; g.beginPath(); g.moveTo(p.x, p.y); };
+            const move = (e) => { if (!drawing.current) return; e.preventDefault(); const g = canvasRef.current.getContext("2d"); const p = pos(e); g.lineTo(p.x, p.y); g.stroke(); if (!hasInk) setHasInk(true); };
+            const end = () => { if (!drawing.current) return; drawing.current = false; onChange && onChange(canvasRef.current.toDataURL("image/png")); };
+            const clear = () => { blank(); setHasInk(false); setTyped(""); onChange && onChange(null); };
+            const applyTyped = (v) => { setTyped(v); blank(); const g = canvasRef.current.getContext("2d"); if (v.trim()) { g.fillStyle = "#111827"; g.font = "italic 44px 'Snell Roundhand', 'Brush Script MT', 'Segoe Script', cursive"; g.fillText(v.trim(), 40, H - 55); setHasInk(true); onChange && onChange(canvasRef.current.toDataURL("image/png")); } else { setHasInk(false); onChange && onChange(null); } };
+            return (
+                <div>
+                    <div className="flex gap-1.5 mb-2">
+                        {[{ v: "draw", en: "Draw", es: "Dibujar" }, { v: "type", en: "Type", es: "Escribir" }].map(o => (
+                            <button key={o.v} onClick={() => { setMode(o.v); clear(); }} className={"px-3 py-1 rounded-lg text-xs font-bold " + (mode === o.v ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500")}>{es ? o.es : o.en}</button>
+                        ))}
+                        <button onClick={clear} className="ml-auto px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 text-gray-500">{es ? "Borrar" : "Clear"}</button>
+                    </div>
+                    {mode === "type" && <input value={typed} onChange={e => applyTyped(e.target.value)} placeholder={es ? "Escribe tu nombre completo" : "Type your full name"} className="w-full px-3 py-2 border rounded-xl mb-2" style={{ fontSize: 16 }} />}
+                    <canvas ref={canvasRef} width={W} height={H} className="w-full rounded-xl border border-gray-300 bg-white" style={{ touchAction: "none", pointerEvents: mode === "draw" ? "auto" : "none" }}
+                        onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+                        onTouchStart={start} onTouchMove={move} onTouchEnd={end} />
+                    <p className="text-[11px] text-gray-400 mt-1">{mode === "draw" ? (es ? "Firma con el dedo o el ratón." : "Sign with your finger or mouse.") : (es ? "Tu nombre escrito cuenta como firma electrónica." : "Your typed name counts as an electronic signature.")}</p>
+                </div>
+            );
+        }
+
+        // Offer letter text (kept in Steve's own wording; the legal document is always English)
+        const offerLetterLines = ({ biz, hire, prefill, name }) => {
+            const legal = (biz && biz.legalName) || "PokeDoke";
+            const addr = (biz && biz.address) || "";
+            const first = (prefill && prefill.firstName) || String(name || "").split(" ")[0];
+            const rate = parseFloat(hire.payRate || 0).toFixed(2);
+            return {
+                header: [legal, addr],
+                body: [
+                    `Hi ${first},`,
+                    "",
+                    `We are pleased to offer you a position at our company, ${legal}, as a ${hire.role}! We think that your experience and skills will be a valuable asset to our company!`,
+                    "",
+                    "If you are to accept this offer you will be eligible for the following in accordance to our company's policies:",
+                    `Wage of $${rate} per Hour.`,
+                    "",
+                    `- You will be working at the following location: ${addr}, US`,
+                    "",
+                    `- Your expected hire date will be ${onbFmtDate(hire.startDate)}.`,
+                    "",
+                    "Your employment will also be subject to, and dependent upon, the completion of all onboarding paperwork included here, and subsequent verification of your work eligibility and relevant background checks.",
+                    "",
+                    "We look forward to welcoming you to our team. Feel free to contact us if you have any questions or concerns.",
+                    "",
+                    "To accept this offer, please sign below.",
+                    "",
+                    "Sincerely,",
+                    "Steve Shih"
+                ]
+            };
+        };
+
+        async function buildOfferLetterPdf({ lines, sigDataUrl, signerName, signedAtIso, docId }) {
+            const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+            const pdf = await PDFDocument.create();
+            const page = pdf.addPage([612, 792]);
+            const font = await pdf.embedFont(StandardFonts.Helvetica);
+            const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+            const M = 54, maxW = 612 - M * 2;
+            // letterhead band
+            page.drawRectangle({ x: 0, y: 792 - 70, width: 612, height: 70, color: rgb(0.95, 0.95, 0.95) });
+            page.drawText(lines.header[0], { x: M, y: 792 - 32, size: 11, font: bold });
+            page.drawText(lines.header[1], { x: M, y: 792 - 50, size: 10, font });
+            page.drawLine({ start: { x: M, y: 792 - 100 }, end: { x: 612 - M, y: 792 - 100 }, thickness: 0.7, color: rgb(0.3, 0.3, 0.3) });
+            let y = 792 - 140;
+            lines.body.forEach(par => {
+                if (par === "") { y -= 8; return; }
+                pdfWrap(par, font, 10.5, maxW).forEach(ln => { page.drawText(ln, { x: M, y, size: 10.5, font }); y -= 15; });
+            });
+            // signature block
+            const sy = 150;
+            page.drawLine({ start: { x: M, y: sy + 40 }, end: { x: 612 - M, y: sy + 40 }, thickness: 0.7, color: rgb(0.3, 0.3, 0.3) });
+            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); const w = 180, h = w * (png.height / png.width); page.drawImage(png, { x: M, y: sy - 8, width: w, height: h }); }
+            page.drawText(signerName, { x: M, y: sy - 24, size: 10.5, font: bold });
+            const when = new Date(signedAtIso);
+            page.drawText(`Signed electronically on ${when.toLocaleDateString()} at ${when.toLocaleTimeString()}`, { x: M, y: sy - 38, size: 8.5, font, color: rgb(0.35, 0.35, 0.35) });
+            page.drawText(`Document ID ${docId} · PokeDoke Staff Portal`, { x: M, y: sy - 50, size: 8, font, color: rgb(0.5, 0.5, 0.5) });
+            return await pdf.save();
+        }
+
+        // Step 1: offer letter (employee side)
+        function OnbOfferStep({ language, staffName, mine, card, num }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const id = onbId(staffName);
+            const [open, setOpen] = useState(false);
+            const [biz, setBiz] = useState(null);
+            const [sig, setSig] = useState(null);
+            const [agree, setAgree] = useState(false);
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState("");
+            const done = !!(mine.offer && mine.offer.signedAt);
+            const loc = (mine.hire && mine.hire.location) || "cwe";
+            useEffect(() => { db.collection("bizInfo").doc(loc).get().then(d => setBiz(d.exists ? d.data() : {})).catch(() => setBiz({})); }, [loc]);
+            useEffect(() => { if (open && !done) onbAudit(id, "offer", "viewed", staffName); }, [open]);
+            const lines = biz ? offerLetterLines({ biz, hire: mine.hire, prefill: mine.prefill, name: staffName }) : null;
+            const sign = async () => {
+                setErr("");
+                if (!sig) { setErr(L("Please add your signature", "Agrega tu firma")); return; }
+                if (!agree) { setErr(L("Please confirm you accept the offer", "Confirma que aceptas la oferta")); return; }
+                if (!window.PDFLib) { setErr(L("PDF library didn't load. Refresh and try again.", "La librería PDF no cargó. Recarga e intenta de nuevo.")); return; }
+                setBusy(true);
+                try {
+                    const signedAt = new Date().toISOString();
+                    const docId = "OFR-" + id + "-" + Date.now().toString(36).toUpperCase();
+                    const bytes = await buildOfferLetterPdf({ lines, sigDataUrl: sig, signerName: staffName, signedAtIso: signedAt, docId });
+                    const path = await uploadOnbPdf(id, "offer-letter.pdf", bytes);
+                    await db.collection("onboarding").doc(id).set({
+                        signature: { dataUrl: sig, at: signedAt },
+                        offer: { signedAt, pdfPath: path, docId, role: mine.hire.role, payRate: mine.hire.payRate, startDate: mine.hire.startDate, entity: lines.header[0] }
+                    }, { merge: true });
+                    await onbAudit(id, "offer", "signed", staffName, { docId, pdfPath: path });
+                    try { window.showToast(L("✓ Offer accepted", "✓ Oferta aceptada"), "success"); } catch (_) {}
+                    setOpen(false);
+                } catch (e) { console.error(e); setErr(L("Couldn't save: ", "No se pudo guardar: ") + (e.message || e)); }
+                setBusy(false);
+            };
+            return (
+                <div className="rounded-2xl p-3" style={card}>
+                    <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between text-left">
+                        <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{done ? "✅" : num} {L("Review & sign your offer letter", "Revisa y firma tu carta de oferta")}</span>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>{open ? "▲" : "▼"}</span>
+                    </button>
+                    {done && !open && <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Accepted", "Aceptada")} {new Date(mine.offer.signedAt).toLocaleDateString()}</p>}
+                    {open && (
+                        <div className="mt-3 space-y-3">
+                            {!lines ? <Skeleton count={3} /> : (
+                                <div className="bg-white rounded-xl border border-gray-200 p-4 text-gray-800 text-sm" style={{ fontFamily: "Helvetica, Arial, sans-serif" }}>
+                                    <div className="text-xs font-bold">{lines.header[0]}</div>
+                                    <div className="text-xs text-gray-500 mb-3 pb-3 border-b">{lines.header[1]}</div>
+                                    {lines.body.map((p, i) => p === "" ? <div key={i} className="h-2" /> : <p key={i} className="leading-relaxed">{p}</p>)}
+                                </div>
+                            )}
+                            {done ? (
+                                <p className="text-xs" style={{ color: "#16a34a" }}>✓ {L("You accepted this offer on", "Aceptaste esta oferta el")} {new Date(mine.offer.signedAt).toLocaleString()}</p>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div><div className="text-xs font-bold mb-1.5" style={{ color: "var(--text-secondary)" }}>{L("Your signature", "Tu firma")}</div><SignaturePad language={language} onChange={setSig} /></div>
+                                    <label className="flex items-start gap-2.5 cursor-pointer">
+                                        <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={agree} onChange={e => setAgree(e.target.checked)} />
+                                        <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("I have read this offer letter and accept the position as described. I understand my signature here is legally binding.", "He leído esta carta de oferta y acepto el puesto descrito. Entiendo que mi firma aquí es legalmente vinculante.")}</span>
+                                    </label>
+                                    {err && <p className="text-xs font-bold" style={{ color: "#dc2626" }}>{err}</p>}
+                                    <button onClick={sign} disabled={busy} className="w-full py-3 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>{busy ? L("Saving...", "Guardando...") : L("Accept offer & sign", "Aceptar oferta y firmar")}</button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+        window.OnbOfferStep = OnbOfferStep;
+
+        // Owner-side packet files for one employee (requires owner sign-in for download URLs)
+        function OnbPacketFiles({ language, d }) {
+            const es = language === "es";
+            const files = [
+                d && d.offer && d.offer.pdfPath && { key: "offer", label: es ? "Carta de oferta" : "Offer letter", path: d.offer.pdfPath, at: d.offer.signedAt },
+                d && d.w4 && d.w4.pdfPath && { key: "w4", label: "Federal W-4", path: d.w4.pdfPath, at: d.w4.signedAt },
+                d && d.mow4 && d.mow4.pdfPath && { key: "mow4", label: "MO W-4", path: d.mow4.pdfPath, at: d.mow4.signedAt },
+            ].filter(Boolean);
+            const openFile = async (f) => { try { const url = await storage.ref().child(f.path).getDownloadURL(); window.open(url, "_blank"); } catch (e) { window.showToast((es ? "No se pudo abrir: " : "Couldn't open: ") + e.message, "error"); } };
+            if (!files.length) return <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{es ? "Aún no hay documentos firmados." : "No signed documents yet."}</p>;
+            return (
+                <div className="space-y-1.5">
+                    {files.map(f => (
+                        <div key={f.key} className="flex items-center justify-between gap-2">
+                            <span>📄 {f.label} <span style={{ color: "var(--text-muted)" }}>· {new Date(f.at).toLocaleDateString()}</span></span>
+                            <button onClick={() => openFile(f)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg text-white" style={{ background: "var(--poke-600,#0891b2)" }}>{es ? "Abrir PDF" : "Open PDF"}</button>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
         function Onboarding({ language, staffName, staffList, setStaffList, setActiveTab }) {
             const es = language === "es";
             const L = (en, esT) => es ? esT : en;
@@ -15356,6 +15575,14 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 </div>
                                 {openEmp === r.id && (
                                     <div className="mt-2 pt-2 text-xs space-y-1.5" style={{ borderTop: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
+                                        {r.isNew && (
+                                            <div className="rounded-xl p-2" style={{ background: "var(--bg-subtle)" }}>
+                                                <div className="font-bold mb-1">{L("Signed documents", "Documentos firmados")}</div>
+                                                <OwnerGate language={language} title={L("Onboarding packet", "Paquete de incorporación")} note={L("Protects tax forms and signed documents.", "Protege formularios de impuestos y documentos firmados.")}>
+                                                    <OnbPacketFiles language={language} d={r.d} />
+                                                </OwnerGate>
+                                            </div>
+                                        )}
                                         {r.isNew && r.d.hire && <p><span className="font-bold">{L("Hired:", "Contratado:")}</span> {r.d.hire.role} · {r.d.hire.location === "cwe" ? "CWE" : "Kirkwood"} · ${r.d.hire.payRate}/hr · {L("starts", "inicia")} {r.d.hire.startDate || "—"}</p>}
                                         {r.isNew && (r.locked
                                             ? <div className="flex items-center justify-between gap-2"><span style={{ color: "#b45309" }}>🔒 {L("App locked until packet is signed", "App bloqueada hasta firmar el paquete")}</span><button onClick={() => overrideLock(r)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#fef3c7", color: "#92400e" }}>{L("Unlock early", "Desbloquear")}</button></div>
