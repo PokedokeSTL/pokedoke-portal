@@ -15384,6 +15384,210 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
         }
         window.OnbOfferStep = OnbOfferStep;
 
+        // ---- Federal W-4 (2026) ----
+        const W4F = {
+            first: "topmostSubform[0].Page1[0].Step1a[0].f1_01[0]", last: "topmostSubform[0].Page1[0].Step1a[0].f1_02[0]",
+            address: "topmostSubform[0].Page1[0].Step1a[0].f1_03[0]", csz: "topmostSubform[0].Page1[0].Step1a[0].f1_04[0]",
+            ssn: "topmostSubform[0].Page1[0].f1_05[0]",
+            fsSingle: "topmostSubform[0].Page1[0].c1_1[0]", fsMfj: "topmostSubform[0].Page1[0].c1_1[1]", fsHoh: "topmostSubform[0].Page1[0].c1_1[2]",
+            twoJobs: "topmostSubform[0].Page1[0].c1_2[0]",
+            kids: "topmostSubform[0].Page1[0].Step3_ReadOrder[0].f1_06[0]", others: "topmostSubform[0].Page1[0].Step3_ReadOrder[0].f1_07[0]", credits: "topmostSubform[0].Page1[0].f1_08[0]",
+            otherIncome: "topmostSubform[0].Page1[0].f1_09[0]", deductions: "topmostSubform[0].Page1[0].f1_10[0]", extra: "topmostSubform[0].Page1[0].f1_11[0]",
+            exempt: "topmostSubform[0].Page1[0].c1_3[0]",
+            empName: "topmostSubform[0].Page1[0].f1_12[0]", firstDate: "topmostSubform[0].Page1[0].f1_13[0]", ein: "topmostSubform[0].Page1[0].f1_14[0]"
+        };
+        const fmtSSN = (d) => d.length === 9 ? d.slice(0,3) + "-" + d.slice(3,5) + "-" + d.slice(5) : d;
+        const money = (v) => { const n = parseFloat(String(v).replace(/[^\d.]/g, "")); return isNaN(n) || n === 0 ? "" : n.toFixed(0); };
+        const safeSet = (form, name, fn) => { try { fn(form.getField(name)); } catch (e) { console.warn("W-4 field missing:", name, e.message); } };
+
+        async function buildW4Pdf({ blankBytes, f, ssnDigits, biz, hire, sigDataUrl, signedAtIso }) {
+            const { PDFDocument, StandardFonts, PDFName } = window.PDFLib;
+            const pdf = await PDFDocument.load(blankBytes, { ignoreEncryption: true });
+            const form = pdf.getForm();
+            const T = (name, v) => safeSet(form, name, fld => fld.setText(String(v || "")));
+            const C = (name, on) => safeSet(form, name, fld => on ? fld.check() : fld.uncheck());
+            T(W4F.first, f.first + (f.mi ? " " + f.mi : ""));
+            T(W4F.last, f.last);
+            T(W4F.address, f.street);
+            T(W4F.csz, `${f.city}, ${f.state} ${f.zip}`);
+            T(W4F.ssn, fmtSSN(ssnDigits));
+            C(W4F.fsSingle, f.filing === "single"); C(W4F.fsMfj, f.filing === "mfj"); C(W4F.fsHoh, f.filing === "hoh");
+            C(W4F.twoJobs, !!f.twoJobs);
+            if (!f.exempt) {
+                const kidsAmt = (parseInt(f.kids) || 0) * 2200, othAmt = (parseInt(f.others) || 0) * 500, otherCr = parseFloat(f.otherCredits) || 0;
+                const total = kidsAmt + othAmt + otherCr;
+                T(W4F.kids, kidsAmt ? String(kidsAmt) : ""); T(W4F.others, othAmt ? String(othAmt) : ""); T(W4F.credits, total ? String(Math.round(total)) : "");
+                T(W4F.otherIncome, money(f.otherIncome)); T(W4F.deductions, money(f.deductions)); T(W4F.extra, money(f.extra));
+            }
+            C(W4F.exempt, !!f.exempt);
+            T(W4F.empName, `${biz.legalName || "PokeDoke"}, ${biz.address || ""}`);
+            T(W4F.firstDate, onbFmtDate(hire.startDate));
+            T(W4F.ein, biz.ein || "");
+            const font = await pdf.embedFont(StandardFonts.Helvetica);
+            try { form.updateFieldAppearances(font); } catch (e) { console.warn("appearances", e.message); }
+            // Kill the XFA layer so every viewer shows the AcroForm values we just filled
+            try { const acro = pdf.catalog.lookup(PDFName.of("AcroForm")); if (acro) acro.delete(PDFName.of("XFA")); } catch (e) { console.warn("xfa", e.message); }
+            const page = pdf.getPages()[0];
+            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); const h = 27, w = h * (png.width / png.height); page.drawImage(png, { x: 200, y: 74, width: w, height: h }); }
+            const when = new Date(signedAtIso);
+            page.drawText(`${when.getMonth() + 1}/${when.getDate()}/${when.getFullYear()}`, { x: 486, y: 79, size: 8.5, font });
+            try { form.flatten(); } catch (e) { console.warn("flatten", e.message); }
+            return await pdf.save();
+        }
+
+        function OnbW4Step({ language, staffName, mine, card, num }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const id = onbId(staffName);
+            const done = !!(mine.w4 && mine.w4.signedAt);
+            const [open, setOpen] = useState(false);
+            const [biz, setBiz] = useState(null);
+            const pf = mine.prefill || {};
+            const [f, setF] = useState({ first: pf.firstName || "", mi: "", last: pf.lastName || "", street: pf.street || "", city: pf.city || "", state: pf.state || "MO", zip: pf.zip || "", filing: "single", twoJobs: false, kids: "", others: "", otherCredits: "", otherIncome: "", deductions: "", extra: "", exempt: false });
+            const [ssn, setSsn] = useState(""); // digits only, memory only
+            const [showSsn, setShowSsn] = useState(false);
+            const [sig, setSig] = useState((mine.signature && mine.signature.dataUrl) || null);
+            const [useSaved, setUseSaved] = useState(!!(mine.signature && mine.signature.dataUrl));
+            const [certify, setCertify] = useState(false);
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState("");
+            const loc = (mine.hire && mine.hire.location) || "cwe";
+            useEffect(() => { db.collection("bizInfo").doc(loc).get().then(d => setBiz(d.exists ? d.data() : {})).catch(() => setBiz({})); }, [loc]);
+            useEffect(() => { if (open && !done) onbAudit(id, "w4", "viewed", staffName); }, [open]);
+            const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+            const inp = { background: "var(--bg-card)", color: "var(--text-primary)", borderColor: "var(--border-subtle)", fontSize: 16 };
+            const cls = "w-full px-3 py-2 border rounded-xl";
+            const lbl = "block text-xs font-bold mb-1";
+            const chip = (on) => "px-3 py-1.5 rounded-lg text-xs font-bold transition " + (on ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500");
+            const submit = async () => {
+                setErr("");
+                if (!f.first.trim() || !f.last.trim()) { setErr(L("Enter your name as it appears on your Social Security card", "Ingresa tu nombre como aparece en tu tarjeta de Seguro Social")); return; }
+                if (!f.street.trim() || !f.city.trim() || !f.zip.trim()) { setErr(L("Enter your full address", "Ingresa tu dirección completa")); return; }
+                if (ssn.length !== 9) { setErr(L("Enter your 9-digit Social Security number", "Ingresa tu número de Seguro Social de 9 dígitos")); return; }
+                if (!sig) { setErr(L("Please add your signature", "Agrega tu firma")); return; }
+                if (!certify) { setErr(L("Please check the certification box", "Marca la casilla de certificación")); return; }
+                if (!window.PDFLib) { setErr(L("PDF library didn't load. Refresh and try again.", "La librería PDF no cargó. Recarga e intenta.")); return; }
+                setBusy(true);
+                try {
+                    const blank = await fetch("/forms/w4-2026.pdf").then(r => { if (!r.ok) throw new Error("Blank W-4 not found"); return r.arrayBuffer(); });
+                    const signedAt = new Date().toISOString();
+                    const docId = "W4-" + id + "-" + Date.now().toString(36).toUpperCase();
+                    const bytes = await buildW4Pdf({ blankBytes: blank, f, ssnDigits: ssn, biz: biz || {}, hire: mine.hire || {}, sigDataUrl: sig, signedAtIso: signedAt });
+                    const path = await uploadOnbPdf(id, "w4.pdf", bytes);
+                    const patch = { w4: { signedAt, pdfPath: path, docId, filingStatus: f.filing, exempt: !!f.exempt, ssnLast4: ssn.slice(-4), nameOnCard: (f.first + " " + f.last).trim() },
+                        prefill: { ...pf, firstName: f.first.trim(), lastName: f.last.trim(), middleInitial: f.mi.trim(), street: f.street.trim(), city: f.city.trim(), state: f.state.trim().toUpperCase(), zip: f.zip.trim() } };
+                    if (!(mine.signature && mine.signature.dataUrl)) patch.signature = { dataUrl: sig, at: signedAt };
+                    await db.collection("onboarding").doc(id).set(patch, { merge: true });
+                    await onbAudit(id, "w4", "signed", staffName, { docId, pdfPath: path });
+                    setSsn("");
+                    try { window.showToast(L("✓ W-4 submitted", "✓ W-4 enviado"), "success"); } catch (_) {}
+                    setOpen(false);
+                } catch (e) { console.error(e); setErr(L("Couldn't save: ", "No se pudo guardar: ") + (e.message || e)); }
+                setBusy(false);
+            };
+            return (
+                <div className="rounded-2xl p-3" style={card}>
+                    <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between text-left">
+                        <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{done ? "✅" : num} {L("Federal W-4", "W-4 federal")}</span>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>{open ? "▲" : "▼"}</span>
+                    </button>
+                    {done && !open && <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Submitted", "Enviado")} {new Date(mine.w4.signedAt).toLocaleDateString()}</p>}
+                    {open && (done ? (
+                        <p className="text-xs mt-2" style={{ color: "#16a34a" }}>✓ {L("You submitted your W-4 on", "Enviaste tu W-4 el")} {new Date(mine.w4.signedAt).toLocaleString()}. {L("Need to change it? Ask a manager.", "¿Necesitas cambiarlo? Habla con un gerente.")}</p>
+                    ) : (
+                        <div className="mt-3 space-y-4" style={{ color: "var(--text-primary)" }}>
+                            <p className="text-xs" style={{ color: "var(--text-muted)" }}>{L("This tells your employer how much federal income tax to withhold. Most people only need Step 1 and the signature.", "Esto le dice a tu empleador cuánto impuesto federal retener. La mayoría solo necesita el Paso 1 y la firma.")}</p>
+
+                            <div>
+                                <div className="text-xs font-bold mb-2" style={{ color: "var(--text-secondary)" }}>{L("Step 1 · Personal information", "Paso 1 · Información personal")}</div>
+                                <p className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>{L("Your name must match your Social Security card exactly.", "Tu nombre debe coincidir exactamente con tu tarjeta de Seguro Social.")}</p>
+                                <div className="grid grid-cols-6 gap-2">
+                                    <input className={cls + " col-span-3"} style={inp} placeholder={L("First name", "Nombre")} value={f.first} onChange={e => set("first", e.target.value)} />
+                                    <input className={cls + " col-span-1"} style={inp} placeholder="MI" maxLength={1} value={f.mi} onChange={e => set("mi", e.target.value.toUpperCase())} />
+                                    <input className={cls + " col-span-2"} style={inp} placeholder={L("Last name", "Apellido")} value={f.last} onChange={e => set("last", e.target.value)} />
+                                    <input className={cls + " col-span-6"} style={inp} placeholder={L("Street address", "Dirección")} value={f.street} onChange={e => set("street", e.target.value)} />
+                                    <input className={cls + " col-span-3"} style={inp} placeholder={L("City", "Ciudad")} value={f.city} onChange={e => set("city", e.target.value)} />
+                                    <input className={cls + " col-span-1"} style={inp} placeholder="ST" maxLength={2} value={f.state} onChange={e => set("state", e.target.value.toUpperCase())} />
+                                    <input className={cls + " col-span-2"} style={inp} placeholder="ZIP" inputMode="numeric" value={f.zip} onChange={e => set("zip", e.target.value)} />
+                                </div>
+                                <div className="mt-2">
+                                    <label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Social Security number", "Número de Seguro Social")}</label>
+                                    <div className="flex gap-2">
+                                        <input className={cls} style={inp} type={showSsn ? "text" : "password"} inputMode="numeric" autoComplete="off" maxLength={11} placeholder="•••-••-••••"
+                                            value={showSsn ? fmtSSN(ssn) : ssn} onChange={e => setSsn(e.target.value.replace(/\D/g, "").slice(0, 9))} />
+                                        <button onClick={() => setShowSsn(v => !v)} className="px-3 rounded-xl text-xs font-bold bg-gray-100 text-gray-500">{showSsn ? L("Hide", "Ocultar") : L("Show", "Ver")}</button>
+                                    </div>
+                                    <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{L("Your SSN goes onto the PDF only. The app keeps just the last 4 digits.", "Tu SSN va solo al PDF. La app guarda solo los últimos 4 dígitos.")}</p>
+                                </div>
+                                <div className="mt-2">
+                                    <label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Filing status", "Estado civil para impuestos")}</label>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {[{ v: "single", en: "Single or married filing separately", es: "Soltero/a o casado/a declarando por separado" }, { v: "mfj", en: "Married filing jointly", es: "Casado/a declarando en conjunto" }, { v: "hoh", en: "Head of household", es: "Jefe/a de familia" }].map(o => (
+                                            <button key={o.v} onClick={() => set("filing", o.v)} className={chip(f.filing === o.v)}>{es ? o.es : o.en}</button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div className="text-xs font-bold mb-1" style={{ color: "var(--text-secondary)" }}>{L("Exempt from withholding?", "¿Exento de retención?")}</div>
+                                <label className="flex items-start gap-2.5 cursor-pointer">
+                                    <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={f.exempt} onChange={e => set("exempt", e.target.checked)} />
+                                    <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("I had no federal income tax liability last year and expect none this year. (Rare. If you're not sure, leave this unchecked.)", "No tuve obligación de impuesto federal el año pasado y no espero tenerla este año. (Poco común. Si no estás seguro, déjalo sin marcar.)")}</span>
+                                </label>
+                            </div>
+
+                            {!f.exempt && (
+                                <div className="space-y-3">
+                                    <div>
+                                        <div className="text-xs font-bold mb-1" style={{ color: "var(--text-secondary)" }}>{L("Step 2 · Multiple jobs", "Paso 2 · Varios empleos")}</div>
+                                        <label className="flex items-start gap-2.5 cursor-pointer">
+                                            <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={f.twoJobs} onChange={e => set("twoJobs", e.target.checked)} />
+                                            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("I have exactly two jobs total (or my spouse and I each have one). Skip if this is your only job.", "Tengo exactamente dos empleos en total (o mi cónyuge y yo tenemos uno cada uno). Omite si este es tu único empleo.")}</span>
+                                        </label>
+                                    </div>
+                                    <div>
+                                        <div className="text-xs font-bold mb-1" style={{ color: "var(--text-secondary)" }}>{L("Step 3 · Dependents (optional)", "Paso 3 · Dependientes (opcional)")}</div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div><label className={lbl} style={{ color: "var(--text-muted)" }}>{L("Children under 17", "Hijos menores de 17")}</label><input className={cls} style={inp} inputMode="numeric" placeholder="0" value={f.kids} onChange={e => set("kids", e.target.value.replace(/\D/g, ""))} /></div>
+                                            <div><label className={lbl} style={{ color: "var(--text-muted)" }}>{L("Other dependents", "Otros dependientes")}</label><input className={cls} style={inp} inputMode="numeric" placeholder="0" value={f.others} onChange={e => set("others", e.target.value.replace(/\D/g, ""))} /></div>
+                                        </div>
+                                        <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{L("The app does the math: $2,200 per child, $500 per other dependent.", "La app hace el cálculo: $2,200 por hijo, $500 por otro dependiente.")}</p>
+                                    </div>
+                                    <div>
+                                        <div className="text-xs font-bold mb-1" style={{ color: "var(--text-secondary)" }}>{L("Step 4 · Other adjustments (optional)", "Paso 4 · Otros ajustes (opcional)")}</div>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div><label className={lbl} style={{ color: "var(--text-muted)" }}>{L("Other income", "Otros ingresos")}</label><input className={cls} style={inp} inputMode="decimal" placeholder="$" value={f.otherIncome} onChange={e => set("otherIncome", e.target.value)} /></div>
+                                            <div><label className={lbl} style={{ color: "var(--text-muted)" }}>{L("Deductions", "Deducciones")}</label><input className={cls} style={inp} inputMode="decimal" placeholder="$" value={f.deductions} onChange={e => set("deductions", e.target.value)} /></div>
+                                            <div><label className={lbl} style={{ color: "var(--text-muted)" }}>{L("Extra per check", "Extra por cheque")}</label><input className={cls} style={inp} inputMode="decimal" placeholder="$" value={f.extra} onChange={e => set("extra", e.target.value)} /></div>
+                                        </div>
+                                        <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{L("Leave blank unless you know you need these. The IRS estimator at irs.gov/W4App can help.", "Déjalo en blanco a menos que sepas que lo necesitas. El estimador del IRS en irs.gov/W4App puede ayudar.")}</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div>
+                                <div className="text-xs font-bold mb-1.5" style={{ color: "var(--text-secondary)" }}>{L("Step 5 · Sign", "Paso 5 · Firma")}</div>
+                                {useSaved && sig ? (
+                                    <div className="bg-white rounded-xl border border-gray-200 p-2 flex items-center justify-between gap-2">
+                                        <img src={sig} alt="signature" style={{ height: 44 }} />
+                                        <button onClick={() => { setUseSaved(false); setSig(null); }} className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-100 text-gray-500">{L("Sign again", "Firmar de nuevo")}</button>
+                                    </div>
+                                ) : <SignaturePad language={language} onChange={setSig} />}
+                                <label className="flex items-start gap-2.5 cursor-pointer mt-3">
+                                    <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={certify} onChange={e => setCertify(e.target.checked)} />
+                                    <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("Under penalties of perjury, I declare that this certificate, to the best of my knowledge and belief, is true, correct, and complete.", "Bajo pena de perjurio, declaro que este certificado, a mi leal saber y entender, es verdadero, correcto y completo.")}</span>
+                                </label>
+                            </div>
+                            {err && <p className="text-xs font-bold" style={{ color: "#dc2626" }}>{err}</p>}
+                            <button onClick={submit} disabled={busy} className="w-full py-3 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>{busy ? L("Building your W-4...", "Generando tu W-4...") : L("Sign & submit W-4", "Firmar y enviar W-4")}</button>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+        window.OnbW4Step = OnbW4Step;
+
         // Owner-side packet files for one employee (requires owner sign-in for download URLs)
         function OnbPacketFiles({ language, d }) {
             const es = language === "es";
