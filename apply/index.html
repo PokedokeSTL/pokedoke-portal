@@ -13510,7 +13510,7 @@
         const hireStage = (id) => HIRE_PIPELINE.find(s => s.id === id) || HIRE_PIPELINE[0];
         // ---- Onboarding packet helpers (shared by App lock, Hiring, Onboarding) ----
         const onbId = (name) => String(name || "").replace(/\s/g, "_");
-        const onbPacketComplete = (d) => !!(d && d.offer && d.offer.signedAt && d.w4 && d.w4.signedAt && d.mow4 && d.mow4.signedAt);
+        const onbPacketComplete = (d) => !!(d && d.offer && d.offer.signedAt && d.i9 && d.i9.signedAt && d.w4 && d.w4.signedAt && d.mow4 && d.mow4.signedAt);
         // Locked = hired via the new flow, packet not signed, no owner override. Never applies to admins/owners or legacy staff.
         const onbLocked = (d, name) => !!(d && d.hire && !isAdmin(name) && !d.packetCompletedAt && !onbPacketComplete(d) && !(d.lockOverride && d.lockOverride.at));
         // A step counts as done only if signed AND not re-issued by a manager
@@ -15907,12 +15907,381 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
         window.OnbW4Step = OnbW4Step;
 
         // Owner-side packet files for one employee (requires owner sign-in for download URLs)
+        // =====================================================================
+        // I-9 · Employment Eligibility Verification (edition 01/20/25, exp 05/31/2027)
+        // Section 1 and Section 2 both live on page 1 of the PDF. Pages 2-4 are the
+        // Lists of Acceptable Documents and Supplements A/B, which the app never fills.
+        // =====================================================================
+        const I9F = {
+            last: "Last Name (Family Name)", first: "First Name Given Name", mi: "Employee Middle Initial (if any)",
+            other: "Employee Other Last Names Used (if any)",
+            street: "Address Street Number and Name", apt: "Apt Number (if any)", city: "City or Town",
+            state: "State", zip: "ZIP Code", dob: "Date of Birth mmddyyyy", ssn: "US Social Security Number",
+            email: "Employees E-mail Address", phone: "Telephone Number",
+            cbCitizen: "CB_1", cbNational: "CB_2", cbLpr: "CB_3", cbAlien: "CB_4",
+            lprNumber: "3 A lawful permanent resident Enter USCIS or ANumber",
+            alienExp: "Exp Date mmddyyyy", alienA: "USCIS ANumber", alienI94: "Form I94 Admission Number",
+            alienPassport: "Foreign Passport Number and Country of IssuanceRow1",
+            empSig: "Signature of Employee", empSigDate: "Today's Date mmddyyy",
+            a1Title: "Document Title 1", a1Auth: "Issuing Authority 1", a1Num: "Document Number 0 (if any)", a1Exp: "Expiration Date if any",
+            a2Title: "Document Title 2 If any", a2Auth: "Issuing Authority_2", a2Num: "Document Number If any_2", a2Exp: "List A.  Document 2. Expiration Date (if any)",
+            a3Title: "List A.   Document Title 3.  If any", a3Auth: "List A. Document 3.  Enter Issuing Authority", a3Num: "List A.  Document 3 Number.  If any", a3Exp: "Document Number if any_3",
+            bTitle: "List B Document 1 Title", bAuth: "List B Issuing Authority 1", bNum: "List B Document Number 1", bExp: "List B Expiration Date 1",
+            cTitle: "List C Document Title 1", cAuth: "List C Issuing Authority 1", cNum: "List C Document Number 1", cExp: "List C Expiration Date 1",
+            addl: "Additional Information", altProc: "CB_Alt",
+            firstDay: "FirstDayEmployed mmddyyyy",
+            erName: "Last Name First Name and Title of Employer or Authorized Representative",
+            erSig: "Signature of Employer or AR", erSigDate: "S2 Todays Date mmddyyyy",
+            bizName: "Employers Business or Org Name", bizAddr: "Employers Business or Org Address"
+        };
+        const onbUsDate = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
+        // Capture a field's widget rectangle and page BEFORE flattening, so the signature
+        // image can be stamped on top of the (empty) signature text field afterwards.
+        const i9Slot = (form, pages, name) => {
+            try {
+                const w = form.getField(name).acroField.getWidgets()[0];
+                const r = w.getRectangle();
+                let page = pages[0];
+                try { const ref = w.P(); pages.forEach(p => { if (p.ref === ref) page = p; }); } catch (_) {}
+                return { r, page };
+            } catch (e) { console.warn("I-9 field missing:", name, e.message); return null; }
+        };
+        const i9DrawSig = async (pdf, slot, dataUrl) => {
+            if (!slot || !dataUrl) return;
+            const png = await pdf.embedPng(dataUrlToBytes(dataUrl));
+            const maxH = Math.max(8, slot.r.height - 3), maxW = Math.max(20, slot.r.width - 8);
+            let h = maxH, w = h * (png.width / png.height);
+            if (w > maxW) { w = maxW; h = w * (png.height / png.width); }
+            slot.page.drawImage(png, { x: slot.r.x + 4, y: slot.r.y + 2, width: w, height: h });
+        };
+
+        // s2 is null until the owner completes Section 2; the Section-1-only PDF is kept as the
+        // employee's timestamped attestation, then a complete copy is generated at countersign.
+        async function buildI9Pdf({ blankBytes, s1, s2, empSig, erSig }) {
+            const { PDFDocument, StandardFonts } = window.PDFLib;
+            const pdf = await PDFDocument.load(blankBytes, { ignoreEncryption: true });
+            const form = pdf.getForm();
+            const pages = pdf.getPages();
+            const T = (name, v) => safeSet(form, name, f => f.setText(String(v || "")));
+            const C = (name, on) => safeSet(form, name, f => on ? f.check() : f.uncheck());
+            T(I9F.last, s1.last); T(I9F.first, s1.first); T(I9F.mi, s1.mi);
+            T(I9F.other, s1.other || "N/A");
+            T(I9F.street, s1.street); T(I9F.apt, s1.apt || "N/A"); T(I9F.city, s1.city); T(I9F.zip, s1.zip);
+            safeSet(form, I9F.state, f => { const v = String(s1.state || "MO").toUpperCase(); try { f.select(v); } catch (_) { try { f.setText(v); } catch (__) {} } });
+            T(I9F.dob, onbFmtDate(s1.dob));
+            T(I9F.ssn, s1.ssn && s1.ssn.length === 9 ? fmtSSN(s1.ssn) : "");
+            T(I9F.email, s1.email || "N/A"); T(I9F.phone, s1.phone || "N/A");
+            C(I9F.cbCitizen, s1.status === "citizen"); C(I9F.cbNational, s1.status === "national");
+            C(I9F.cbLpr, s1.status === "lpr"); C(I9F.cbAlien, s1.status === "alien");
+            if (s1.status === "lpr") T(I9F.lprNumber, s1.aNumber);
+            if (s1.status === "alien") {
+                T(I9F.alienExp, s1.workExp ? onbFmtDate(s1.workExp) : "N/A");
+                if (s1.alienIdType === "a") T(I9F.alienA, s1.aNumber);
+                else if (s1.alienIdType === "i94") T(I9F.alienI94, s1.i94);
+                else if (s1.alienIdType === "passport") T(I9F.alienPassport, (s1.passport || "") + (s1.passportCountry ? " / " + s1.passportCountry : ""));
+            }
+            T(I9F.empSigDate, onbUsDate(s1.signedAt));
+            if (s2) {
+                if (s2.listUsed === "A") {
+                    (s2.a || []).forEach((d, i) => {
+                        const k = ["a1", "a2", "a3"][i]; if (!k || !d || !d.title) return;
+                        T(I9F[k + "Title"], d.title); T(I9F[k + "Auth"], d.auth); T(I9F[k + "Num"], d.num); T(I9F[k + "Exp"], d.exp);
+                    });
+                } else {
+                    const b = s2.b || {}, c = s2.c || {};
+                    T(I9F.bTitle, b.title); T(I9F.bAuth, b.auth); T(I9F.bNum, b.num); T(I9F.bExp, b.exp);
+                    T(I9F.cTitle, c.title); T(I9F.cAuth, c.auth); T(I9F.cNum, c.num); T(I9F.cExp, c.exp);
+                }
+                T(I9F.addl, s2.addl);
+                C(I9F.altProc, false); // PokeDoke is not enrolled in E-Verify, so no alternative procedure
+                T(I9F.firstDay, onbFmtDate(s2.firstDay));
+                T(I9F.erName, s2.byName + (s2.byTitle ? ", " + s2.byTitle : ""));
+                T(I9F.erSigDate, onbUsDate(s2.signedAt));
+                T(I9F.bizName, s2.bizName); T(I9F.bizAddr, s2.bizAddr);
+            }
+            const empSlot = i9Slot(form, pages, I9F.empSig);
+            const erSlot = s2 ? i9Slot(form, pages, I9F.erSig) : null;
+            const font = await pdf.embedFont(StandardFonts.Helvetica);
+            try { form.updateFieldAppearances(font); } catch (e) { console.warn("appearances", e.message); }
+            try { form.flatten(); } catch (e) { console.warn("flatten", e.message); }
+            await i9DrawSig(pdf, empSlot, empSig);
+            if (s2) await i9DrawSig(pdf, erSlot, erSig);
+            return await pdf.save();
+        }
+
+        // Age on a given date, used for the under-18 document guidance
+        const ageOn = (dobIso, whenIso) => {
+            if (!dobIso) return null;
+            const b = new Date(dobIso + "T12:00:00"), n = whenIso ? new Date(whenIso + "T12:00:00") : new Date();
+            let a = n.getFullYear() - b.getFullYear();
+            const m = n.getMonth() - b.getMonth();
+            if (m < 0 || (m === 0 && n.getDate() < b.getDate())) a--;
+            return a;
+        };
+
+        function OnbI9Step({ language, staffName, mine, card, num, session, onDone, forceOpen }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const id = onbId(staffName);
+            const done = onbStepDone(mine, "i9"), reissued = onbReissued(mine, "i9");
+            const [open, setOpen] = useState(!!forceOpen);
+            useEffect(() => { if (forceOpen) setOpen(true); }, [forceOpen]);
+            const pf = mine.prefill || {};
+            const nm = splitName(staffName);
+            const [f, setF] = useState({
+                first: pf.firstName || nm.first, mi: pf.middleInitial || "", last: pf.lastName || nm.last, other: "",
+                street: pf.street || "", apt: "", city: pf.city || "", state: pf.state || "MO", zip: pf.zip || "",
+                dob: "", email: pf.email || "", phone: pf.phone || "",
+                status: "", aNumber: "", i94: "", passport: "", passportCountry: "", workExp: "", noExp: false, alienIdType: "a"
+            });
+            const [useSsn, setUseSsn] = useState(false);
+            const sig = session.sig;
+            const [attest, setAttest] = useState(false);
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState("");
+            useEffect(() => { if (open && !done) onbAudit(id, "i9", "viewed", staffName); }, [open]);
+            const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+            const inp = { background: "var(--bg-card)", color: "var(--text-primary)", borderColor: "var(--border-subtle)", fontSize: 16 };
+            const cls = "w-full px-3 py-2 border rounded-xl";
+            const chip = (on) => "px-3 py-1.5 rounded-lg text-xs font-bold transition " + (on ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500");
+            const STATUSES = [
+                { v: "citizen", en: "A citizen of the United States", es: "Ciudadano de los Estados Unidos" },
+                { v: "national", en: "A noncitizen national of the United States", es: "Nacional no ciudadano de los Estados Unidos" },
+                { v: "lpr", en: "A lawful permanent resident (green card)", es: "Residente permanente legal (green card)" },
+                { v: "alien", en: "A noncitizen authorized to work until a certain date", es: "No ciudadano autorizado a trabajar hasta cierta fecha" }
+            ];
+            const submit = async () => {
+                setErr("");
+                if (!f.first.trim() || !f.last.trim()) { setErr(L("Enter your first and last name", "Ingresa tu nombre y apellido")); return; }
+                if (!f.street.trim() || !f.city.trim() || !f.zip.trim()) { setErr(L("Enter your full address", "Ingresa tu dirección completa")); return; }
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(f.dob)) { setErr(L("Enter your date of birth", "Ingresa tu fecha de nacimiento")); return; }
+                if (!f.status) { setErr(L("Choose one of the four status options", "Elige una de las cuatro opciones de estatus")); return; }
+                if (f.status === "lpr" && !f.aNumber.trim()) { setErr(L("Enter your USCIS or A-Number", "Ingresa tu número USCIS o A-Number")); return; }
+                if (f.status === "alien") {
+                    if (!f.noExp && !/^\d{4}-\d{2}-\d{2}$/.test(f.workExp)) { setErr(L("Enter the date your work authorization expires", "Ingresa la fecha en que expira tu autorización")); return; }
+                    if (f.alienIdType === "a" && !f.aNumber.trim()) { setErr(L("Enter your USCIS or A-Number", "Ingresa tu número USCIS o A-Number")); return; }
+                    if (f.alienIdType === "i94" && !f.i94.trim()) { setErr(L("Enter your I-94 admission number", "Ingresa tu número de admisión I-94")); return; }
+                    if (f.alienIdType === "passport" && (!f.passport.trim() || !f.passportCountry.trim())) { setErr(L("Enter your passport number and country", "Ingresa tu número de pasaporte y país")); return; }
+                }
+                if (useSsn && session.ssn.length !== 9) { setErr(L("Enter all 9 digits, or turn the Social Security number off (it's optional here)", "Ingresa los 9 dígitos, o desactiva el número de Seguro Social (es opcional aquí)")); return; }
+                if (!sig) { setErr(L("Please add your signature", "Agrega tu firma")); return; }
+                if (!attest) { setErr(L("Please check the attestation box", "Marca la casilla de declaración")); return; }
+                if (!window.PDFLib) { setErr(L("PDF library didn't load. Refresh and try again.", "La librería PDF no cargó. Recarga e intenta.")); return; }
+                setBusy(true);
+                try {
+                    const blank = await fetch("/forms/i-9.pdf").then(r => { if (!r.ok) throw new Error("Blank I-9 not found"); return r.arrayBuffer(); });
+                    const signedAt = new Date().toISOString();
+                    const docId = "I9-" + id + "-" + Date.now().toString(36).toUpperCase();
+                    const s1 = {
+                        first: f.first.trim(), mi: f.mi.trim(), last: f.last.trim(), other: f.other.trim(),
+                        street: f.street.trim(), apt: f.apt.trim(), city: f.city.trim(), state: f.state.trim().toUpperCase(), zip: f.zip.trim(),
+                        dob: f.dob, email: f.email.trim(), phone: f.phone.trim(),
+                        status: f.status, aNumber: f.aNumber.trim(), i94: f.i94.trim(),
+                        passport: f.passport.trim(), passportCountry: f.passportCountry.trim(),
+                        workExp: f.noExp ? "" : f.workExp, alienIdType: f.alienIdType,
+                        ssn: useSsn ? session.ssn : "", signedAt
+                    };
+                    const bytes = await buildI9Pdf({ blankBytes: blank, s1, s2: null, empSig: sig });
+                    const path = await uploadOnbPdf(id, "i9-section1.pdf", bytes);
+                    const stored = { ...s1 }; delete stored.ssn; // the I-9 SSN is optional and never persisted
+                    const patch = {
+                        i9: { ...(mine.i9 || {}), signedAt, s1: stored, s1PdfPath: path, docId, ssnProvided: !!useSsn },
+                        prefill: { ...pf, firstName: s1.first, lastName: s1.last, middleInitial: s1.mi, street: s1.street, city: s1.city, state: s1.state, zip: s1.zip },
+                        ...onbArchivePatch(mine, "i9")
+                    };
+                    if (!(mine.signature && mine.signature.dataUrl === sig)) patch.signature = { dataUrl: sig, at: signedAt };
+                    await db.collection("onboarding").doc(id).set(patch, { merge: true });
+                    await onbAudit(id, "i9", "signed", staffName, { docId, pdfPath: path, status: f.status, section: 1 });
+                    sendNotification(OWNER_NAMES, "I-9 Section 1 signed", staffName + " completed I-9 Section 1. Section 2 is due by the third business day after their start date.", { type: "i9", employee: staffName });
+                    try { window.showToast(L("✓ I-9 Section 1 submitted", "✓ Sección 1 del I-9 enviada"), "success"); } catch (_) {}
+                    setOpen(false); onDone && onDone("i9");
+                } catch (e) { console.error(e); setErr(L("Couldn't save: ", "No se pudo guardar: ") + (e.message || e)); }
+                setBusy(false);
+            };
+            const age = ageOn(f.dob, (mine.hire && mine.hire.startDate) || null);
+            return (
+                <div className="rounded-2xl p-3" style={card}>
+                    <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between text-left">
+                        <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{done ? "✅" : num} {L("Work authorization (I-9)", "Autorización de trabajo (I-9)")}</span>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>{open ? "▲" : "▼"}</span>
+                    </button>
+                    {done && !open && <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Section 1 signed", "Sección 1 firmada")} {new Date(mine.i9.signedAt).toLocaleDateString()}</p>}
+                    {reissued && <p className="text-xs mt-1 font-bold" style={{ color: "#b45309" }}>🔁 {L("Your manager asked you to redo this form.", "Tu gerente te pidió rehacer este formulario.")}</p>}
+                    {open && (done ? (
+                        <div className="mt-2 space-y-2">
+                            <p className="text-xs" style={{ color: "#16a34a" }}>✓ {L("You signed Section 1 on", "Firmaste la Sección 1 el")} {new Date(mine.i9.signedAt).toLocaleString()}.</p>
+                            <OnbI9Docs language={language} staffName={staffName} mine={mine} />
+                        </div>
+                    ) : (
+                        <div className="mt-3 space-y-4" style={{ color: "var(--text-primary)" }}>
+                            <p className="text-xs" style={{ color: "var(--text-muted)" }}>{L("Federal law requires every new employee to confirm they're allowed to work in the United States. You fill out this part; a manager fills out the rest after looking at your documents in person.", "La ley federal exige que cada empleado confirme que puede trabajar en los Estados Unidos. Tú completas esta parte; un gerente completa el resto después de ver tus documentos en persona.")}</p>
+
+                            <div>
+                                <div className="text-xs font-bold mb-2" style={{ color: "var(--text-secondary)" }}>{L("Your information", "Tu información")}</div>
+                                <div className="grid grid-cols-6 gap-2">
+                                    <input className={cls + " col-span-3"} style={inp} placeholder={L("First name", "Nombre")} value={f.first} onChange={e => set("first", e.target.value)} />
+                                    <input className={cls + " col-span-1"} style={inp} placeholder="MI" maxLength={1} value={f.mi} onChange={e => set("mi", e.target.value.toUpperCase())} />
+                                    <input className={cls + " col-span-2"} style={inp} placeholder={L("Last name", "Apellido")} value={f.last} onChange={e => set("last", e.target.value)} />
+                                    <input className={cls + " col-span-6"} style={inp} placeholder={L("Other last names used (maiden name, etc.) — leave blank if none", "Otros apellidos usados — deja en blanco si no aplica")} value={f.other} onChange={e => set("other", e.target.value)} />
+                                    <input className={cls + " col-span-4"} style={inp} placeholder={L("Street address", "Dirección")} value={f.street} onChange={e => set("street", e.target.value)} />
+                                    <input className={cls + " col-span-2"} style={inp} placeholder={L("Apt #", "Apto #")} value={f.apt} onChange={e => set("apt", e.target.value)} />
+                                    <input className={cls + " col-span-3"} style={inp} placeholder={L("City", "Ciudad")} value={f.city} onChange={e => set("city", e.target.value)} />
+                                    <input className={cls + " col-span-1"} style={inp} placeholder="ST" maxLength={2} value={f.state} onChange={e => set("state", e.target.value.toUpperCase())} />
+                                    <input className={cls + " col-span-2"} style={inp} placeholder={L("ZIP", "Código postal")} inputMode="numeric" value={f.zip} onChange={e => set("zip", e.target.value.replace(/[^\d-]/g, ""))} />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold mb-1">{L("Date of birth", "Fecha de nacimiento")}</label>
+                                <input type="date" className={cls} style={inp} value={f.dob} onChange={e => set("dob", e.target.value)} />
+                                {age !== null && age >= 0 && age < 16 && <p className="text-[11px] mt-1 font-bold" style={{ color: "#b91c1c" }}>{L("You must be at least 16 to work at PokeDoke. Please talk to a manager.", "Debes tener al menos 16 años para trabajar en PokeDoke. Habla con un gerente.")}</p>}
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2">
+                                <input className={cls} style={inp} type="email" placeholder={L("Email (optional)", "Email (opcional)")} value={f.email} onChange={e => set("email", e.target.value)} />
+                                <input className={cls} style={inp} type="tel" placeholder={L("Phone (optional)", "Teléfono (opcional)")} value={f.phone} onChange={e => set("phone", e.target.value)} />
+                            </div>
+
+                            <div className="rounded-xl p-2.5" style={{ background: "var(--bg-subtle)" }}>
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-bold">{L("Social Security number", "Número de Seguro Social")}</span>
+                                    <button onClick={() => setUseSsn(v => !v)} className={chip(useSsn)}>{useSsn ? L("Included", "Incluido") : L("Left blank", "En blanco")}</button>
+                                </div>
+                                <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{L("On the I-9 this is optional, because PokeDoke doesn't use E-Verify. Your W-4 already has it. You can leave it blank here with no effect on your job.", "En el I-9 esto es opcional, porque PokeDoke no usa E-Verify. Tu W-4 ya lo tiene. Puedes dejarlo en blanco sin ningún efecto en tu trabajo.")}</p>
+                                {useSsn && <input className={cls + " mt-2"} style={inp} inputMode="numeric" placeholder="123-45-6789" value={fmtSSN(session.ssn)} onChange={e => session.setSsn(e.target.value.replace(/\D/g, "").slice(0, 9))} />}
+                            </div>
+
+                            <div>
+                                <div className="text-xs font-bold mb-2" style={{ color: "var(--text-secondary)" }}>{L("I am (check one):", "Yo soy (marca uno):")}</div>
+                                <div className="space-y-1.5">
+                                    {STATUSES.map(s => (
+                                        <button key={s.v} onClick={() => set("status", s.v)} className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold" style={{ background: f.status === s.v ? "var(--poke-600,#0891b2)" : "var(--bg-subtle)", color: f.status === s.v ? "#fff" : "var(--text-secondary)" }}>
+                                            {f.status === s.v ? "◉ " : "○ "}{es ? s.es : s.en}
+                                        </button>
+                                    ))}
+                                </div>
+                                {f.status === "lpr" && (
+                                    <input className={cls + " mt-2"} style={inp} placeholder={L("USCIS Number or A-Number", "Número USCIS o A-Number")} value={f.aNumber} onChange={e => set("aNumber", e.target.value)} />
+                                )}
+                                {f.status === "alien" && (
+                                    <div className="mt-2 space-y-2">
+                                        <div>
+                                            <label className="block text-xs font-bold mb-1">{L("Work authorization expires", "La autorización expira")}</label>
+                                            <input type="date" className={cls} style={inp} disabled={f.noExp} value={f.workExp} onChange={e => set("workExp", e.target.value)} />
+                                            <button onClick={() => set("noExp", !f.noExp)} className={"mt-1.5 " + chip(f.noExp)}>{L("No expiration date on my document", "Mi documento no tiene fecha de expiración")}</button>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {[["a", L("A-Number", "A-Number")], ["i94", L("I-94 number", "Número I-94")], ["passport", L("Foreign passport", "Pasaporte extranjero")]].map(([v, lbl]) => (
+                                                <button key={v} onClick={() => set("alienIdType", v)} className={chip(f.alienIdType === v)}>{lbl}</button>
+                                            ))}
+                                        </div>
+                                        {f.alienIdType === "a" && <input className={cls} style={inp} placeholder={L("USCIS Number or A-Number", "Número USCIS o A-Number")} value={f.aNumber} onChange={e => set("aNumber", e.target.value)} />}
+                                        {f.alienIdType === "i94" && <input className={cls} style={inp} placeholder={L("Form I-94 admission number", "Número de admisión I-94")} value={f.i94} onChange={e => set("i94", e.target.value)} />}
+                                        {f.alienIdType === "passport" && (
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input className={cls} style={inp} placeholder={L("Passport number", "Número de pasaporte")} value={f.passport} onChange={e => set("passport", e.target.value)} />
+                                                <input className={cls} style={inp} placeholder={L("Country of issuance", "País emisor")} value={f.passportCountry} onChange={e => set("passportCountry", e.target.value)} />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
+                                <div className="text-xs font-bold mb-2" style={{ color: "var(--text-secondary)" }}>{L("Your signature", "Tu firma")}</div>
+                                <SignaturePad language={language} initial={sig} onChange={session.setSig} />
+                            </div>
+
+                            <button onClick={() => setAttest(v => !v)} className="w-full text-left flex gap-2 items-start">
+                                <span className="text-lg leading-none mt-0.5">{attest ? "☑" : "☐"}</span>
+                                <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{L("I am aware that federal law provides for imprisonment and/or fines for false statements, or the use of false documents, in connection with the completion of this form. I attest, under penalty of perjury, that the information above is true and correct.", "Sé que la ley federal establece prisión y/o multas por declaraciones falsas, o por el uso de documentos falsos, en relación con este formulario. Declaro, bajo pena de perjurio, que la información anterior es verdadera y correcta.")}</span>
+                            </button>
+
+                            {err && <p className="text-xs font-bold" style={{ color: "#dc2626" }}>{err}</p>}
+                            <button onClick={submit} disabled={busy} className="w-full py-3 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>
+                                {busy ? L("Submitting…", "Enviando…") : L("Sign & submit Section 1", "Firmar y enviar Sección 1")}
+                            </button>
+                            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("After this you'll be asked to photograph your ID. You still have to bring the originals to your first shift.", "Después te pediremos una foto de tu identificación. Aun así debes traer los originales a tu primer turno.")}</p>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
+        // Document intake. Photos are a convenience record only: the originals must still be
+        // examined in person, and the owner types the document details into Section 2.
+        function OnbI9Docs({ language, staffName, mine }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const id = onbId(staffName);
+            const i9 = mine.i9 || {};
+            const docs = i9.docs || [];
+            const [plan, setPlan] = useState(i9.docPlan || "");
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState("");
+            const dob = (i9.s1 && i9.s1.dob) || "";
+            const minor = dob ? ageOn(dob, (mine.hire && mine.hire.startDate) || null) < 18 : false;
+            const upload = async (file, slot) => {
+                if (!file) return;
+                setErr("");
+                if (file.size > 8 * 1024 * 1024) { setErr(L("That image is over 8 MB. Try again with a smaller photo.", "Esa imagen supera 8 MB. Intenta con una foto más pequeña.")); return; }
+                setBusy(true);
+                try {
+                    const path = "i9/" + id + "/" + slot + "-" + Date.now() + ".jpg";
+                    await storage.ref().child(path).put(file, { contentType: file.type || "image/jpeg" });
+                    const entry = { slot, path, at: new Date().toISOString() };
+                    await db.collection("onboarding").doc(id).set({ i9: { ...i9, docPlan: plan, docs: [...docs.filter(d => d.slot !== slot), entry] } }, { merge: true });
+                    await onbAudit(id, "i9", "document-uploaded", staffName, { slot, path });
+                    try { window.showToast(L("✓ Photo uploaded", "✓ Foto subida"), "success"); } catch (_) {}
+                } catch (e) { setErr(L("Upload failed: ", "Falló la subida: ") + (e.message || e)); }
+                setBusy(false);
+            };
+            const savePlan = async (v) => {
+                setPlan(v);
+                try { await db.collection("onboarding").doc(id).set({ i9: { ...i9, docPlan: v } }, { merge: true }); } catch (_) {}
+            };
+            const chip = (on) => "px-3 py-1.5 rounded-lg text-xs font-bold transition " + (on ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500");
+            const slots = plan === "A" ? [["a1", L("Document (front)", "Documento (frente)")], ["a2", L("Document (back, if any)", "Documento (reverso, si aplica)")]]
+                : plan === "BC" ? [["b1", L("Photo ID", "Identificación con foto")], ["c1", L("Work authorization document", "Documento de autorización")]] : [];
+            const has = (s) => docs.find(d => d.slot === s);
+            return (
+                <div className="rounded-xl p-2.5 space-y-2" style={{ background: "var(--bg-subtle)" }}>
+                    <div className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>📎 {L("Your documents", "Tus documentos")}</div>
+                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("Bring the ORIGINALS to your first shift — a manager has to look at them in person. Photos here just save time.", "Trae los ORIGINALES a tu primer turno — un gerente debe verlos en persona. Las fotos aquí solo ahorran tiempo.")}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                        <button onClick={() => savePlan("A")} className={chip(plan === "A")}>{L("One document (passport, green card)", "Un documento (pasaporte, green card)")}</button>
+                        <button onClick={() => savePlan("BC")} className={chip(plan === "BC")}>{L("Two documents (ID + SSN card)", "Dos documentos (ID + tarjeta de Seguro Social)")}</button>
+                    </div>
+                    {plan === "BC" && (
+                        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                            {L("Photo ID: driver's license or state ID. ", "Identificación con foto: licencia de conducir o ID estatal. ")}
+                            {minor ? L("Under 18 and don't have one? A school record, report card, or doctor/clinic record works instead.", "¿Menor de 18 sin una? Un registro escolar, boleta de calificaciones o registro médico sirve.") : ""}
+                            {L(" Work authorization: Social Security card or certified birth certificate.", " Autorización: tarjeta de Seguro Social o acta de nacimiento certificada.")}
+                        </p>
+                    )}
+                    {slots.map(([slot, label]) => (
+                        <div key={slot} className="flex items-center justify-between gap-2">
+                            <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{has(slot) ? "✅ " : "○ "}{label}</span>
+                            <label className="text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer text-white" style={{ background: "var(--poke-600,#0891b2)", opacity: busy ? 0.6 : 1 }}>
+                                {has(slot) ? L("Replace", "Reemplazar") : L("Add photo", "Agregar foto")}
+                                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => upload(e.target.files[0], slot)} />
+                            </label>
+                        </div>
+                    ))}
+                    {err && <p className="text-[11px] font-bold" style={{ color: "#dc2626" }}>{err}</p>}
+                </div>
+            );
+        }
+
         function OnbPacketFiles({ language, d }) {
             const es = language === "es";
             const files = [
                 d && d.offer && d.offer.pdfPath && { key: "offer", label: es ? "Carta de oferta" : "Offer letter", path: d.offer.pdfPath, at: d.offer.signedAt },
                 d && d.w4 && d.w4.pdfPath && { key: "w4", label: "Federal W-4", path: d.w4.pdfPath, at: d.w4.signedAt },
                 d && d.mow4 && d.mow4.pdfPath && { key: "mow4", label: "MO W-4", path: d.mow4.pdfPath, at: d.mow4.signedAt },
+                d && d.i9 && d.i9.pdfPath && { key: "i9", label: es ? "I-9 completo" : "I-9 (complete)", path: d.i9.pdfPath, at: d.i9.s2SignedAt || d.i9.signedAt },
+                d && d.i9 && !d.i9.pdfPath && d.i9.s1PdfPath && { key: "i9s1", label: es ? "I-9 Sección 1" : "I-9 Section 1", path: d.i9.s1PdfPath, at: d.i9.signedAt },
+                ...(((d && d.i9 && d.i9.docs) || []).map(x => ({ key: "i9doc-" + x.slot, label: (es ? "Foto de documento " : "ID photo ") + x.slot.toUpperCase(), path: x.path, at: x.at }))),
                 d && d.pay && d.pay.pdfPath && { key: "pay", label: es ? "Autorización de depósito directo" : "Direct deposit authorization", path: d.pay.pdfPath, at: d.pay.signedAt },
                 d && d.pay && d.pay.checkPath && { key: "check", label: es ? "Cheque anulado" : "Voided check", path: d.pay.checkPath, at: d.pay.signedAt },
             ].filter(Boolean);
@@ -16042,11 +16411,11 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     const d = onbData[id];
                     const hb = handbookSigned(id) && !onbReissued(d, "handbook"), ec = emergencyDone(id) && !onbReissued(d, "emergency");
                     const isNew = !!(d && d.hire);
-                    const offer = onbStepDone(d, "offer"), w4 = onbStepDone(d, "w4"), mow4 = onbStepDone(d, "mow4"), pay = onbStepDone(d, "pay");
+                    const offer = onbStepDone(d, "offer"), i9 = onbStepDone(d, "i9"), w4 = onbStepDone(d, "w4"), mow4 = onbStepDone(d, "mow4"), pay = onbStepDone(d, "pay");
                     const showPay = isNew || onbReissued(d, "pay") || !!(d && d.pay && d.pay.signedAt);
-                    const parts = isNew ? [offer, w4, mow4, pay, hb, ec] : (showPay ? [pay, hb, ec] : [hb, ec]);
+                    const parts = isNew ? [offer, i9, w4, mow4, pay, hb, ec] : (showPay ? [pay, hb, ec] : [hb, ec]);
                     const done = parts.filter(Boolean).length;
-                    return { name: s.name, id, hb, ec, offer, w4, mow4, pay, showPay, isNew, locked: onbLocked(d, s.name), done, total: parts.length, d };
+                    return { name: s.name, id, hb, ec, offer, i9, w4, mow4, pay, showPay, isNew, locked: onbLocked(d, s.name), done, total: parts.length, d };
                 }).sort((a, b) => (a.done / a.total) - (b.done / b.total));
                 const overrideLock = async (r) => {
                     const ok = await window.askConfirm({ title: L("Unlock the app early?", "¿Desbloquear la app antes?"), body: L(r.name + " will get full app access before finishing their paperwork. This is logged.", r.name + " tendrá acceso completo antes de terminar su papeleo. Esto queda registrado.") });
@@ -16122,6 +16491,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 </button>
                                 <div className="flex flex-wrap gap-2 mt-2">
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.offer ? "#dcfce7" : "#fef2f2", color: r.offer ? "#166534" : "#991b1b" }}>{r.offer ? "✓" : "✗"} {L("Offer", "Oferta")}</span>}
+                                    {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.i9 ? "#dcfce7" : "#fef2f2", color: r.i9 ? "#166534" : "#991b1b" }}>{r.i9 ? "✓" : "✗"} I-9 §1</span>}
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.w4 ? "#dcfce7" : "#fef2f2", color: r.w4 ? "#166534" : "#991b1b" }}>{r.w4 ? "✓" : "✗"} W-4</span>}
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.mow4 ? "#dcfce7" : "#fef2f2", color: r.mow4 ? "#166534" : "#991b1b" }}>{r.mow4 ? "✓" : "✗"} MO W-4</span>}
                                     {r.showPay && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.pay ? "#dcfce7" : "#fef2f2", color: r.pay ? "#166534" : "#991b1b" }}>{r.pay ? "✓" : "✗"} {r.d && r.d.pay && r.d.pay.method === "check" ? L("Check", "Cheque") : L("Direct deposit", "Depósito")}{r.pay && r.d.pay.method === "dd" && r.d.pay.acctLast4 ? " ···" + r.d.pay.acctLast4 : ""}</span>}
@@ -16142,7 +16512,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                         <div className="rounded-xl p-2" style={{ background: "var(--bg-subtle)" }}>
                                             <div className="font-bold mb-1">{L("Re-issue a step", "Reenviar un paso")} <span className="font-normal" style={{ color: "var(--text-muted)" }}>· {L("asks them to redo it; old version kept", "les pide repetirlo; se conserva la versión anterior")}</span></div>
                                             <div className="flex flex-wrap gap-1.5">
-                                                {(r.isNew ? [["offer", L("Offer letter", "Carta de oferta")], ["w4", "W-4"], ["mow4", "MO W-4"], ["pay", L("Direct deposit", "Depósito directo")], ["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]] : [["pay", L("Direct deposit", "Depósito directo")], ["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]]).map(([k, label]) => (
+                                                {(r.isNew ? [["offer", L("Offer letter", "Carta de oferta")], ["i9", "I-9"], ["w4", "W-4"], ["mow4", "MO W-4"], ["pay", L("Direct deposit", "Depósito directo")], ["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]] : [["pay", L("Direct deposit", "Depósito directo")], ["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]]).map(([k, label]) => (
                                                     <button key={k} onClick={() => reissueStep(r, k, label)} disabled={onbReissued(r.d, k)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg disabled:opacity-50" style={{ background: onbReissued(r.d, k) ? "#fef3c7" : "var(--bg-card)", color: onbReissued(r.d, k) ? "#92400e" : "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}>{onbReissued(r.d, k) ? "🔁 " : ""}{label}</button>
                                                 ))}
                                             </div>
@@ -16205,9 +16575,9 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const mine = onbData[myId] || {};
             const isNewHire = !!mine.hire;
             const hb = hb0 && !onbReissued(mine, "handbook"), ec = ec0 && !onbReissued(mine, "emergency");
-            const offerDone = onbStepDone(mine, "offer"), w4Done = onbStepDone(mine, "w4"), mow4Done = onbStepDone(mine, "mow4"), payDone = onbStepDone(mine, "pay");
+            const offerDone = onbStepDone(mine, "offer"), i9Done = onbStepDone(mine, "i9"), w4Done = onbStepDone(mine, "w4"), mow4Done = onbStepDone(mine, "mow4"), payDone = onbStepDone(mine, "pay");
             const showPay = isNewHire || onbReissued(mine, "pay") || !!(mine.pay && mine.pay.signedAt);
-            const parts = isNewHire ? [offerDone, w4Done, mow4Done, payDone, hb, ec] : (showPay ? [payDone, hb, ec] : [hb, ec]);
+            const parts = isNewHire ? [offerDone, i9Done, w4Done, mow4Done, payDone, hb, ec] : (showPay ? [payDone, hb, ec] : [hb, ec]);
             const done = parts.filter(Boolean).length, total = parts.length;
             // DocuSign-style session: signature + SSN live only in memory for this visit, shared by every step
             const [sessSig, setSessSig] = useState((mine.signature && mine.signature.dataUrl) || null);
@@ -16215,15 +16585,15 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             useEffect(() => { if (!sessSig && mine.signature && mine.signature.dataUrl) setSessSig(mine.signature.dataUrl); }, [mine.signature && mine.signature.dataUrl]);
             const session = { sig: sessSig, setSig: setSessSig, ssn: sessSsn, setSsn: setSessSsn };
             const [focus, setFocus] = useState(null); // which step is force-opened (auto-advance)
-            const stepKeys = isNewHire ? ["offer", "w4", "mow4", "pay", "handbook", "emergency"] : (showPay ? ["pay", "handbook", "emergency"] : ["handbook", "emergency"]);
-            const stepState = { offer: offerDone, w4: w4Done, mow4: mow4Done, pay: payDone, handbook: hb, emergency: ec };
+            const stepKeys = isNewHire ? ["offer", "i9", "w4", "mow4", "pay", "handbook", "emergency"] : (showPay ? ["pay", "handbook", "emergency"] : ["handbook", "emergency"]);
+            const stepState = { offer: offerDone, i9: i9Done, w4: w4Done, mow4: mow4Done, pay: payDone, handbook: hb, emergency: ec };
             const nextKey = stepKeys.find(k => !stepState[k]) || null;
             const onDone = (k) => { const i = stepKeys.indexOf(k); const nxt = stepKeys.slice(i + 1).find(x => !stepState[x]); setFocus(nxt || null); if (nxt === "handbook") setTimeout(() => setActiveTab("handbook"), 400); };
             // First time the three signed documents are all in, stamp the packet as complete (unlocks the app)
-            useEffect(() => { if (isNewHire && offerDone && w4Done && mow4Done && !mine.packetCompletedAt) db.collection("onboarding").doc(myId).set({ packetCompletedAt: new Date().toISOString() }, { merge: true }); }, [isNewHire, offerDone, w4Done, mow4Done]);
-            const stepLabel = { offer: L("Offer letter", "Carta de oferta"), w4: L("Federal W-4", "W-4 federal"), mow4: L("Missouri W-4", "W-4 de Missouri"), pay: L("Pay preference", "Preferencia de pago"), handbook: L("Handbook", "Manual"), emergency: L("Emergency contact", "Contacto de emergencia") };
-            const stepNum = (i) => ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"][i];
-            const payIdx = isNewHire ? 3 : 0, hbIdx = isNewHire ? 4 : (showPay ? 1 : 0), ecIdx = isNewHire ? 5 : (showPay ? 2 : 1);
+            useEffect(() => { if (isNewHire && offerDone && i9Done && w4Done && mow4Done && !mine.packetCompletedAt) db.collection("onboarding").doc(myId).set({ packetCompletedAt: new Date().toISOString() }, { merge: true }); }, [isNewHire, offerDone, i9Done, w4Done, mow4Done]);
+            const stepLabel = { offer: L("Offer letter", "Carta de oferta"), i9: L("Work authorization (I-9)", "Autorización de trabajo (I-9)"), w4: L("Federal W-4", "W-4 federal"), mow4: L("Missouri W-4", "W-4 de Missouri"), pay: L("Pay preference", "Preferencia de pago"), handbook: L("Handbook", "Manual"), emergency: L("Emergency contact", "Contacto de emergencia") };
+            const stepNum = (i) => ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣"][i];
+            const payIdx = isNewHire ? 4 : 0, hbIdx = isNewHire ? 5 : (showPay ? 1 : 0), ecIdx = isNewHire ? 6 : (showPay ? 2 : 1);
             const pendingCard = (title, sub) => (
                 <div className="rounded-2xl p-3" style={{ ...card, opacity: 0.85 }}>
                     <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{title}</span>
@@ -16244,8 +16614,9 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         </button>
                     )}
                     {isNewHire && <OnbOfferStep language={language} staffName={staffName} mine={mine} card={card} num={stepNum(0)} session={session} onDone={onDone} forceOpen={focus === "offer"} />}
-                    {isNewHire && <OnbW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(1)} session={session} onDone={onDone} forceOpen={focus === "w4"} />}
-                    {isNewHire && <OnbMoW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(2)} session={session} onDone={onDone} forceOpen={focus === "mow4"} />}
+                    {isNewHire && <OnbI9Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(1)} session={session} onDone={onDone} forceOpen={focus === "i9"} />}
+                    {isNewHire && <OnbW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(2)} session={session} onDone={onDone} forceOpen={focus === "w4"} />}
+                    {isNewHire && <OnbMoW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(3)} session={session} onDone={onDone} forceOpen={focus === "mow4"} />}
                     {showPay && <OnbPayStep language={language} staffName={staffName} mine={mine} card={card} num={stepNum(payIdx)} session={session} onDone={onDone} forceOpen={focus === "pay"} />}
                     <div className="rounded-2xl p-3" style={card}>
                         <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{hb ? "✅" : stepNum(hbIdx)} {L("Sign the employee handbook", "Firma el manual del empleado")}</span>
