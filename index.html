@@ -16737,13 +16737,11 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                                 <div className="font-bold mb-1">{L("I-9 · Section 2 (employer)", "I-9 · Sección 2 (empleador)")}</div>
                                                 <OwnerGate language={language} title={L("I-9 verification", "Verificación I-9")} note={L("Protects identity documents.", "Protege documentos de identidad.")}>
                                                     <OnbI9Section2 language={language} staffName={staffName} r={r} onDone={() => setOpenEmp(null)} />
+                                                    <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+                                                        <div className="font-bold mb-1">{L("I-9 audit trail", "Registro del I-9")}</div>
+                                                        <OnbI9Audit language={language} employeeId={r.id} />
+                                                    </div>
                                                 </OwnerGate>
-                                            </div>
-                                        )}
-                                        {r.isNew && r.d.i9 && (
-                                            <div className="rounded-xl p-2" style={{ background: "var(--bg-subtle)" }}>
-                                                <div className="font-bold mb-1">{L("I-9 audit trail", "Registro del I-9")}</div>
-                                                <OnbI9Audit language={language} employeeId={r.id} />
                                             </div>
                                         )}
                                         {r.isNew && r.d.hire && <p><span className="font-bold">{L("Hired:", "Contratado:")}</span> {r.d.hire.role} · {r.d.hire.location === "cwe" ? "CWE" : "Kirkwood"} · ${r.d.hire.payRate}/hr · {L("starts", "inicia")} {r.d.hire.startDate || "—"}</p>}
