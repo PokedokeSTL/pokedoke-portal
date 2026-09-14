@@ -15564,6 +15564,146 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
         }
         window.OnbMoW4Step = OnbMoW4Step;
 
+        // ---- Pay preference: paper check or direct deposit ----
+        const abaValid = (r) => { if (!/^\d{9}$/.test(r)) return false; const d = r.split("").map(Number); return (3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + (d[2] + d[5] + d[8])) % 10 === 0; };
+        async function buildDirectDepositPdf({ biz, name, bank, sigDataUrl, signedAtIso, docId }) {
+            const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+            const pdf = await PDFDocument.create();
+            const page = pdf.addPage([612, 792]);
+            const font = await pdf.embedFont(StandardFonts.Helvetica), bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+            const M = 54, maxW = 612 - M * 2;
+            page.drawRectangle({ x: 0, y: 722, width: 612, height: 70, color: rgb(0.95, 0.95, 0.95) });
+            page.drawText(biz.legalName || "PokeDoke", { x: M, y: 760, size: 11, font: bold });
+            page.drawText(biz.address || "", { x: M, y: 742, size: 10, font });
+            page.drawText("Direct Deposit Authorization", { x: M, y: 680, size: 16, font: bold });
+            let y = 640;
+            const row = (label, val) => { page.drawText(label, { x: M, y, size: 10, font, color: rgb(0.4, 0.4, 0.4) }); page.drawText(String(val || ""), { x: M + 170, y, size: 11, font: bold }); y -= 22; };
+            row("Employee name", name);
+            row("Bank name", bank.bankName);
+            row("Account type", bank.acctType === "savings" ? "Savings" : "Checking");
+            row("Routing number (ABA)", bank.routing);
+            row("Account number", bank.account);
+            y -= 10;
+            const auth = `I authorize ${biz.legalName || "PokeDoke"} to deposit my net pay each pay period directly into the account listed above, and if necessary to debit that account to correct any deposit made in error. This authorization stays in effect until I provide written notice to cancel it or submit new account information through the PokeDoke Staff Portal. I understand that it may take one or two pay periods for direct deposit to begin, and that I may receive a paper check until then. I certify that the account information above is accurate and that I am an authorized signer on this account.`;
+            pdfWrap(auth, font, 10, maxW).forEach(ln => { page.drawText(ln, { x: M, y, size: 10, font }); y -= 14; });
+            const sy = 380;
+            page.drawLine({ start: { x: M, y: sy + 40 }, end: { x: 612 - M, y: sy + 40 }, thickness: 0.7, color: rgb(0.3, 0.3, 0.3) });
+            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); const w = 180, h = w * (png.height / png.width); page.drawImage(png, { x: M, y: sy - 8, width: w, height: h }); }
+            page.drawText(name, { x: M, y: sy - 24, size: 10.5, font: bold });
+            const when = new Date(signedAtIso);
+            page.drawText(`Signed electronically on ${when.toLocaleDateString()} at ${when.toLocaleTimeString()}`, { x: M, y: sy - 38, size: 8.5, font, color: rgb(0.35, 0.35, 0.35) });
+            page.drawText(`Document ID ${docId} · PokeDoke Staff Portal`, { x: M, y: sy - 50, size: 8, font, color: rgb(0.5, 0.5, 0.5) });
+            if (bank.checkNote) page.drawText(bank.checkNote, { x: M, y: sy - 70, size: 8, font, color: rgb(0.5, 0.5, 0.5) });
+            return await pdf.save();
+        }
+
+        function OnbPayStep({ language, staffName, mine, card, num, session, onDone, forceOpen }) {
+            const es = language === "es";
+            const L = (en, esT) => es ? esT : en;
+            const id = onbId(staffName);
+            const done = onbStepDone(mine, "pay"), reissued = onbReissued(mine, "pay");
+            const [open, setOpen] = useState(!!forceOpen);
+            useEffect(() => { if (forceOpen) setOpen(true); }, [forceOpen]);
+            const [biz, setBiz] = useState(null);
+            const [method, setMethod] = useState((mine.pay && mine.pay.method) || "");
+            const [b, setB] = useState({ bankName: "", acctType: "checking", routing: "", account: "", account2: "" });
+            const [checkFile, setCheckFile] = useState(null);
+            const [certify, setCertify] = useState(false);
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState("");
+            const loc = (mine.hire && mine.hire.location) || "cwe";
+            useEffect(() => { db.collection("bizInfo").doc(loc).get().then(d => setBiz(d.exists ? d.data() : {})).catch(() => setBiz({})); }, [loc]);
+            useEffect(() => { if (open && !done) onbAudit(id, "pay", "viewed", staffName); }, [open]);
+            const set = (k, v) => setB(prev => ({ ...prev, [k]: v }));
+            const inp = { background: "var(--bg-card)", color: "var(--text-primary)", borderColor: "var(--border-subtle)", fontSize: 16 };
+            const cls = "w-full px-3 py-2 border rounded-xl", lbl = "block text-xs font-bold mb-1";
+            const chip = (on) => "px-3 py-1.5 rounded-lg text-xs font-bold transition " + (on ? "bg-poke-600 text-white" : "bg-gray-100 text-gray-500");
+            const isChange = !!(mine.pay && mine.pay.signedAt);
+            const submit = async () => {
+                setErr("");
+                if (!method) { setErr(L("Choose paper check or direct deposit", "Elige cheque en papel o depósito directo")); return; }
+                setBusy(true);
+                try {
+                    const signedAt = new Date().toISOString();
+                    if (method === "check") {
+                        await db.collection("onboarding").doc(id).set({ pay: { method: "check", signedAt }, ...onbArchivePatch(mine, "pay") }, { merge: true });
+                        await onbAudit(id, "pay", "signed", staffName, { method: "check" });
+                        if (isChange && mine.pay.method === "dd") sendNotification(OWNER_NAMES, "Pay method changed", staffName + " switched from direct deposit to paper check.", { type: "pay-change", employee: staffName });
+                    } else {
+                        if (!b.bankName.trim()) throw new Error(L("Enter your bank name", "Ingresa el nombre de tu banco"));
+                        if (!abaValid(b.routing)) throw new Error(L("That routing number doesn't check out. It's the 9-digit number at the bottom left of a check.", "Ese número de ruta no es válido. Es el número de 9 dígitos abajo a la izquierda de un cheque."));
+                        if (!/^\d{4,17}$/.test(b.account)) throw new Error(L("Enter your account number (digits only)", "Ingresa tu número de cuenta (solo dígitos)"));
+                        if (b.account !== b.account2) throw new Error(L("Account numbers don't match", "Los números de cuenta no coinciden"));
+                        if (!session.sig) throw new Error(L("Please add your signature", "Agrega tu firma"));
+                        if (!certify) throw new Error(L("Please check the authorization box", "Marca la casilla de autorización"));
+                        if (!window.PDFLib) throw new Error(L("PDF library didn't load. Refresh and try again.", "La librería PDF no cargó. Recarga e intenta."));
+                        let checkPath = null;
+                        if (checkFile) { checkPath = "onboarding/" + id + "/voided-check-" + Date.now() + ".jpg"; await storage.ref().child(checkPath).put(checkFile, { contentType: checkFile.type || "image/jpeg" }); }
+                        const docId = "DD-" + id + "-" + Date.now().toString(36).toUpperCase();
+                        const bytes = await buildDirectDepositPdf({ biz: biz || {}, name: staffName, bank: { ...b, checkNote: checkPath ? "Voided check image on file: " + checkPath.split("/").pop() : "" }, sigDataUrl: session.sig, signedAtIso: signedAt, docId });
+                        const path = await uploadOnbPdf(id, "direct-deposit.pdf", bytes);
+                        const patch = { pay: { method: "dd", signedAt, pdfPath: path, docId, bankName: b.bankName.trim(), acctType: b.acctType, routingLast4: b.routing.slice(-4), acctLast4: b.account.slice(-4), checkPath }, ...onbArchivePatch(mine, "pay") };
+                        if (!(mine.signature && mine.signature.dataUrl === session.sig)) patch.signature = { dataUrl: session.sig, at: signedAt };
+                        await db.collection("onboarding").doc(id).set(patch, { merge: true });
+                        await onbAudit(id, "pay", "signed", staffName, { docId, pdfPath: path, method: "dd", bank: b.bankName.trim(), routingLast4: b.routing.slice(-4), acctLast4: b.account.slice(-4) });
+                        // Fraud control: every direct deposit submission alerts the owners, changes get a louder title
+                        sendNotification(OWNER_NAMES, isChange ? "⚠️ Bank info CHANGED" : "New direct deposit on file", staffName + (isChange ? " changed their direct deposit to " : " set up direct deposit at ") + b.bankName.trim() + " (acct ···" + b.account.slice(-4) + "). Open Onboarding to review the new form.", { type: "pay-change", employee: staffName });
+                    }
+                    setB({ bankName: "", acctType: "checking", routing: "", account: "", account2: "" }); setCheckFile(null);
+                    try { window.showToast(L("✓ Pay preference saved", "✓ Preferencia de pago guardada"), "success"); } catch (_) {}
+                    setOpen(false); onDone && onDone("pay");
+                } catch (e) { setErr(e.message || String(e)); }
+                setBusy(false);
+            };
+            const summary = mine.pay ? (mine.pay.method === "check" ? L("Paper check", "Cheque en papel") : (L("Direct deposit", "Depósito directo") + " · " + (mine.pay.bankName || "") + " ···" + (mine.pay.acctLast4 || ""))) : "";
+            return (
+                <div className="rounded-2xl p-3" style={card}>
+                    <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between text-left">
+                        <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{done ? "✅" : num} {L("How you want to be paid", "Cómo quieres recibir tu pago")}</span>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>{open ? "▲" : "▼"}</span>
+                    </button>
+                    {done && !open && <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {summary}</p>}
+                    {reissued && <p className="text-xs mt-1 font-bold" style={{ color: "#b45309" }}>🔁 {L("Your manager asked you to update your pay information.", "Tu gerente te pidió actualizar tu información de pago.")}</p>}
+                    {open && (
+                        <div className="mt-3 space-y-4" style={{ color: "var(--text-primary)" }}>
+                            {done && <p className="text-xs" style={{ color: "#16a34a" }}>✓ {L("On file:", "Registrado:")} {summary}. {L("Changed banks? Submit new details below.", "¿Cambiaste de banco? Envía los nuevos datos abajo.")}</p>}
+                            <div className="flex gap-1.5">
+                                {[{ v: "dd", en: "Direct deposit", es: "Depósito directo" }, { v: "check", en: "Paper check", es: "Cheque en papel" }].map(o => (
+                                    <button key={o.v} onClick={() => setMethod(o.v)} className={chip(method === o.v) + " flex-1"}>{es ? o.es : o.en}</button>
+                                ))}
+                            </div>
+                            {method === "check" && <p className="text-xs" style={{ color: "var(--text-muted)" }}>{L("You'll pick up a paper check at the store each payday. You can switch to direct deposit any time from this step.", "Recogerás un cheque en la tienda cada día de pago. Puedes cambiar a depósito directo en cualquier momento desde este paso.")}</p>}
+                            {method === "dd" && (
+                                <div className="space-y-3">
+                                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{L("Your bank details go onto a signed authorization PDF for payroll. The app keeps only the bank name and last 4 digits.", "Tus datos bancarios van a un PDF de autorización firmado para nómina. La app guarda solo el nombre del banco y los últimos 4 dígitos.")}</p>
+                                    <div><label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Bank name", "Nombre del banco")}</label><input className={cls} style={inp} value={b.bankName} onChange={e => set("bankName", e.target.value)} /></div>
+                                    <div><label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Account type", "Tipo de cuenta")}</label>
+                                        <div className="flex gap-1.5">{[{ v: "checking", en: "Checking", es: "Corriente" }, { v: "savings", en: "Savings", es: "Ahorros" }].map(o => <button key={o.v} onClick={() => set("acctType", o.v)} className={chip(b.acctType === o.v)}>{es ? o.es : o.en}</button>)}</div></div>
+                                    <div><label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Routing number (9 digits)", "Número de ruta (9 dígitos)")}</label><input className={cls} style={inp} inputMode="numeric" maxLength={9} autoComplete="off" value={b.routing} onChange={e => set("routing", e.target.value.replace(/\D/g, ""))} />
+                                        {b.routing.length === 9 && <p className="text-[11px] mt-1" style={{ color: abaValid(b.routing) ? "#16a34a" : "#dc2626" }}>{abaValid(b.routing) ? "✓ " + L("Valid routing number", "Número de ruta válido") : "✗ " + L("Doesn't look right, double-check it", "No parece correcto, verifícalo")}</p>}</div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div><label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Account number", "Número de cuenta")}</label><input className={cls} style={inp} type="password" inputMode="numeric" autoComplete="off" value={b.account} onChange={e => set("account", e.target.value.replace(/\D/g, ""))} /></div>
+                                        <div><label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Confirm account number", "Confirma el número")}</label><input className={cls} style={inp} inputMode="numeric" autoComplete="off" value={b.account2} onChange={e => set("account2", e.target.value.replace(/\D/g, ""))} /></div>
+                                    </div>
+                                    <div><label className={lbl} style={{ color: "var(--text-secondary)" }}>{L("Photo of a voided check (recommended)", "Foto de un cheque anulado (recomendado)")}</label>
+                                        <input type="file" accept="image/*" capture="environment" onChange={e => setCheckFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} className="text-xs" />
+                                        <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{L("Write VOID across a blank check and snap it. This lets us verify the numbers before your first deposit.", "Escribe VOID en un cheque en blanco y tómale foto. Nos permite verificar los números antes de tu primer depósito.")}</p></div>
+                                    <OnbSigBlock language={language} session={session} />
+                                    <label className="flex items-start gap-2.5 cursor-pointer">
+                                        <input type="checkbox" className="mt-0.5 w-4 h-4 accent-poke-600" checked={certify} onChange={e => setCertify(e.target.checked)} />
+                                        <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{L("I authorize PokeDoke to deposit my pay into this account and to correct any deposit made in error. I confirm this account is mine.", "Autorizo a PokeDoke a depositar mi pago en esta cuenta y a corregir cualquier depósito erróneo. Confirmo que esta cuenta es mía.")}</span>
+                                    </label>
+                                </div>
+                            )}
+                            {err && <p className="text-xs font-bold" style={{ color: "#dc2626" }}>{err}</p>}
+                            {method && <button onClick={submit} disabled={busy} className="w-full py-3 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>{busy ? L("Saving...", "Guardando...") : method === "check" ? L("Save: paper check", "Guardar: cheque en papel") : L("Sign & submit direct deposit", "Firmar y enviar depósito directo")}</button>}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+        window.OnbPayStep = OnbPayStep;
+
         // ---- Federal W-4 (2026) ----
         const W4F = {
             first: "topmostSubform[0].Page1[0].Step1a[0].f1_01[0]", last: "topmostSubform[0].Page1[0].Step1a[0].f1_02[0]",
@@ -15773,6 +15913,8 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 d && d.offer && d.offer.pdfPath && { key: "offer", label: es ? "Carta de oferta" : "Offer letter", path: d.offer.pdfPath, at: d.offer.signedAt },
                 d && d.w4 && d.w4.pdfPath && { key: "w4", label: "Federal W-4", path: d.w4.pdfPath, at: d.w4.signedAt },
                 d && d.mow4 && d.mow4.pdfPath && { key: "mow4", label: "MO W-4", path: d.mow4.pdfPath, at: d.mow4.signedAt },
+                d && d.pay && d.pay.pdfPath && { key: "pay", label: es ? "Autorización de depósito directo" : "Direct deposit authorization", path: d.pay.pdfPath, at: d.pay.signedAt },
+                d && d.pay && d.pay.checkPath && { key: "check", label: es ? "Cheque anulado" : "Voided check", path: d.pay.checkPath, at: d.pay.signedAt },
             ].filter(Boolean);
             const openFile = async (f) => { try { const url = await storage.ref().child(f.path).getDownloadURL(); window.open(url, "_blank"); } catch (e) { window.showToast((es ? "No se pudo abrir: " : "Couldn't open: ") + e.message, "error"); } };
             const hist = (d && d.history) || [];
@@ -15781,7 +15923,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 <div className="space-y-1.5">
                     {hist.map((h, i) => (
                         <div key={"h" + i} className="flex items-center justify-between gap-2" style={{ opacity: 0.6 }}>
-                            <span>🗂 {h.doc === "offer" ? (es ? "Carta de oferta" : "Offer letter") : h.doc === "w4" ? "Federal W-4" : "MO W-4"} <span style={{ color: "var(--text-muted)" }}>· {es ? "reemplazada" : "replaced"} {h.replacedAt ? new Date(h.replacedAt).toLocaleDateString() : ""}</span></span>
+                            <span>🗂 {h.doc === "offer" ? (es ? "Carta de oferta" : "Offer letter") : h.doc === "w4" ? "Federal W-4" : h.doc === "mow4" ? "MO W-4" : (es ? "Depósito directo" : "Direct deposit")} <span style={{ color: "var(--text-muted)" }}>· {es ? "reemplazada" : "replaced"} {h.replacedAt ? new Date(h.replacedAt).toLocaleDateString() : ""}</span></span>
                             <button onClick={() => openFile({ path: h.pdfPath })} className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>{es ? "Abrir" : "Open"}</button>
                         </div>
                     ))}
@@ -15900,10 +16042,11 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     const d = onbData[id];
                     const hb = handbookSigned(id) && !onbReissued(d, "handbook"), ec = emergencyDone(id) && !onbReissued(d, "emergency");
                     const isNew = !!(d && d.hire);
-                    const offer = onbStepDone(d, "offer"), w4 = onbStepDone(d, "w4"), mow4 = onbStepDone(d, "mow4");
-                    const parts = isNew ? [offer, w4, mow4, hb, ec] : [hb, ec];
+                    const offer = onbStepDone(d, "offer"), w4 = onbStepDone(d, "w4"), mow4 = onbStepDone(d, "mow4"), pay = onbStepDone(d, "pay");
+                    const showPay = isNew || onbReissued(d, "pay") || !!(d && d.pay && d.pay.signedAt);
+                    const parts = isNew ? [offer, w4, mow4, pay, hb, ec] : (showPay ? [pay, hb, ec] : [hb, ec]);
                     const done = parts.filter(Boolean).length;
-                    return { name: s.name, id, hb, ec, offer, w4, mow4, isNew, locked: onbLocked(d, s.name), done, total: parts.length, d };
+                    return { name: s.name, id, hb, ec, offer, w4, mow4, pay, showPay, isNew, locked: onbLocked(d, s.name), done, total: parts.length, d };
                 }).sort((a, b) => (a.done / a.total) - (b.done / b.total));
                 const overrideLock = async (r) => {
                     const ok = await window.askConfirm({ title: L("Unlock the app early?", "¿Desbloquear la app antes?"), body: L(r.name + " will get full app access before finishing their paperwork. This is logged.", r.name + " tendrá acceso completo antes de terminar su papeleo. Esto queda registrado.") });
@@ -15924,7 +16067,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     if (!ok) return;
                     try {
                         const d = r.d || {};
-                        const paths = [d.offer && d.offer.pdfPath, d.w4 && d.w4.pdfPath, d.mow4 && d.mow4.pdfPath, ...((d.history || []).map(h => h.pdfPath))].filter(Boolean);
+                        const paths = [d.offer && d.offer.pdfPath, d.w4 && d.w4.pdfPath, d.mow4 && d.mow4.pdfPath, d.pay && d.pay.pdfPath, d.pay && d.pay.checkPath, ...((d.history || []).map(h => h.pdfPath))].filter(Boolean);
                         for (const pth of paths) { try { await storage.ref().child(pth).delete(); } catch (_) {} }
                         const keep = { name: r.name, hire: d.hire || null, prefill: d.prefill || null, createdAt: d.createdAt || new Date().toISOString(), resetBy: staffName, resetAt: new Date().toISOString() };
                         await db.collection("onboarding").doc(r.id).set(keep);
@@ -15981,6 +16124,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.offer ? "#dcfce7" : "#fef2f2", color: r.offer ? "#166534" : "#991b1b" }}>{r.offer ? "✓" : "✗"} {L("Offer", "Oferta")}</span>}
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.w4 ? "#dcfce7" : "#fef2f2", color: r.w4 ? "#166534" : "#991b1b" }}>{r.w4 ? "✓" : "✗"} W-4</span>}
                                     {r.isNew && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.mow4 ? "#dcfce7" : "#fef2f2", color: r.mow4 ? "#166534" : "#991b1b" }}>{r.mow4 ? "✓" : "✗"} MO W-4</span>}
+                                    {r.showPay && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.pay ? "#dcfce7" : "#fef2f2", color: r.pay ? "#166534" : "#991b1b" }}>{r.pay ? "✓" : "✗"} {r.d && r.d.pay && r.d.pay.method === "check" ? L("Check", "Cheque") : L("Direct deposit", "Depósito")}{r.pay && r.d.pay.method === "dd" && r.d.pay.acctLast4 ? " ···" + r.d.pay.acctLast4 : ""}</span>}
                                     <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.hb ? "#dcfce7" : "#fef2f2", color: r.hb ? "#166534" : "#991b1b" }}>{r.hb ? "✓" : "✗"} {L("Handbook", "Manual")}</span>
                                     <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: r.ec ? "#dcfce7" : "#fef2f2", color: r.ec ? "#166534" : "#991b1b" }}>{r.ec ? "✓" : "✗"} {L("Emergency contact", "Contacto emerg.")}</span>
                                 </div>
@@ -15998,7 +16142,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                         <div className="rounded-xl p-2" style={{ background: "var(--bg-subtle)" }}>
                                             <div className="font-bold mb-1">{L("Re-issue a step", "Reenviar un paso")} <span className="font-normal" style={{ color: "var(--text-muted)" }}>· {L("asks them to redo it; old version kept", "les pide repetirlo; se conserva la versión anterior")}</span></div>
                                             <div className="flex flex-wrap gap-1.5">
-                                                {(r.isNew ? [["offer", L("Offer letter", "Carta de oferta")], ["w4", "W-4"], ["mow4", "MO W-4"], ["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]] : [["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]]).map(([k, label]) => (
+                                                {(r.isNew ? [["offer", L("Offer letter", "Carta de oferta")], ["w4", "W-4"], ["mow4", "MO W-4"], ["pay", L("Direct deposit", "Depósito directo")], ["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]] : [["pay", L("Direct deposit", "Depósito directo")], ["handbook", L("Handbook", "Manual")], ["emergency", L("Emergency contact", "Contacto")]]).map(([k, label]) => (
                                                     <button key={k} onClick={() => reissueStep(r, k, label)} disabled={onbReissued(r.d, k)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg disabled:opacity-50" style={{ background: onbReissued(r.d, k) ? "#fef3c7" : "var(--bg-card)", color: onbReissued(r.d, k) ? "#92400e" : "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}>{onbReissued(r.d, k) ? "🔁 " : ""}{label}</button>
                                                 ))}
                                             </div>
@@ -16061,8 +16205,9 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const mine = onbData[myId] || {};
             const isNewHire = !!mine.hire;
             const hb = hb0 && !onbReissued(mine, "handbook"), ec = ec0 && !onbReissued(mine, "emergency");
-            const offerDone = onbStepDone(mine, "offer"), w4Done = onbStepDone(mine, "w4"), mow4Done = onbStepDone(mine, "mow4");
-            const parts = isNewHire ? [offerDone, w4Done, mow4Done, hb, ec] : [hb, ec];
+            const offerDone = onbStepDone(mine, "offer"), w4Done = onbStepDone(mine, "w4"), mow4Done = onbStepDone(mine, "mow4"), payDone = onbStepDone(mine, "pay");
+            const showPay = isNewHire || onbReissued(mine, "pay") || !!(mine.pay && mine.pay.signedAt);
+            const parts = isNewHire ? [offerDone, w4Done, mow4Done, payDone, hb, ec] : (showPay ? [payDone, hb, ec] : [hb, ec]);
             const done = parts.filter(Boolean).length, total = parts.length;
             // DocuSign-style session: signature + SSN live only in memory for this visit, shared by every step
             const [sessSig, setSessSig] = useState((mine.signature && mine.signature.dataUrl) || null);
@@ -16070,15 +16215,15 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             useEffect(() => { if (!sessSig && mine.signature && mine.signature.dataUrl) setSessSig(mine.signature.dataUrl); }, [mine.signature && mine.signature.dataUrl]);
             const session = { sig: sessSig, setSig: setSessSig, ssn: sessSsn, setSsn: setSessSsn };
             const [focus, setFocus] = useState(null); // which step is force-opened (auto-advance)
-            const stepKeys = isNewHire ? ["offer", "w4", "mow4", "handbook", "emergency"] : ["handbook", "emergency"];
-            const stepState = { offer: offerDone, w4: w4Done, mow4: mow4Done, handbook: hb, emergency: ec };
+            const stepKeys = isNewHire ? ["offer", "w4", "mow4", "pay", "handbook", "emergency"] : (showPay ? ["pay", "handbook", "emergency"] : ["handbook", "emergency"]);
+            const stepState = { offer: offerDone, w4: w4Done, mow4: mow4Done, pay: payDone, handbook: hb, emergency: ec };
             const nextKey = stepKeys.find(k => !stepState[k]) || null;
             const onDone = (k) => { const i = stepKeys.indexOf(k); const nxt = stepKeys.slice(i + 1).find(x => !stepState[x]); setFocus(nxt || null); if (nxt === "handbook") setTimeout(() => setActiveTab("handbook"), 400); };
             // First time the three signed documents are all in, stamp the packet as complete (unlocks the app)
             useEffect(() => { if (isNewHire && offerDone && w4Done && mow4Done && !mine.packetCompletedAt) db.collection("onboarding").doc(myId).set({ packetCompletedAt: new Date().toISOString() }, { merge: true }); }, [isNewHire, offerDone, w4Done, mow4Done]);
-            const stepLabel = { offer: L("Offer letter", "Carta de oferta"), w4: L("Federal W-4", "W-4 federal"), mow4: L("Missouri W-4", "W-4 de Missouri"), handbook: L("Handbook", "Manual"), emergency: L("Emergency contact", "Contacto de emergencia") };
-            const stepNum = (i) => ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"][i];
-            const hbIdx = isNewHire ? 3 : 0, ecIdx = isNewHire ? 4 : 1;
+            const stepLabel = { offer: L("Offer letter", "Carta de oferta"), w4: L("Federal W-4", "W-4 federal"), mow4: L("Missouri W-4", "W-4 de Missouri"), pay: L("Pay preference", "Preferencia de pago"), handbook: L("Handbook", "Manual"), emergency: L("Emergency contact", "Contacto de emergencia") };
+            const stepNum = (i) => ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"][i];
+            const payIdx = isNewHire ? 3 : 0, hbIdx = isNewHire ? 4 : (showPay ? 1 : 0), ecIdx = isNewHire ? 5 : (showPay ? 2 : 1);
             const pendingCard = (title, sub) => (
                 <div className="rounded-2xl p-3" style={{ ...card, opacity: 0.85 }}>
                     <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{title}</span>
@@ -16101,6 +16246,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     {isNewHire && <OnbOfferStep language={language} staffName={staffName} mine={mine} card={card} num={stepNum(0)} session={session} onDone={onDone} forceOpen={focus === "offer"} />}
                     {isNewHire && <OnbW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(1)} session={session} onDone={onDone} forceOpen={focus === "w4"} />}
                     {isNewHire && <OnbMoW4Step language={language} staffName={staffName} mine={mine} card={card} num={stepNum(2)} session={session} onDone={onDone} forceOpen={focus === "mow4"} />}
+                    {showPay && <OnbPayStep language={language} staffName={staffName} mine={mine} card={card} num={stepNum(payIdx)} session={session} onDone={onDone} forceOpen={focus === "pay"} />}
                     <div className="rounded-2xl p-3" style={card}>
                         <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{hb ? "✅" : stepNum(hbIdx)} {L("Sign the employee handbook", "Firma el manual del empleado")}</span>
                         {hb ? <p className="text-xs mt-1" style={{ color: "#16a34a" }}>✓ {L("Signed", "Firmado")}</p>
