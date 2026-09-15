@@ -15452,7 +15452,20 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const font = await pdf.embedFont(StandardFonts.Helvetica);
             try { form.updateFieldAppearances(font); } catch (e) {}
             const page = pdf.getPages()[0];
-            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); let h = 10, w = h * (png.width / png.height); if (w > 270) { w = 270; h = w * (png.height / png.width); } page.drawImage(png, { x: 62, y: 334, width: w, height: h }); }
+            // No signature field here either, but the signature shares its row with the date
+            // field, so y and height come straight from that, and the left inset from the
+            // employer name box in the row below. Fully derived from the form's own geometry.
+            const dtBox = acroBox(form, "Text11.0"), leftBox = acroBox(form, "Text12.0");
+            if (!dtBox || !leftBox) formDrift("MO W-4", "signature-date or employer name field not found");
+            if (sigDataUrl) {
+                const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl));
+                const sy = dtBox ? dtBox.y + 1 : 334;
+                const sh = dtBox ? Math.max(8, dtBox.h - 4) : 10;
+                const sx = leftBox ? leftBox.x + 8 : 62;
+                const sw = dtBox ? Math.max(120, dtBox.x - sx - 80) : 270;
+                const fit = fitSig(png, sw, sh);
+                page.drawImage(png, { x: sx, y: sy, width: fit.w, height: fit.h });
+            }
             try { form.flatten(); } catch (e) {}
             return await pdf.save();
         }
@@ -15735,6 +15748,17 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
         };
         const money = (v) => { const n = parseFloat(String(v).replace(/[^\d.]/g, "")); return isNaN(n) || n === 0 ? "" : n.toFixed(0); };
         const safeSet = (form, name, fn) => { try { fn(form.getField(name)); } catch (e) { console.warn("W-4 field missing:", name, e.message); } };
+        // Read a field's widget box straight off the loaded PDF. Returns null when the field
+        // isn't there, which is how we notice a blank form has been swapped for a new edition.
+        const acroBox = (form, name) => {
+            try {
+                const r = form.getField(name).acroField.getWidgets()[0].getRectangle();
+                return { x: r.x, y: r.y, w: r.width, h: r.height, top: r.y + r.height, right: r.x + r.width };
+            } catch (e) { return null; }
+        };
+        // Scale a signature to fit a box without distorting it.
+        const fitSig = (png, maxW, maxH) => { let h = maxH, w = h * (png.width / png.height); if (w > maxW) { w = maxW; h = w * (png.height / png.width); } return { w, h }; };
+        const formDrift = (formName, detail) => console.warn("FORM LAYOUT CHANGED \u2014 " + formName + ": " + detail + ". Signature and date fell back to the coordinates measured against the edition this app was built for. Check the output before giving it to anyone.");
 
         async function buildW4Pdf({ blankBytes, f, ssnDigits, biz, hire, sigDataUrl, signedAtIso }) {
             const { PDFDocument, StandardFonts, PDFName } = window.PDFLib;
@@ -15764,9 +15788,17 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             // Kill the XFA layer so every viewer shows the AcroForm values we just filled
             try { const acro = pdf.catalog.lookup(PDFName.of("AcroForm")); if (acro) acro.delete(PDFName.of("XFA")); } catch (e) { console.warn("xfa", e.message); }
             const page = pdf.getPages()[0];
-            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); let h = 18, w = h * (png.width / png.height); if (w > 300) { w = 300; h = w * (png.height / png.width); } page.drawImage(png, { x: 112, y: 91, width: w, height: h }); }
+            // Step 5 has no signature or date field, so both are positioned off the employer
+            // block directly beneath: on the 2026 form its top edge sits 25pt under the rule.
+            // If the IRS shifts that block, the signature travels with it.
+            const empBox = acroBox(form, W4F.empName), einBox = acroBox(form, W4F.ein);
+            if (!empBox || !einBox) formDrift("Federal W-4", "employer name/address or EIN field not found");
+            const sigY = empBox ? empBox.top + 25 : 91;
+            const sigX = empBox ? empBox.x + 17 : 112;
+            const sigW = einBox ? Math.max(120, einBox.x - sigX - 22) : 300;
+            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); const fit = fitSig(png, sigW, 18); page.drawImage(png, { x: sigX, y: sigY, width: fit.w, height: fit.h }); }
             const when = new Date(signedAtIso);
-            page.drawText(`${when.getMonth() + 1}/${when.getDate()}/${when.getFullYear()}`, { x: 486, y: 79, size: 8.5, font });
+            page.drawText(`${when.getMonth() + 1}/${when.getDate()}/${when.getFullYear()}`, { x: einBox ? einBox.x + 2 : 470, y: sigY + 1, size: 9, font });
             try { form.flatten(); } catch (e) { console.warn("flatten", e.message); }
             return await pdf.save();
         }
