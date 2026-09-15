@@ -15452,7 +15452,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const font = await pdf.embedFont(StandardFonts.Helvetica);
             try { form.updateFieldAppearances(font); } catch (e) {}
             const page = pdf.getPages()[0];
-            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); const h = 22, w = h * (png.width / png.height); page.drawImage(png, { x: 270, y: 335, width: w, height: h }); }
+            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); let h = 10, w = h * (png.width / png.height); if (w > 270) { w = 270; h = w * (png.height / png.width); } page.drawImage(png, { x: 62, y: 334, width: w, height: h }); }
             try { form.flatten(); } catch (e) {}
             return await pdf.save();
         }
@@ -15764,7 +15764,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             // Kill the XFA layer so every viewer shows the AcroForm values we just filled
             try { const acro = pdf.catalog.lookup(PDFName.of("AcroForm")); if (acro) acro.delete(PDFName.of("XFA")); } catch (e) { console.warn("xfa", e.message); }
             const page = pdf.getPages()[0];
-            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); const h = 24, w = h * (png.width / png.height); page.drawImage(png, { x: 300, y: 76, width: w, height: h }); }
+            if (sigDataUrl) { const png = await pdf.embedPng(dataUrlToBytes(sigDataUrl)); let h = 18, w = h * (png.width / png.height); if (w > 300) { w = 300; h = w * (png.height / png.width); } page.drawImage(png, { x: 112, y: 91, width: w, height: h }); }
             const when = new Date(signedAtIso);
             page.drawText(`${when.getMonth() + 1}/${when.getDate()}/${when.getFullYear()}`, { x: 486, y: 79, size: 8.5, font });
             try { form.flatten(); } catch (e) { console.warn("flatten", e.message); }
