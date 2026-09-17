@@ -4946,6 +4946,7 @@
             const [availability, setAvailability] = useState({});
             const [availSavedAt, setAvailSavedAt] = useState("");
             const [timeOffRequests, setTimeOffRequests] = useState([]);
+            const [toShowArchive, setToShowArchive] = useState(false);
             const [toStartDate, setToStartDate] = useState("");
             const [toEndDate, setToEndDate] = useState("");
             const [toReason, setToReason] = useState("");
@@ -5124,10 +5125,23 @@
             }, []);
 
             useEffect(() => {
-                const unsub = db.collection("timeOffRequests").orderBy("requestedAt","desc").limit(50).onSnapshot(snap => {
-                    setTimeOffRequests(snap.docs.map(d=>({id:d.id,...d.data()})));
+                // Two listeners on purpose. The first is recent history; the second is every
+                // still-pending request, however old. With only the capped history query, a
+                // pending request older than the 50 most recent submissions dropped out of the
+                // list entirely and could never be approved or denied by anyone.
+                let recent = [], pend = [];
+                const merge = () => {
+                    const byId = new Map();
+                    [...recent, ...pend].forEach(r => byId.set(r.id, r));
+                    setTimeOffRequests([...byId.values()]);
+                };
+                const unsubA = db.collection("timeOffRequests").orderBy("requestedAt","desc").limit(75).onSnapshot(snap => {
+                    recent = snap.docs.map(d=>({id:d.id,...d.data()})); merge();
                 });
-                return () => unsub();
+                const unsubB = db.collection("timeOffRequests").where("status","==","pending").onSnapshot(snap => {
+                    pend = snap.docs.map(d=>({id:d.id,...d.data()})); merge();
+                });
+                return () => { unsubA(); unsubB(); };
             }, []);
 
             useEffect(() => {
@@ -6012,7 +6026,36 @@
 
             // Who can review a request: must be a manager/owner, not the requester,
             // and a MANAGER's request can only be approved by an OWNER.
+            // ---- Time-off queue hygiene -------------------------------------------------
+            // A request is spent once its last day has passed: approving or denying it after
+            // the fact changes nothing, so it must not sit in the action queue forever.
+            const toTodayStr = window.fmtLocalDate(new Date());
+            const toLastDay = (r) => r.endDate || r.startDate || "";
+            const toIsPast = (r) => toLastDay(r) < toTodayStr;
+            // Deactivated staff stay on the roster (so they can be reactivated), so their old
+            // requests keep rendering unless we filter them out here.
+            const toEmpActive = (name) => { const r = (staffList || []).find(x => x.name === name); return !r || r.active !== false; };
+            const toStale = (r) => r.status === "pending" && (toIsPast(r) || !toEmpActive(r.employee));
             const canReviewTO = (req) => mgrAccess && req.employee !== staffName && !(isAdmin(req.employee) && !ownerAccess);
+            // Retire every pending request that can no longer be acted on. Kept as its own
+            // status so the caps logic ignores it and the record still shows what happened.
+            const dismissStaleTO = async () => {
+                const targets = timeOffRequests.filter(r => toStale(r) && canReviewTO(r));
+                if (!targets.length) return;
+                const ok = await window.askConfirm({
+                    title: language==="es" ? "\u00bfArchivar "+targets.length+" solicitud(es) vencida(s)?" : "Archive "+targets.length+" expired request"+(targets.length===1?"":"s")+"?",
+                    body: language==="es"
+                        ? "Estas solicitudes ya pasaron o son de empleados desactivados. Se marcar\u00e1n como vencidas y saldr\u00e1n de la cola."
+                        : "These dates have already passed, or the employee is deactivated. They'll be marked expired and leave the review queue."
+                });
+                if (!ok) return;
+                try {
+                    await Promise.all(targets.map(r => db.collection("timeOffRequests").doc(r.id).update({
+                        status: "expired", reviewedBy: staffName, reviewedAt: new Date().toISOString()
+                    })));
+                    window.showToast((language==="es"?"Archivadas: ":"Archived ")+targets.length, "success");
+                } catch(e) { window.showToast((language==="es"?"Error: ":"Error: ")+e.message, "error"); }
+            };
             const reviewTimeOff = async (id, status) => {
                 const req = timeOffRequests.find(r=>r.id===id);
                 if (req && req.employee === staffName) {
@@ -7515,43 +7558,84 @@
                                 <button onClick={submitTimeOff} disabled={!ready} className={"w-full py-3 rounded-xl font-bold text-sm "+(ready?"bg-poke-600 text-white active:scale-95":"bg-gray-200 text-gray-400")}>{language==="es"?"Enviar Solicitud":"Submit Request"}</button>
                                 ); })()}
                             </div>
-                            <p className="font-bold text-gray-800 text-sm">{language==="es"?"Solicitudes":"Requests"}</p>
-                            {timeOffRequests.filter(r=>mgrAccess||r.employee===staffName).sort((a,b)=>(b.requestedAt||"").localeCompare(a.requestedAt||"")).map(req=>(
-                                <div key={req.id} ref={el=>{ if(el && highlightId===req.id) el.scrollIntoView({behavior:"smooth",block:"center"}); }} className={"bg-white rounded-xl border p-3 "+(req.status==="approved"?"border-green-200":req.status==="denied"?"border-red-200":"border-yellow-200")} style={highlightId===req.id?{boxShadow:"0 0 0 3px #06b6d4",transition:"box-shadow 0.3s"}:undefined}>
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <p className="font-semibold text-sm text-gray-800">{req.employee}</p>
-                                            <p className="text-xs text-gray-500">{req.allDay===false ? (req.startDate+" · "+(req.startTime||"")+"–"+(req.endTime||"")) : (req.startDate+" → "+req.endDate)}{req.reason?" · "+req.reason:""}</p>
-                                            {req.requestedAt && <p className="text-[11px] text-gray-400 mt-0.5">🕒 {language==="es"?"Enviado":"Submitted"}: {new Date(req.requestedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"})}</p>}
-                                            {ownerAccess && req.reviewedAt && <p className="text-[11px] text-gray-400">{req.status==="approved"?"✅":"❌"} {language==="es"?"Revisado por":"Reviewed by"} {req.reviewedBy} · {new Date(req.reviewedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</p>}
+                            {(() => {
+                                const mine = timeOffRequests.filter(r=>mgrAccess||r.employee===staffName);
+                                const byDate = (a,b)=>(a.startDate||"").localeCompare(b.startDate||"");
+                                // Soonest first: whatever needs a decision first sits on top.
+                                const needsReview = mine.filter(r=>r.status==="pending" && !toStale(r)).sort(byDate);
+                                const upcoming    = mine.filter(r=>r.status==="approved" && !toIsPast(r)).sort(byDate);
+                                const archive     = mine.filter(r=>!needsReview.includes(r) && !upcoming.includes(r))
+                                                       .sort((a,b)=>(b.startDate||"").localeCompare(a.startDate||""));
+                                const staleCount  = mine.filter(r=>toStale(r) && canReviewTO(r)).length;
+                                const card = (req, dim) => (
+                                    <div key={req.id} ref={el=>{ if(el && highlightId===req.id) el.scrollIntoView({behavior:"smooth",block:"center"}); }} className={"bg-white rounded-xl border p-3 "+(req.status==="approved"?"border-green-200":req.status==="denied"?"border-red-200":req.status==="expired"?"border-gray-200":"border-yellow-200")} style={{...(highlightId===req.id?{boxShadow:"0 0 0 3px #06b6d4",transition:"box-shadow 0.3s"}:{}), ...(dim?{opacity:0.7}:{})}}>
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className="font-semibold text-sm text-gray-800">{req.employee}{!toEmpActive(req.employee) && <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">{language==="es"?"desactivado":"deactivated"}</span>}</p>
+                                                <p className="text-xs text-gray-500">{req.allDay===false ? (req.startDate+" · "+(req.startTime||"")+"–"+(req.endTime||"")) : (req.startDate+" → "+req.endDate)}{req.reason?" · "+req.reason:""}</p>
+                                                {req.requestedAt && <p className="text-[11px] text-gray-400 mt-0.5">🕒 {language==="es"?"Enviado":"Submitted"}: {new Date(req.requestedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"})}</p>}
+                                                {ownerAccess && req.reviewedAt && <p className="text-[11px] text-gray-400">{req.status==="approved"?"✅":req.status==="expired"?"🗂️":"❌"} {language==="es"?"Revisado por":"Reviewed by"} {req.reviewedBy} · {new Date(req.reviewedAt).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</p>}
+                                            </div>
+                                            <span className={"text-xs font-bold px-2 py-1 rounded-full "+(req.status==="approved"?"bg-green-100 text-green-700":req.status==="denied"?"bg-red-100 text-red-700":req.status==="expired"?"bg-gray-100 text-gray-500":"bg-yellow-100 text-yellow-700")}>
+                                                {req.status==="approved"?"✅":req.status==="denied"?"❌":req.status==="expired"?"🗂️":"⏳"} {req.status==="expired"?(language==="es"?"vencida":"expired"):req.status}
+                                            </span>
                                         </div>
-                                        <span className={"text-xs font-bold px-2 py-1 rounded-full "+(req.status==="approved"?"bg-green-100 text-green-700":req.status==="denied"?"bg-red-100 text-red-700":"bg-yellow-100 text-yellow-700")}>
-                                            {req.status==="approved"?"✅":req.status==="denied"?"❌":"⏳"} {req.status}
-                                        </span>
+                                        {req.status==="pending" && toStale(req) && (
+                                            <p className="text-[11px] italic text-gray-400 mt-2">{toIsPast(req)
+                                                ? (language==="es"?"La fecha ya pasó, aprobarla ya no cambia nada":"This date has already passed, so approving it no longer changes anything")
+                                                : (language==="es"?"Empleado desactivado":"Employee is deactivated")}</p>
+                                        )}
+                                        {req.status==="pending" && !toStale(req) && canReviewTO(req) && (
+                                            <div className="flex gap-2 mt-2">
+                                                <button onClick={()=>reviewTimeOff(req.id,"approved")} className="flex-1 py-1.5 bg-green-600 text-white rounded-xl text-xs font-bold">✅ {language==="es"?"Aprobar":"Approve"}</button>
+                                                <button onClick={()=>reviewTimeOff(req.id,"denied")} className="flex-1 py-1.5 bg-red-500 text-white rounded-xl text-xs font-bold">❌ {language==="es"?"Denegar":"Deny"}</button>
+                                            </div>
+                                        )}
+                                        {mgrAccess && req.status==="pending" && !toStale(req) && !canReviewTO(req) && (
+                                            <p className="text-[11px] italic text-gray-400 mt-2">⏳ {
+                                                req.employee === staffName
+                                                    ? (isAdmin(req.employee)
+                                                        ? (language==="es"?"Pendiente de aprobación de un dueño":"Awaiting owner approval")
+                                                        : (language==="es"?"Pendiente de aprobación de un gerente o dueño":"Awaiting approval from a manager or owner"))
+                                                    : (language==="es"?"Solo un dueño puede aprobar la solicitud de un gerente":"Only an owner can approve a manager's request")
+                                            }</p>
+                                        )}
+                                        {req.employee===staffName && (req.status==="pending"||req.status==="approved") && !toIsPast(req) && (
+                                            <button onClick={()=>cancelTimeOff(req)} className="w-full mt-2 py-1.5 border border-red-200 text-red-600 rounded-xl text-xs font-bold active:scale-95">🗑️ {language==="es"?"Cancelar mi solicitud":"Cancel my request"}</button>
+                                        )}
                                     </div>
-                                    {req.status==="pending" && canReviewTO(req) && (
-                                        <div className="flex gap-2 mt-2">
-                                            <button onClick={()=>reviewTimeOff(req.id,"approved")} className="flex-1 py-1.5 bg-green-600 text-white rounded-xl text-xs font-bold">✅ {language==="es"?"Aprobar":"Approve"}</button>
-                                            <button onClick={()=>reviewTimeOff(req.id,"denied")} className="flex-1 py-1.5 bg-red-500 text-white rounded-xl text-xs font-bold">❌ {language==="es"?"Denegar":"Deny"}</button>
-                                        </div>
-                                    )}
-                                    {mgrAccess && req.status==="pending" && !canReviewTO(req) && (
-                                        <p className="text-[11px] italic text-gray-400 mt-2">⏳ {
-                                            req.employee === staffName
-                                                ? (isAdmin(req.employee)
-                                                    ? (language==="es"?"Pendiente de aprobación de un dueño":"Awaiting owner approval")
-                                                    : (language==="es"?"Pendiente de aprobación de un gerente o dueño":"Awaiting approval from a manager or owner"))
-                                                : (language==="es"?"Solo un dueño puede aprobar la solicitud de un gerente":"Only an owner can approve a manager's request")
-                                        }</p>
-                                    )}
-                                    {req.employee===staffName && (req.status==="pending"||req.status==="approved") && (
-                                        <button onClick={()=>cancelTimeOff(req)} className="w-full mt-2 py-1.5 border border-red-200 text-red-600 rounded-xl text-xs font-bold active:scale-95">🗑️ {language==="es"?"Cancelar mi solicitud":"Cancel my request"}</button>
-                                    )}
-                                </div>
-                            ))}
-                            {timeOffRequests.filter(r=>mgrAccess||r.employee===staffName).length===0&&(
-                                <p className="text-center text-gray-400 text-sm py-6">{language==="es"?"Sin solicitudes":"No requests yet"}</p>
-                            )}
+                                );
+                                const heading = (txt, n) => (
+                                    <div className="flex items-center justify-between pt-1">
+                                        <p className="font-bold text-gray-800 text-sm">{txt}</p>
+                                        <span className="text-[11px] font-bold text-gray-400">{n}</span>
+                                    </div>
+                                );
+                                if (!mine.length) return <p className="text-center text-gray-400 text-sm py-6">{language==="es"?"Sin solicitudes":"No requests yet"}</p>;
+                                return (
+                                    <div className="space-y-3">
+                                        {heading(mgrAccess ? (language==="es"?"Para revisar":"Needs review") : (language==="es"?"Pendientes":"Pending"), needsReview.length)}
+                                        {needsReview.length ? needsReview.map(r=>card(r,false))
+                                            : <p className="text-center text-gray-400 text-xs py-3">{language==="es"?"Nada por revisar":"Nothing to review right now"}</p>}
+                                        {staleCount>0 && (
+                                            <button onClick={dismissStaleTO} className="w-full py-2 rounded-xl text-xs font-bold border border-gray-200 text-gray-500 active:scale-95">
+                                                🗂️ {language==="es"?"Archivar "+staleCount+" solicitud(es) vencida(s)":"Archive "+staleCount+" expired request"+(staleCount===1?"":"s")}
+                                            </button>
+                                        )}
+                                        {upcoming.length>0 && <>
+                                            {heading(language==="es"?"Descansos aprobados":"Approved time off", upcoming.length)}
+                                            {upcoming.map(r=>card(r,false))}
+                                        </>}
+                                        {archive.length>0 && <>
+                                            <button onClick={()=>setToShowArchive(v=>!v)} className="w-full flex items-center justify-between pt-1 text-left">
+                                                <span className="font-bold text-gray-500 text-sm">{language==="es"?"Historial":"Past & closed"}</span>
+                                                <span className="text-[11px] font-bold text-gray-400">{archive.length} {toShowArchive?"▲":"▼"}</span>
+                                            </button>
+                                            {toShowArchive && archive.map(r=>card(r,true))}
+                                        </>}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     )}
 
@@ -13259,7 +13343,11 @@
                         const shiftsKW = schedKW.exists ? (schedKW.data().publishedShifts || schedKW.data().shifts || []) : [];
 
                         // Time off pending
+                        // Only count requests an owner can still act on. Dates that have already
+                        // passed used to inflate this number and make the brief look alarming.
+                        const briefToday = window.fmtLocalDate(new Date());
                         const toSnap = await db.collection("timeOffRequests").where("status","==","pending").get();
+                        const toLive = toSnap.docs.filter(x => { const v = x.data(); return (v.endDate || v.startDate || "") >= briefToday; });
 
                         // Swaps pending
                         const swapSnap = await db.collection("shiftSwaps").where("status","==","pending_approval").get();
@@ -13295,7 +13383,7 @@
                             pendingOrders: ordersSnap.size,
                             shiftsThisWeek: shiftsCWE.length + shiftsKW.length,
                             openShifts: shiftsCWE.filter(s=>s.employee==="__OPEN__").length + shiftsKW.filter(s=>s.employee==="__OPEN__").length,
-                            pendingTimeOff: toSnap.size,
+                            pendingTimeOff: toLive.length,
                             pendingSwaps: swapSnap.size,
                             openMaint: maintSnap.size,
                             laborCWE: totalLaborCWE,
