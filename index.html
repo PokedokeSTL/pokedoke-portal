@@ -699,7 +699,7 @@
             { id: 8, name: "Sheniel Dixon", role: "Line Server", pin: "4880", location: "cwe" },
             { id: 9, name: "Damon Dyson", role: "Line Server", pin: "1089", location: "cwe" },
             // Kirkwood
-            { id: 10, name: "Paul Ferrer", role: "Team Leader", pin: "8611", location: "all" },
+            { id: 10, name: "Paul Ferrer", role: "Team Leader", pin: "8611", location: "kirkwood" },
             { id: 12, name: "Sujit Sengupta", role: "Line Server", pin: "3391", location: "kirkwood" },
             { id: 13, name: "Ajit Sengupta", role: "Line Server", pin: "3392", location: "kirkwood" },
             { id: 14, name: "Saury Dudenhoeffer", role: "Line Server", pin: "0363", location: "kirkwood" },
@@ -5891,7 +5891,10 @@
                 if (reqEnd < reqStart) return null;
                 const meRec = (staffList || []).find(x => x.name === staffName) || {};
                 const myLocs = meRec.location === "all" ? ["cwe", "kirkwood"] : [meRec.location || "cwe"];
-                const worksAt = (name, loc) => { const r = (staffList || []).find(x => x.name === name); return !r || r.location === "all" || r.location === loc; };
+                // A name we can't find on the roster (departed staff with a lingering request, a
+                // renamed account) used to count against EVERY location, silently eating a cap
+                // slot at both stores. Unknown names now count nowhere.
+                const worksAt = (name, loc) => { const r = (staffList || []).find(x => x.name === name); return !!r && (r.location === "all" || r.location === loc); };
                 const locName = (l) => l === "cwe" ? "Central West End" : "Kirkwood";
                 // Blackouts (global or matching one of the requester's locations)
                 const hit = (toBlackouts || []).find(b => (!b.loc || b.loc === "all" || myLocs.includes(b.loc)) && b.from <= reqEnd && (b.to || b.from) >= reqStart);
@@ -5906,21 +5909,33 @@
                 while (d <= endD && guard++ < 400) {
                     const ds = window.fmtLocalDate(d);
                     const dayReqs = overlapping(ds);
-                    for (const loc of myLocs) {
-                        // Per-location staff cap
+                    // Why a location is unavailable to this requester, or null if it has room.
+                    const locBlocked = (loc) => {
                         const cap = (toCaps && typeof toCaps[loc] === "number") ? toCaps[loc] : 2;
-                        if (cap > 0 && dayReqs.filter(r => worksAt(r.employee, loc)).length >= cap) {
-                            return language === "es"
-                                ? "⚠️ " + fmtDateNice(ds) + " ya tiene el número máximo de solicitudes en " + locName(loc) + " — elige otra fecha"
-                                : "⚠️ " + fmtDateNice(ds) + " already has the maximum number of requests at " + locName(loc) + " — please pick another date";
-                        }
-                        // Per-location Team Leader cap (only applies when the requester is a Team Leader)
+                        if (cap > 0 && dayReqs.filter(r => worksAt(r.employee, loc)).length >= cap) return { kind: "staff", loc };
+                        // Team Leader cap only applies when the requester is a Team Leader
                         const mgrCap = (toMgrCaps && typeof toMgrCaps[loc] === "number") ? toMgrCaps[loc] : 0;
-                        if (mgrCap > 0 && isAdmin(staffName) && dayReqs.filter(r => isAdmin(r.employee) && worksAt(r.employee, loc)).length >= mgrCap) {
-                            return language === "es"
-                                ? "⚠️ " + fmtDateNice(ds) + " ya tiene un Team Leader con descanso en " + locName(loc) + " — coordina con tu equipo u otra fecha"
-                                : "⚠️ " + fmtDateNice(ds) + " already has a Team Leader off at " + locName(loc) + " — coordinate coverage or pick another date";
-                        }
+                        if (mgrCap > 0 && isAdmin(staffName) && dayReqs.filter(r => isAdmin(r.employee) && worksAt(r.employee, loc)).length >= mgrCap) return { kind: "mgr", loc };
+                        return null;
+                    };
+                    // Someone assigned to one store is blocked when that store is full. Someone who
+                    // works both stores is blocked only when BOTH are full: if one store still has
+                    // room they can be covered there. Blocking a both-stores employee because a
+                    // single store was busy had it backwards, making the most flexible staff the
+                    // hardest to give a day off.
+                    const blocks = myLocs.map(locBlocked);
+                    if (blocks.length && blocks.every(Boolean)) {
+                        const b = blocks[0];
+                        const where = blocks.length > 1
+                            ? (language === "es" ? "ambas tiendas" : "both locations")
+                            : locName(b.loc);
+                        return b.kind === "staff"
+                            ? (language === "es"
+                                ? "⚠️ " + fmtDateNice(ds) + " ya tiene el número máximo de solicitudes en " + where + " — elige otra fecha"
+                                : "⚠️ " + fmtDateNice(ds) + " already has the maximum number of requests at " + where + " — please pick another date")
+                            : (language === "es"
+                                ? "⚠️ " + fmtDateNice(ds) + " ya tiene un Team Leader con descanso en " + where + " — coordina con tu equipo u otra fecha"
+                                : "⚠️ " + fmtDateNice(ds) + " already has a Team Leader off at " + where + " — coordinate coverage or pick another date");
                     }
                     d.setDate(d.getDate() + 1);
                 }
