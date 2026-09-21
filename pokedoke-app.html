@@ -4975,6 +4975,7 @@
             const [weekSalesTotal, setWeekSalesTotal] = useState(0);
             const [showCsvImport, setShowCsvImport] = useState(false);
             const [csvParsedShifts, setCsvParsedShifts] = useState([]);
+            const [csvSkipped, setCsvSkipped] = useState({ other: [], unknown: [] });
             const [csvImporting, setCsvImporting] = useState(false);
             const csvFileRef = React.useRef(null);
             const mgrAccess = isAdmin(staffName);
@@ -5726,7 +5727,21 @@
                 const reader = new FileReader();
                 reader.onload = (evt) => {
                     const parsed = parseCsvFile(evt.target.result);
-                    setCsvParsedShifts(parsed);
+                    // A 7Shifts export can cover both stores. Keep only rows for people who work
+                    // at the store being imported into; everything else used to land here too and
+                    // sit hidden in the data (and on every printout).
+                    const findStaff = (n) => staffList.find(s => s.name === n) || staffList.find(s => normKey(s.name) === normKey(n));
+                    const kept = [], other = [], unknown = [];
+                    parsed.forEach(sh => {
+                        if (/^open\s*shifts?$/i.test(sh.employee)) { kept.push({ ...sh, employee: "__OPEN__" }); return; }
+                        const rec = findStaff(sh.employee);
+                        if (!rec) { unknown.push(sh); return; }
+                        // Use the roster's spelling, or the screen won't recognise the name and hides the shift.
+                        if (rec.location === schedLocation || rec.location === "all") kept.push({ ...sh, employee: rec.name });
+                        else other.push(sh);
+                    });
+                    setCsvParsedShifts(kept);
+                    setCsvSkipped({ other, unknown });
                     setShowCsvImport(true);
                 };
                 reader.readAsText(file);
@@ -6271,42 +6286,232 @@
                 } catch(e) { console.error(e); window.showToast(language==="es"?"Error al restaurar":"Couldn't restore","error"); }
             };
 
+            // ---- Posting the schedule (print + PDF download) --------------------------
+            // Print and Download are built from one grid so they can never disagree. Both use
+            // the screen's store filter: the old print read the raw week document, which could
+            // hold shifts for the other store's staff that the screen had been hiding.
+            const STORE_CONTACT = {
+                cwe: { address: "23 S. Euclid Ave, Ste B, St. Louis, MO 63108", phone: "(314) 833-5900" },
+                kirkwood: { address: "130 S. Kirkwood Rd, Kirkwood, MO", phone: "(314) 784-5900" }
+            };
+            const [postAddr, setPostAddr] = useState({});
+            useEffect(() => {
+                db.collection("bizInfo").doc(schedLocation).get()
+                    .then(b => { if (b.exists && b.data().address) setPostAddr(p => ({ ...p, [schedLocation]: b.data().address })); })
+                    .catch(() => {});
+            }, [schedLocation]);
+            const onThisStore = (s) => s.employee === "__OPEN__" || visLocNames.has(s.employee);
+            const byStartTime = (a, b) => (a.startTime || "").localeCompare(b.startTime || "");
+            // Posts the PUBLISHED schedule, since that's what staff see in the app. If nothing
+            // is published yet it falls back to the draft and stamps it DRAFT in big letters.
+            const buildPostedGrid = () => {
+                let src = (publishedShifts || []).filter(onThisStore), isDraft = false;
+                if (!src.length) {
+                    src = (shifts || []).filter(onThisStore);
+                    if (!src.length) { window.showToast(language==="es"?"No hay turnos esta semana":"No shifts this week", "info"); return null; }
+                    isDraft = true;
+                    window.showToast(language==="es"?"Aún no está publicado. Se marcó como BORRADOR.":"Not published yet, so this is marked DRAFT.", "info");
+                } else if (mgrAccess && hasUnpublishedChanges) {
+                    window.showToast(language==="es"?"Se usó la versión publicada. Tus cambios sin publicar no aparecen.":"Using the published schedule. Your unpublished edits aren't on it.", "info");
+                }
+                const people = staffList.map(s => s.name).filter(n => src.some(s => s.employee === n));
+                const rows = people.map(n => ({ name: n, days: DAY_KEYS.map(dk => src.filter(s => s.employee === n && s.day === dk).sort(byStartTime)) }));
+                const open = DAY_KEYS.map(dk => src.filter(s => s.employee === "__OPEN__" && s.day === dk).sort(byStartTime));
+                if (open.some(a => a.length)) rows.push({ name: language==="es" ? "Turnos abiertos" : "Open shifts", open: true, days: open });
+                const loc = language==="es" ? "es-US" : "en-US";
+                const start = new Date(weekStart + "T12:00:00");
+                const end = new Date(weekStart + "T12:00:00"); end.setDate(end.getDate() + 6);
+                const contact = STORE_CONTACT[schedLocation] || {};
+                return {
+                    storeName: LOCATIONS.find(l => l.id === schedLocation)?.name || schedLocation,
+                    address: postAddr[schedLocation] || contact.address || "",
+                    phone: contact.phone || "",
+                    range: start.toLocaleDateString(loc, { month: "short", day: "numeric" }) + " – " + end.toLocaleDateString(loc, { month: "short", day: "numeric", year: "numeric" }),
+                    days: DAY_KEYS.map((dk, i) => { const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + i); return { label: DAYS[i].slice(0, 3), date: (d.getMonth() + 1) + "/" + d.getDate(), note: dayNotes[dk] || "" }; }),
+                    rows, isDraft,
+                    printedAt: new Date().toLocaleString(loc, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+                };
+            };
+            const postEsc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
             const printSchedule = () => {
-                const locName = LOCATIONS.find(l=>l.id===schedLocation)?.name || schedLocation;
-                const html = `<html><head><title>${locName} Schedule</title><style>
-                    body{font-family:Arial,sans-serif;padding:20px;}
-                    h1{color:#0891b2;}h2{margin-top:0;color:#666;}
-                    table{width:100%;border-collapse:collapse;margin-top:15px;}
-                    th{background:#0891b2;color:white;padding:10px;text-align:left;}
-                    td{padding:10px;border:1px solid #ddd;vertical-align:top;}
-                    .day{background:#f0f9ff;font-weight:bold;width:120px;}
-                    .shift{margin-bottom:5px;padding:6px;background:#ecfeff;border-left:3px solid #0891b2;border-radius:4px;}
-                    .open{background:#fef3c7;border-left-color:#f59e0b;}
-                    .emp{font-weight:bold;}.time{color:#666;font-size:13px;}
-                    @media print{h1{font-size:18pt;}}
+                const g = buildPostedGrid();
+                if (!g) return;
+                const L = (en, esT) => language === "es" ? esT : en;
+                const head = g.days.map(d => `<th>${postEsc(d.label)} ${postEsc(d.date)}${d.note ? `<div class="note">${postEsc(d.note)}</div>` : ""}</th>`).join("");
+                const body = g.rows.map(r => `<tr class="${r.open ? "open" : ""}"><td class="name">${postEsc(r.name)}</td>` +
+                    r.days.map(list => `<td>${list.map(s => `<div class="sh"><div class="t">${postEsc(fmtShiftRange(s))}</div>${s.role ? `<div class="r">${postEsc(s.role)}</div>` : ""}${s.notes ? `<div class="n">${postEsc(s.notes)}</div>` : ""}</div>`).join("")}</td>`).join("") +
+                    `</tr>`).join("");
+                const html = `<!doctype html><html><head><meta charset="utf-8"><title>PokeDoke ${postEsc(g.storeName)} Schedule ${postEsc(g.range)}</title><style>
+                    @page{size:letter landscape;margin:0.4in;}
+                    body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+                    .hdr{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #0891b2;padding-bottom:6px;margin-bottom:8px;}
+                    .store{font-size:20px;font-weight:bold;color:#0891b2;}
+                    .meta{font-size:11px;color:#444;margin-top:2px;}
+                    .week{font-size:15px;font-weight:bold;text-align:right;}
+                    .draft{background:#fef3c7;color:#92400e;font-weight:bold;padding:5px 8px;border:1px solid #f59e0b;margin-bottom:8px;font-size:12px;text-align:center;}
+                    table{width:100%;border-collapse:collapse;table-layout:fixed;}
+                    thead{display:table-header-group;}
+                    th{background:#0891b2;color:#fff;font-size:11px;padding:4px;border:1px solid #0891b2;text-align:center;}
+                    th.name{width:15%;text-align:left;}
+                    th .note{font-size:8.5px;font-weight:normal;color:#e0f2fe;margin-top:2px;}
+                    td{border:1px solid #cbd5e1;padding:3px 4px;vertical-align:top;font-size:10.5px;}
+                    td.name{font-weight:bold;background:#f0f9ff;}
+                    tr.open td.name{background:#fef3c7;}
+                    tbody tr:nth-child(even) td:not(.name){background:#f8fafc;}
+                    tr{page-break-inside:avoid;}
+                    .sh{margin-bottom:3px;} .t{font-weight:bold;white-space:nowrap;} .r{color:#555;font-size:9.5px;} .n{color:#666;font-style:italic;font-size:9px;}
+                    .foot{margin-top:6px;font-size:9px;color:#666;display:flex;justify-content:space-between;}
                 </style></head><body>
-                <h1>🐟 PokeDoke — ${locName}</h1>
-                <h2>Week of ${new Date(weekStart+"T12:00:00").toLocaleDateString()}</h2>
-                <table><thead><tr><th>Day</th><th>Shifts</th></tr></thead><tbody>`;
-                let body = "";
-                DAY_KEYS.forEach((dk,di)=>{
-                    const dayShifts = shifts.filter(s=>s.day===dk).sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
-                    body += `<tr><td class="day">${DAYS[di]}<br><span style="font-weight:normal;font-size:11px;color:#999">${getDateForDay(di)}</span></td><td>`;
-                    if(dayShifts.length===0) body+=`<em style="color:#999">No shifts</em>`;
-                    dayShifts.forEach(s=>{
-                        const isOpen=s.employee==="__OPEN__";
-                        body+=`<div class="shift${isOpen?' open':''}">
-                            <div class="emp">${isOpen?'🆕 OPEN SHIFT':s.employee}${s.isBD?' <span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px">📉 BD</span>':''}</div>
-                            <div class="time">${fmtShiftRange(s)}${s.role?' · '+s.role:''}</div>
-                            ${s.notes?`<div style="font-size:12px;color:#666;font-style:italic">${s.notes}</div>`:''}
-                        </div>`;
-                    });
-                    body += `</td></tr>`;
-                });
-                const win = window.open("","_blank");
-                win.document.write(html+body+"</tbody></table></body></html>");
+                <div class="hdr"><div><div class="store">PokeDoke ${postEsc(g.storeName)}</div><div class="meta">${postEsc(g.address)}${g.address && g.phone ? " &middot; " : ""}${postEsc(g.phone)}</div></div>
+                <div class="week">${L("Week of", "Semana del")} ${postEsc(g.range)}</div></div>
+                ${g.isDraft ? `<div class="draft">${L("DRAFT: NOT PUBLISHED. Shifts may still change.", "BORRADOR: NO PUBLICADO. Los turnos pueden cambiar.")}</div>` : ""}
+                <table><thead><tr><th class="name">${L("Team member", "Empleado")}</th>${head}</tr></thead><tbody>${body}</tbody></table>
+                <div class="foot"><span>${L("Printed", "Impreso")} ${postEsc(g.printedAt)}</span><span>${L("Check the app for the latest version.", "Revisa la app para la versión más reciente.")}</span></div>
+                </body></html>`;
+                const win = window.open("", "_blank");
+                if (!win) { window.showToast(L("Your browser blocked the print window. Allow pop-ups for this site, or use Download.", "Tu navegador bloqueó la ventana. Permite ventanas emergentes o usa Descargar."), "error"); return; }
+                win.document.write(html);
                 win.document.close();
-                setTimeout(()=>win.print(),300);
+                setTimeout(() => win.print(), 300);
+            };
+
+            // Real PDF file, same layout as the printout, drawn with pdf-lib (already loaded for onboarding).
+            const downloadSchedulePdf = async () => {
+                const g = buildPostedGrid();
+                if (!g) return;
+                if (!window.PDFLib) { window.showToast(language==="es"?"La librería PDF no cargó. Recarga e intenta.":"PDF library didn't load. Refresh and try again.", "error"); return; }
+                const L = (en, esT) => language === "es" ? esT : en;
+                try {
+                    const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+                    const pdf = await PDFDocument.create();
+                    const font = await pdf.embedFont(StandardFonts.Helvetica);
+                    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+                    // Standard PDF fonts can't draw emoji or unusual characters; drop anything they can't.
+                    const okChars = new Set(font.getCharacterSet());
+                    const clean = (t) => Array.from(String(t == null ? "" : t)).filter(ch => okChars.has(ch.codePointAt(0))).join("");
+                    const cyan = rgb(0.031, 0.569, 0.698), ink = rgb(0.07, 0.07, 0.07), grey = rgb(0.35, 0.35, 0.35), line = rgb(0.8, 0.84, 0.88);
+                    const W = 792, H = 612, M = 29, tableW = W - 2 * M, nameW = 112, dayW = (tableW - nameW) / 7;
+                    const wrap = (text, f, size, maxW) => {
+                        const out = []; let cur = "";
+                        clean(text).split(/\s+/).filter(Boolean).forEach(w => {
+                            const test = cur ? cur + " " + w : w;
+                            if (f.widthOfTextAtSize(test, size) > maxW && cur) { out.push(cur); cur = w; } else cur = test;
+                        });
+                        if (cur) out.push(cur);
+                        return out;
+                    };
+                    const cellLines = (list) => {
+                        const out = [];
+                        list.forEach(s => {
+                            out.push({ t: clean(fmtShiftRange(s)), f: bold, size: 8, color: ink });
+                            if (s.role) wrap(s.role, font, 7, dayW - 6).forEach(l => out.push({ t: l, f: font, size: 7, color: grey }));
+                            if (s.notes) wrap(s.notes, font, 6.5, dayW - 6).slice(0, 2).forEach(l => out.push({ t: l, f: font, size: 6.5, color: grey }));
+                            out.push({ gap: 2 });
+                        });
+                        return out;
+                    };
+                    const linesH = (ls) => ls.reduce((h, l) => h + (l.gap || (l.size + 2)), 0);
+                    let page, y, pageNo = 0;
+                    const headNotes = g.days.map(d => d.note ? wrap(d.note, font, 6, dayW - 6).slice(0, 2) : []);
+                    const headH = 18 + Math.max(0, ...headNotes.map(n => n.length)) * 7;
+                    const newPage = () => {
+                        page = pdf.addPage([W, H]); pageNo++;
+                        y = H - M;
+                        page.drawText(clean("PokeDoke " + g.storeName), { x: M, y: y - 16, size: 16, font: bold, color: cyan });
+                        const wk = clean(L("Week of ", "Semana del ") + g.range);
+                        page.drawText(wk, { x: W - M - bold.widthOfTextAtSize(wk, 12), y: y - 15, size: 12, font: bold, color: ink });
+                        const meta = clean([g.address, g.phone].filter(Boolean).join("  ·  "));
+                        page.drawText(meta, { x: M, y: y - 29, size: 8.5, font, color: grey });
+                        y -= 35;
+                        page.drawRectangle({ x: M, y: y, width: tableW, height: 2, color: cyan });
+                        y -= 6;
+                        if (g.isDraft) {
+                            page.drawRectangle({ x: M, y: y - 16, width: tableW, height: 16, color: rgb(0.996, 0.953, 0.78), borderColor: rgb(0.96, 0.62, 0.04), borderWidth: 0.8 });
+                            const dt = clean(L("DRAFT: NOT PUBLISHED. Shifts may still change.", "BORRADOR: NO PUBLICADO. Los turnos pueden cambiar."));
+                            page.drawText(dt, { x: M + (tableW - bold.widthOfTextAtSize(dt, 9)) / 2, y: y - 11.5, size: 9, font: bold, color: rgb(0.57, 0.25, 0.05) });
+                            y -= 22;
+                        }
+                        // column header row
+                        page.drawRectangle({ x: M, y: y - headH, width: tableW, height: headH, color: cyan });
+                        page.drawText(clean(L("Team member", "Empleado")), { x: M + 4, y: y - 12, size: 8.5, font: bold, color: rgb(1, 1, 1) });
+                        g.days.forEach((d, i) => {
+                            const x = M + nameW + i * dayW;
+                            const lbl = clean(d.label + " " + d.date);
+                            page.drawText(lbl, { x: x + (dayW - bold.widthOfTextAtSize(lbl, 8.5)) / 2, y: y - 12, size: 8.5, font: bold, color: rgb(1, 1, 1) });
+                            headNotes[i].forEach((n, k) => page.drawText(n, { x: x + 3, y: y - 20 - k * 7, size: 6, font, color: rgb(0.88, 0.95, 1) }));
+                        });
+                        y -= headH;
+                    };
+                    const footer = () => {
+                        page.drawText(clean(L("Printed ", "Impreso ") + g.printedAt + "   ·   " + L("Check the app for the latest version.", "Revisa la app para la versión más reciente.")), { x: M, y: 14, size: 7, font, color: grey });
+                        const pn = clean(L("Page ", "Página ") + pageNo);
+                        page.drawText(pn, { x: W - M - font.widthOfTextAtSize(pn, 7), y: 14, size: 7, font, color: grey });
+                    };
+                    newPage();
+                    g.rows.forEach((r, ri) => {
+                        const nameLines = wrap(r.name, bold, 8.5, nameW - 8);
+                        const cells = r.days.map(cellLines);
+                        const rowH = Math.max(16, nameLines.length * 10.5 + 6, ...cells.map(c => linesH(c) + 5));
+                        if (y - rowH < 26) { footer(); newPage(); }
+                        const top = y;
+                        if (ri % 2 === 1) page.drawRectangle({ x: M + nameW, y: top - rowH, width: tableW - nameW, height: rowH, color: rgb(0.973, 0.98, 0.988) });
+                        page.drawRectangle({ x: M, y: top - rowH, width: nameW, height: rowH, color: r.open ? rgb(0.996, 0.953, 0.78) : rgb(0.941, 0.976, 1) });
+                        // Top rule after the fills, or a shaded row paints over the line above it.
+                        page.drawLine({ start: { x: M, y: top }, end: { x: M + tableW, y: top }, thickness: 0.5, color: line });
+                        nameLines.forEach((l, k) => page.drawText(l, { x: M + 4, y: top - 11 - k * 10.5, size: 8.5, font: bold, color: ink }));
+                        cells.forEach((ls, i) => {
+                            let cy = top - 10;
+                            const x = M + nameW + i * dayW + 3;
+                            ls.forEach(l => { if (l.gap) { cy -= l.gap; return; } page.drawText(l.t, { x, y: cy, size: l.size, font: l.f, color: l.color }); cy -= l.size + 2; });
+                        });
+                        // grid lines
+                        page.drawLine({ start: { x: M, y: top - rowH }, end: { x: M + tableW, y: top - rowH }, thickness: 0.5, color: line });
+                        for (let i = 0; i <= 8; i++) {
+                            const x = i === 0 ? M : i === 8 ? M + tableW : M + nameW + (i - 1) * dayW;
+                            page.drawLine({ start: { x, y: top }, end: { x, y: top - rowH }, thickness: 0.5, color: line });
+                        }
+                        y -= rowH;
+                    });
+                    footer();
+                    const bytes = await pdf.save();
+                    const blob = new Blob([bytes], { type: "application/pdf" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "PokeDoke-" + g.storeName.replace(/\s+/g, "") + "-Schedule-" + weekStart + (g.isDraft ? "-DRAFT" : "") + ".pdf";
+                    document.body.appendChild(a); a.click(); a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 4000);
+                } catch (e) { console.error("schedule pdf", e); window.showToast(L("Couldn't make the PDF: ", "No se pudo crear el PDF: ") + (e.message || e), "error"); }
+            };
+
+            // ---- Other-store shifts saved in this store's week -------------------------
+            // The screen has always hidden these; they got in mainly through CSV imports that
+            // pulled every row into whichever store was open. Listed by name so a manager can
+            // spot genuine cover shifts before removing anything.
+            const storeOfName = (n) => { const r = staffList.find(s => s.name === n); return r ? (r.location || "cwe") : null; };
+            const isStrayShift = (s) => { if (s.employee === "__OPEN__") return false; const l = storeOfName(s.employee); return !!l && l !== "all" && l !== schedLocation; };
+            const strayList = mgrAccess ? [...(shifts || []), ...(publishedShifts || [])].filter(isStrayShift) : [];
+            const strayIds = new Set(strayList.map(s => s.id));
+            const strayNames = [...new Set(strayList.map(s => s.employee))];
+            const removeStrayShifts = async () => {
+                const ok = await window.askConfirm({
+                    title: language==="es" ? "¿Quitar " + strayIds.size + " turno(s) de la otra tienda?" : "Remove " + strayIds.size + " other-store shift" + (strayIds.size === 1 ? "" : "s") + "?",
+                    body: language==="es"
+                        ? "Son de: " + strayNames.join(", ") + ". Si alguien realmente cubre esta tienda esta semana, cancela y cambia su tienda a \"Ambas\" primero. Se guarda una copia de respaldo."
+                        : "They belong to: " + strayNames.join(", ") + ". If any of them is actually covering this store this week, cancel and set their store to \"Both\" first. A backup copy is saved.",
+                    danger: true
+                });
+                if (!ok) return;
+                try {
+                    await snapshotSchedule(weekKey, "before removing other-store shifts");
+                    const nextDraft = (shifts || []).filter(s => !isStrayShift(s));
+                    const nextPub = (publishedShifts || []).filter(s => !isStrayShift(s));
+                    await db.collection("schedules").doc(weekKey).set({ draftShifts: mgrAccess ? nextDraft : nextPub, publishedShifts: nextPub, updatedBy: staffName, updatedAt: new Date().toISOString() }, { merge: true });
+                    setPublishedShifts(nextPub);
+                    setShifts(mgrAccess ? nextDraft : nextPub);
+                    window.showToast((language==="es" ? "Quitados: " : "Removed ") + strayIds.size, "success");
+                } catch (e) { window.showToast((language==="es" ? "Error: " : "Error: ") + e.message, "error"); }
             };
 
             const myShifts = shifts.filter(s => s.employee === staffName);
@@ -6432,6 +6637,13 @@
                                 </div>
                             )}
 
+                            {mgrAccess && strayIds.size > 0 && (
+                                <div className="rounded-2xl p-3" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+                                    <p className="font-bold text-sm" style={{ color: "#92400e" }}>🧹 {language==="es" ? strayIds.size + " turno(s) de la otra tienda guardados aquí" : strayIds.size + " shift" + (strayIds.size === 1 ? "" : "s") + " for other-store staff saved here"}</p>
+                                    <p className="text-xs mt-1" style={{ color: "#92400e" }}>{language==="es" ? "No aparecen en pantalla ni al imprimir, pero siguen guardados: " : "They're hidden on screen and on printouts, but still saved: "}{strayNames.join(", ")}</p>
+                                    <button onClick={removeStrayShifts} className="mt-2 w-full py-2 rounded-xl text-xs font-bold active:scale-95" style={{ background: "#fff", border: "1px solid #f59e0b", color: "#92400e" }}>{language==="es" ? "Revisar y quitar" : "Review & remove"}</button>
+                                </div>
+                            )}
                             {mgrAccess && (
                                 <div className="grid grid-cols-2 gap-2">
                                     {schedStatus==="draft"?(
@@ -6444,6 +6656,7 @@
                                     <button onClick={copyWeek} className="py-2 bg-poke-600 text-white rounded-xl text-xs font-bold active:scale-95">📋 {language==="es"?"Copiar →":"Copy →"}</button>
                                     <button onClick={autoSchedule} className="py-2 bg-purple-600 text-white rounded-xl text-xs font-bold active:scale-95">✨ {language==="es"?"Auto-generar":"Auto-Generate"}</button>
                                     <button onClick={printSchedule} className="py-2 bg-gray-700 text-white rounded-xl text-xs font-bold active:scale-95">🖨️ {language==="es"?"Imprimir":"Print"}</button>
+                                    <button onClick={downloadSchedulePdf} className="py-2 bg-gray-700 text-white rounded-xl text-xs font-bold active:scale-95">⬇️ {language==="es"?"Descargar PDF":"Download PDF"}</button>
                                     <input type="file" accept=".csv" ref={csvFileRef} onChange={handleCsvImport} className="hidden" />
                                     <button onClick={()=>csvFileRef.current?.click()} className="py-2 bg-blue-600 text-white rounded-xl text-xs font-bold active:scale-95">📤 {language==="es"?"Importar CSV":"Import CSV"}</button>
                                     {ownerAccess && <button onClick={()=>{setTempCloseTime(closeTime);setShowSettings(true);}} className="col-span-2 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-bold active:scale-95">⚙️ {language==="es"?"Ajustes — Hora de Cierre":"Settings — Close Time"}: {fmtTime(closeTime)}</button>}
@@ -6452,7 +6665,7 @@
 
                             {/* ── 7Shifts CSV Import Modal ── */}
                             {showCsvImport && (
-                                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={()=>{setShowCsvImport(false);setCsvParsedShifts([]);}}>
+                                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={()=>{setShowCsvImport(false);setCsvParsedShifts([]);setCsvSkipped({other:[],unknown:[]});}}>
                                     <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[85vh] overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
                                         <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-white flex justify-between items-center flex-shrink-0">
                                             <div>
@@ -6463,10 +6676,16 @@
                                                     {" · "}{LOCATIONS.find(l=>l.id===schedLocation)?.name}
                                                 </p>
                                             </div>
-                                            <button onClick={()=>{setShowCsvImport(false);setCsvParsedShifts([]);}} className="text-gray-400 text-xl leading-none">✕</button>
+                                            <button onClick={()=>{setShowCsvImport(false);setCsvParsedShifts([]);setCsvSkipped({other:[],unknown:[]});}} className="text-gray-400 text-xl leading-none">✕</button>
                                         </div>
 
                                         <div className="overflow-y-auto flex-1 p-4 space-y-3">
+                                            {(csvSkipped.other.length > 0 || csvSkipped.unknown.length > 0) && (
+                                                <div className="rounded-xl p-3 text-xs space-y-1.5" style={{ background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e" }}>
+                                                    {csvSkipped.other.length > 0 && <p><span className="font-bold">{language==="es" ? "Omitidos " + csvSkipped.other.length + (csvSkipped.other.length === 1 ? " turno" : " turnos") + " de la otra tienda: " : "Skipped " + csvSkipped.other.length + " shift" + (csvSkipped.other.length === 1 ? "" : "s") + " for the other store: "}</span>{[...new Set(csvSkipped.other.map(x => x.employee))].join(", ")}. {language==="es" ? "Impórtalos con esa tienda seleccionada." : "Import them with that store selected."}</p>}
+                                                    {csvSkipped.unknown.length > 0 && <p><span className="font-bold">{language==="es" ? "Omitidos " + csvSkipped.unknown.length + (csvSkipped.unknown.length === 1 ? " turno" : " turnos") + " de nombres que no están en tu lista: " : "Skipped " + csvSkipped.unknown.length + " shift" + (csvSkipped.unknown.length === 1 ? "" : "s") + " for names not on your staff list: "}</span>{[...new Set(csvSkipped.unknown.map(x => x.employee))].join(", ")}. {language==="es" ? "Agrégalos a la lista de personal y vuelve a importar." : "Add them to the staff list, then import again."}</p>}
+                                                </div>
+                                            )}
                                             {csvParsedShifts.length === 0 ? (
                                                 <div className="text-center py-8 text-gray-400">
                                                     <p className="text-4xl mb-2">📭</p>
