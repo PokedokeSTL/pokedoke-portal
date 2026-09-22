@@ -6295,6 +6295,15 @@
                 kirkwood: { address: "130 S. Kirkwood Rd, Kirkwood, MO", phone: "(314) 784-5900" }
             };
             const [postAddr, setPostAddr] = useState({});
+            const [weekTimeOff, setWeekTimeOff] = useState([]);
+            useEffect(() => {
+                const wEnd = (() => { const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + 6); return fmtLocalDate(d); })();
+                const unsub = db.collection("timeOffRequests").where("status", "==", "approved").onSnapshot(snap => {
+                    setWeekTimeOff(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                        .filter(r => r.startDate && r.startDate <= wEnd && (r.endDate || r.startDate) >= weekStart));
+                }, () => setWeekTimeOff([]));
+                return () => unsub();
+            }, [weekStart]);
             useEffect(() => {
                 db.collection("bizInfo").doc(schedLocation).get()
                     .then(b => { if (b.exists && b.data().address) setPostAddr(p => ({ ...p, [schedLocation]: b.data().address })); })
@@ -6314,8 +6323,18 @@
                 } else if (mgrAccess && hasUnpublishedChanges) {
                     window.showToast(language==="es"?"Se usó la versión publicada. Tus cambios sin publicar no aparecen.":"Using the published schedule. Your unpublished edits aren't on it.", "info");
                 }
-                const people = staffList.map(s => s.name).filter(n => src.some(s => s.employee === n));
-                const rows = people.map(n => ({ name: n, days: DAY_KEYS.map(dk => src.filter(s => s.employee === n && s.day === dk).sort(byStartTime)) }));
+                const dayDate = (i) => { const d = new Date(weekStart + "T12:00:00"); d.setDate(d.getDate() + i); return fmtLocalDate(d); };
+                const offFor = (n) => DAY_KEYS.map((dk, i) => {
+                    const ds = dayDate(i);
+                    return weekTimeOff
+                        .filter(r => r.employee === n && r.startDate <= ds && (r.endDate || r.startDate) >= ds)
+                        .map(r => r.allDay === false && r.startTime && r.endTime
+                            ? { partial: true, label: fmtTime(r.startTime) + " - " + fmtTime(r.endTime) }
+                            : { partial: false });
+                });
+                const offNames = new Set(weekTimeOff.filter(r => visLocNames.has(r.employee)).map(r => r.employee));
+                const people = staffList.map(s => s.name).filter(n => src.some(s => s.employee === n) || offNames.has(n));
+                const rows = people.map(n => ({ name: n, days: DAY_KEYS.map(dk => src.filter(s => s.employee === n && s.day === dk).sort(byStartTime)), off: offFor(n) }));
                 const open = DAY_KEYS.map(dk => src.filter(s => s.employee === "__OPEN__" && s.day === dk).sort(byStartTime));
                 if (open.some(a => a.length)) rows.push({ name: language==="es" ? "Turnos abiertos" : "Open shifts", open: true, days: open });
                 const loc = language==="es" ? "es-US" : "en-US";
@@ -6340,7 +6359,7 @@
                 const L = (en, esT) => language === "es" ? esT : en;
                 const head = g.days.map(d => `<th>${postEsc(d.label)} ${postEsc(d.date)}${d.note ? `<div class="note">${postEsc(d.note)}</div>` : ""}</th>`).join("");
                 const body = g.rows.map(r => `<tr class="${r.open ? "open" : ""}"><td class="name">${postEsc(r.name)}</td>` +
-                    r.days.map(list => `<td>${list.map(s => `<div class="sh"><div class="t">${postEsc(fmtShiftRange(s))}</div>${s.role ? `<div class="r">${postEsc(s.role)}</div>` : ""}${s.notes ? `<div class="n">${postEsc(s.notes)}</div>` : ""}</div>`).join("")}</td>`).join("") +
+                    r.days.map((list, di) => `<td>${((r.off && r.off[di]) || []).map(o => `<div class="off">${o.partial ? L("Off ", "Libre ") + postEsc(o.label) : L("OFF", "LIBRE")}</div>`).join("")}${list.map(s => `<div class="sh"><div class="t">${postEsc(fmtShiftRange(s))}</div>${s.role ? `<div class="r">${postEsc(s.role)}</div>` : ""}${s.notes ? `<div class="n">${postEsc(s.notes)}</div>` : ""}</div>`).join("")}</td>`).join("") +
                     `</tr>`).join("");
                 const html = `<!doctype html><html><head><meta charset="utf-8"><title>PokeDoke ${postEsc(g.storeName)} Schedule ${postEsc(g.range)}</title><style>
                     @page{size:letter landscape;margin:0.4in;}
@@ -6360,6 +6379,7 @@
                     tr.open td.name{background:#fef3c7;}
                     tbody tr:nth-child(even) td:not(.name){background:#f8fafc;}
                     tr{page-break-inside:avoid;}
+                    .off{display:inline-block;background:#fee2e2;color:#991b1b;font-weight:bold;font-size:9.5px;padding:1px 5px;border-radius:3px;margin-bottom:3px;}
                     .sh{margin-bottom:3px;} .t{font-weight:bold;white-space:nowrap;} .r{color:#555;font-size:9.5px;} .n{color:#666;font-style:italic;font-size:9px;}
                     .foot{margin-top:6px;font-size:9px;color:#666;display:flex;justify-content:space-between;}
                 </style></head><body>
@@ -6367,7 +6387,7 @@
                 <div class="week">${L("Week of", "Semana del")} ${postEsc(g.range)}</div></div>
                 ${g.isDraft ? `<div class="draft">${L("DRAFT: NOT PUBLISHED. Shifts may still change.", "BORRADOR: NO PUBLICADO. Los turnos pueden cambiar.")}</div>` : ""}
                 <table><thead><tr><th class="name">${L("Team member", "Empleado")}</th>${head}</tr></thead><tbody>${body}</tbody></table>
-                <div class="foot"><span>${L("Printed", "Impreso")} ${postEsc(g.printedAt)}</span><span>${L("Check the app for the latest version.", "Revisa la app para la versión más reciente.")}</span></div>
+                <div class="foot"><span>${L("Printed", "Impreso")} ${postEsc(g.printedAt)} &middot; <b style="color:#991b1b">${L("OFF", "LIBRE")}</b> = ${L("approved time off", "descanso aprobado")}</span><span>${L("Check the app for the latest version.", "Revisa la app para la versión más reciente.")}</span></div>
                 </body></html>`;
                 const win = window.open("", "_blank");
                 if (!win) { window.showToast(L("Your browser blocked the print window. Allow pop-ups for this site, or use Download.", "Tu navegador bloqueó la ventana. Permite ventanas emergentes o usa Descargar."), "error"); return; }
@@ -6401,8 +6421,9 @@
                         if (cur) out.push(cur);
                         return out;
                     };
-                    const cellLines = (list) => {
+                    const cellLines = (list, offs) => {
                         const out = [];
+                        (offs || []).forEach(o => { out.push({ t: clean(o.partial ? L("Off ", "Libre ") + o.label : L("OFF", "LIBRE")), f: bold, size: 7.5, color: rgb(0.6, 0.106, 0.106), badge: true }); out.push({ gap: 2 }); });
                         list.forEach(s => {
                             out.push({ t: clean(fmtShiftRange(s)), f: bold, size: 8, color: ink });
                             if (s.role) wrap(s.role, font, 7, dayW - 6).forEach(l => out.push({ t: l, f: font, size: 7, color: grey }));
@@ -6444,14 +6465,14 @@
                         y -= headH;
                     };
                     const footer = () => {
-                        page.drawText(clean(L("Printed ", "Impreso ") + g.printedAt + "   ·   " + L("Check the app for the latest version.", "Revisa la app para la versión más reciente.")), { x: M, y: 14, size: 7, font, color: grey });
+                        page.drawText(clean(L("Printed ", "Impreso ") + g.printedAt + "   \u00b7   " + L("OFF = approved time off", "LIBRE = descanso aprobado") + "   ·   " + L("Check the app for the latest version.", "Revisa la app para la versión más reciente.")), { x: M, y: 14, size: 7, font, color: grey });
                         const pn = clean(L("Page ", "Página ") + pageNo);
                         page.drawText(pn, { x: W - M - font.widthOfTextAtSize(pn, 7), y: 14, size: 7, font, color: grey });
                     };
                     newPage();
                     g.rows.forEach((r, ri) => {
                         const nameLines = wrap(r.name, bold, 8.5, nameW - 8);
-                        const cells = r.days.map(cellLines);
+                        const cells = r.days.map((list, di) => cellLines(list, r.off && r.off[di]));
                         const rowH = Math.max(16, nameLines.length * 10.5 + 6, ...cells.map(c => linesH(c) + 5));
                         if (y - rowH < 26) { footer(); newPage(); }
                         const top = y;
@@ -6463,7 +6484,12 @@
                         cells.forEach((ls, i) => {
                             let cy = top - 10;
                             const x = M + nameW + i * dayW + 3;
-                            ls.forEach(l => { if (l.gap) { cy -= l.gap; return; } page.drawText(l.t, { x, y: cy, size: l.size, font: l.f, color: l.color }); cy -= l.size + 2; });
+                            ls.forEach(l => {
+                                if (l.gap) { cy -= l.gap; return; }
+                                if (l.badge) page.drawRectangle({ x: x - 1.5, y: cy - 2.5, width: l.f.widthOfTextAtSize(l.t, l.size) + 6, height: l.size + 3.5, color: rgb(0.996, 0.886, 0.886) });
+                                page.drawText(l.t, { x: x + (l.badge ? 1.5 : 0), y: cy, size: l.size, font: l.f, color: l.color });
+                                cy -= l.size + 2;
+                            });
                         });
                         // grid lines
                         page.drawLine({ start: { x: M, y: top - rowH }, end: { x: M + tableW, y: top - rowH }, thickness: 0.5, color: line });
@@ -15545,7 +15571,9 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             return out;
         };
         const uploadOnbPdf = async (employeeId, fileName, bytes) => {
-            const path = "onboarding/" + employeeId + "/" + fileName;
+            // Unique name per version: employees may create files but not overwrite them,
+            // and history must point at the version it archived, not the newest one.
+            const path = "onboarding/" + employeeId + "/" + fileName.replace(/\.pdf$/i, "") + "-" + Date.now() + ".pdf";
             await storage.ref().child(path).put(bytes, { contentType: "application/pdf" });
             return path;
         };
@@ -16305,6 +16333,45 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             bizName: "Employers Business or Org Name", bizAddr: "Employers Business or Org Address"
         };
         const onbUsDate = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
+        // The I-9 asks for mm/dd/yyyy. Date inputs hand back yyyy-mm-dd, which had been
+        // going onto the form as-is for document expiration dates.
+        const i9Date = (v) => {
+            if (!v) return "";
+            const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (m) return m[2] + "/" + m[3] + "/" + m[1];
+            const d = new Date(v); if (isNaN(d)) return String(v);
+            return String(d.getMonth() + 1).padStart(2, "0") + "/" + String(d.getDate()).padStart(2, "0") + "/" + d.getFullYear();
+        };
+        // "Last, First, Title", the order the form asks for.
+        const i9ErName = (full, title) => { const n = splitName(full); return [n.last, n.first].filter(Boolean).join(", ") + (title ? ", " + title : ""); };
+        // Crop the blank margin off a captured signature. The pad image is mostly empty
+        // space, so squeezing the whole thing into the I-9's 13pt-tall signature box left a
+        // speck. Returns the input unchanged anywhere a canvas isn't available.
+        const trimSigDataUrl = (dataUrl) => new Promise(resolve => {
+            try {
+                if (typeof document === "undefined" || !dataUrl) return resolve(dataUrl);
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+                        const g = c.getContext("2d"); g.drawImage(img, 0, 0);
+                        const px = g.getImageData(0, 0, c.width, c.height).data;
+                        let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+                        for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+                            const i = (y * c.width + x) * 4;
+                            if (px[i + 3] > 40 && (px[i] + px[i + 1] + px[i + 2]) / 3 < 200) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+                        }
+                        if (x1 < 0) return resolve(dataUrl);
+                        const pad = 4; x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(c.width - 1, x1 + pad); y1 = Math.min(c.height - 1, y1 + pad);
+                        const o = document.createElement("canvas"); o.width = x1 - x0 + 1; o.height = y1 - y0 + 1;
+                        o.getContext("2d").drawImage(c, x0, y0, o.width, o.height, 0, 0, o.width, o.height);
+                        resolve(o.toDataURL("image/png"));
+                    } catch (e) { resolve(dataUrl); }
+                };
+                img.onerror = () => resolve(dataUrl);
+                img.src = dataUrl;
+            } catch (e) { resolve(dataUrl); }
+        });
         // Capture a field's widget rectangle and page BEFORE flattening, so the signature
         // image can be stamped on top of the (empty) signature text field afterwards.
         const i9Slot = (form, pages, name) => {
@@ -16318,11 +16385,16 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
         };
         const i9DrawSig = async (pdf, slot, dataUrl) => {
             if (!slot || !dataUrl) return;
-            const png = await pdf.embedPng(dataUrlToBytes(dataUrl));
-            const maxH = Math.max(8, slot.r.height - 3), maxW = Math.max(20, slot.r.width - 8);
+            const png = await pdf.embedPng(dataUrlToBytes(await trimSigDataUrl(dataUrl)));
+            // The employee line is only ~13pt tall with its label sitting above the left end,
+            // so start past the label and let the signature rise a little into the free space.
+            const short = slot.r.height < 16;
+            const x = slot.r.x + (short ? slot.r.width * 0.28 : 4);
+            const maxH = short ? slot.r.height + 1.5 : Math.max(8, slot.r.height - 3);
+            const maxW = Math.max(20, slot.r.x + slot.r.width - 6 - x);
             let h = maxH, w = h * (png.width / png.height);
             if (w > maxW) { w = maxW; h = w * (png.height / png.width); }
-            slot.page.drawImage(png, { x: slot.r.x + 4, y: slot.r.y + 2, width: w, height: h });
+            slot.page.drawImage(png, { x, y: slot.r.y + (short ? 2.5 : 1.5), width: w, height: h });
         };
 
         // s2 is null until the owner completes Section 2; the Section-1-only PDF is kept as the
@@ -16332,48 +16404,118 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const pdf = await PDFDocument.load(blankBytes, { ignoreEncryption: true });
             const form = pdf.getForm();
             const pages = pdf.getPages();
-            const T = (name, v) => safeSet(form, name, f => f.setText(String(v || "")));
+            // USCIS's own PDF wires "Document Title 1" (List A) to a second box on page 4,
+            // Supplement B. Filling it printed the passport or green card title in a
+            // reverification block, as if a reverification had happened. The app only ever
+            // fills page 1, so any field that also appears on another page keeps its page 1
+            // box only.
+            try {
+                form.getFields().forEach(f => {
+                    const ws = f.acroField.getWidgets();
+                    if (ws.length < 2 || !ws.some(w => w.P() === pages[0].ref)) return;
+                    for (let i = ws.length - 1; i >= 0; i--) {
+                        const w = ws[i];
+                        if (w.P() === pages[0].ref) continue;
+                        const pg = pages.find(pp => pp.ref === w.P());
+                        const ref = f.acroField.normalizedEntries().Kids.get(i);
+                        if (pg && ref) pg.node.removeAnnot(ref);
+                        f.acroField.removeWidget(i);
+                    }
+                });
+            } catch (e) { console.warn("I-9 widget cleanup", e.message); }
+            const font = await pdf.embedFont(StandardFonts.Helvetica);
+            // These fields carry no font size of their own, so long values ran past the box
+            // edge ("Social Security Account Number Ca"). Size each one to fit its box.
+            const T = (name, v) => safeSet(form, name, f => {
+                const txt = String(v || "");
+                f.setText(txt);
+                if (!txt) return;
+                try {
+                    const r = f.acroField.getWidgets()[0].getRectangle();
+                    const base = f.isMultiline && f.isMultiline() ? 9 : Math.min(10, r.height * 0.72);
+                    const size = Math.max(5, Math.min(base, (r.width - 6) / Math.max(1, font.widthOfTextAtSize(txt, 1))));
+                    try { f.setFontSize(size); } catch (_) { f.acroField.setDefaultAppearance("/Helv " + size.toFixed(2) + " Tf 0 g"); }
+                    // A box can carry its own size that overrides the field's (List A title does).
+                    f.acroField.getWidgets().forEach(w => { const da = w.getDefaultAppearance && w.getDefaultAppearance(); if (da && /Tf/.test(da)) w.setDefaultAppearance(da.replace(/[\d.]+\s+Tf/, size.toFixed(2) + " Tf")); });
+                } catch (_) {}
+            });
             const C = (name, on) => safeSet(form, name, f => on ? f.check() : f.uncheck());
             T(I9F.last, s1.last); T(I9F.first, s1.first); T(I9F.mi, s1.mi);
             T(I9F.other, s1.other || "N/A");
             T(I9F.street, s1.street); T(I9F.apt, s1.apt || "N/A"); T(I9F.city, s1.city); T(I9F.zip, s1.zip);
             safeSet(form, I9F.state, f => { const v = String(s1.state || "MO").toUpperCase(); try { f.select(v); } catch (_) { try { f.setText(v); } catch (__) {} } });
-            T(I9F.dob, onbFmtDate(s1.dob));
+            T(I9F.dob, i9Date(s1.dob));
             T(I9F.ssn, s1.ssn && s1.ssn.length === 9 ? fmtSSN(s1.ssn) : "");
             T(I9F.email, s1.email || "N/A"); T(I9F.phone, s1.phone || "N/A");
             C(I9F.cbCitizen, s1.status === "citizen"); C(I9F.cbNational, s1.status === "national");
             C(I9F.cbLpr, s1.status === "lpr"); C(I9F.cbAlien, s1.status === "alien");
             if (s1.status === "lpr") T(I9F.lprNumber, s1.aNumber);
             if (s1.status === "alien") {
-                T(I9F.alienExp, s1.workExp ? onbFmtDate(s1.workExp) : "N/A");
+                T(I9F.alienExp, s1.workExp ? i9Date(s1.workExp) : "N/A");
                 if (s1.alienIdType === "a") T(I9F.alienA, s1.aNumber);
                 else if (s1.alienIdType === "i94") T(I9F.alienI94, s1.i94);
                 else if (s1.alienIdType === "passport") T(I9F.alienPassport, (s1.passport || "") + (s1.passportCountry ? " / " + s1.passportCountry : ""));
             }
-            T(I9F.empSigDate, onbUsDate(s1.signedAt));
+            T(I9F.empSigDate, i9Date(s1.signedAt));
             if (s2) {
                 if (s2.listUsed === "A") {
                     (s2.a || []).forEach((d, i) => {
                         const k = ["a1", "a2", "a3"][i]; if (!k || !d || !d.title) return;
-                        T(I9F[k + "Title"], d.title); T(I9F[k + "Auth"], d.auth); T(I9F[k + "Num"], d.num); T(I9F[k + "Exp"], d.exp);
+                        T(I9F[k + "Title"], d.title); T(I9F[k + "Auth"], d.auth); T(I9F[k + "Num"], d.num); T(I9F[k + "Exp"], d.exp ? i9Date(d.exp) : "N/A");
                     });
                 } else {
                     const b = s2.b || {}, c = s2.c || {};
-                    T(I9F.bTitle, b.title); T(I9F.bAuth, b.auth); T(I9F.bNum, b.num); T(I9F.bExp, b.exp);
-                    T(I9F.cTitle, c.title); T(I9F.cAuth, c.auth); T(I9F.cNum, c.num); T(I9F.cExp, c.exp);
+                    T(I9F.bTitle, b.title); T(I9F.bAuth, b.auth); T(I9F.bNum, b.num); T(I9F.bExp, b.exp ? i9Date(b.exp) : "N/A");
+                    T(I9F.cTitle, c.title); T(I9F.cAuth, c.auth); T(I9F.cNum, c.num); T(I9F.cExp, c.exp ? i9Date(c.exp) : "N/A");
                 }
                 T(I9F.addl, s2.addl);
                 C(I9F.altProc, false); // PokeDoke is not enrolled in E-Verify, so no alternative procedure
-                T(I9F.firstDay, onbFmtDate(s2.firstDay));
-                T(I9F.erName, s2.byName + (s2.byTitle ? ", " + s2.byTitle : ""));
-                T(I9F.erSigDate, onbUsDate(s2.signedAt));
+                T(I9F.firstDay, i9Date(s2.firstDay));
+                T(I9F.erName, i9ErName(s2.byName, s2.byTitle));
+                T(I9F.erSigDate, i9Date(s2.signedAt));
                 T(I9F.bizName, s2.bizName); T(I9F.bizAddr, s2.bizAddr);
             }
             const empSlot = i9Slot(form, pages, I9F.empSig);
             const erSlot = s2 ? i9Slot(form, pages, I9F.erSig) : null;
-            const font = await pdf.embedFont(StandardFonts.Helvetica);
             try { form.updateFieldAppearances(font); } catch (e) { console.warn("appearances", e.message); }
             try { form.flatten(); } catch (e) { console.warn("flatten", e.message); }
+            // USCIS's field boxes are defined without the /Subtype /Form tag. Flattening turns
+            // them into page graphics, and stricter PDF readers flag each one. Tag them.
+            try {
+                const { PDFName, PDFDict } = window.PDFLib;
+                const seen = new Set();
+                const tag = (res) => {
+                    if (!res) return;
+                    const xo = res.lookup(PDFName.of("XObject"));
+                    if (!(xo instanceof PDFDict)) return;
+                    xo.entries().forEach(([, v]) => {
+                        const key = v && v.toString ? v.toString() : null;
+                        if (key && seen.has(key)) return; if (key) seen.add(key);
+                        const st = pdf.context.lookup(v);
+                        if (!st || !st.dict) return;
+                        if (!st.dict.get(PDFName.of("Subtype"))) { st.dict.set(PDFName.of("Type"), PDFName.of("XObject")); st.dict.set(PDFName.of("Subtype"), PDFName.of("Form")); }
+                        tag(st.dict.lookup(PDFName.of("Resources")));
+                    });
+                };
+                pages.forEach(pg => tag(pg.node.Resources()));
+            } catch (e) { console.warn("xobject tag", e.message); }
+            // Flattening deletes the field boxes but leaves page annotation lists and the
+            // form's accessibility tags pointing at them. Drop references to objects that no
+            // longer exist so strict readers have nothing to flag.
+            try {
+                // Fonts and images are only written into the file at save time; write them now
+                // so they don't look missing and get pruned along with the dead boxes.
+                if (pdf.flush) await pdf.flush();
+                const { PDFRef, PDFDict, PDFArray, PDFStream } = window.PDFLib;
+                const live = new Set(pdf.context.enumerateIndirectObjects().map(([r]) => r.objectNumber));
+                const dead = (v) => v instanceof PDFRef && !live.has(v.objectNumber);
+                const prune = (o) => {
+                    if (o instanceof PDFStream) return prune(o.dict);
+                    if (o instanceof PDFArray) { for (let i = o.size() - 1; i >= 0; i--) { const v = o.get(i); if (dead(v)) o.remove(i); else prune(v); } return; }
+                    if (o instanceof PDFDict) { o.entries().forEach(([k, v]) => { if (dead(v)) o.delete(k); else prune(v); }); }
+                };
+                pdf.context.enumerateIndirectObjects().forEach(([, o]) => prune(o));
+            } catch (e) { console.warn("prune refs", e.message); }
             await i9DrawSig(pdf, empSlot, empSig);
             if (s2) await i9DrawSig(pdf, erSlot, erSig);
             return await pdf.save();
@@ -16452,11 +16594,18 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     const bytes = await buildI9Pdf({ blankBytes: blank, s1, s2: null, empSig: sig });
                     const path = await uploadOnbPdf(id, "i9-section1.pdf", bytes);
                     const stored = { ...s1 };
+                    const FV = firebase.firestore.FieldValue;
+                    const prev = mine.i9 || {};
+                    const archived = [];
+                    if (prev.pdfPath) archived.push({ doc: "i9", pdfPath: prev.pdfPath, signedAt: prev.s2SignedAt || prev.signedAt || null, replacedAt: signedAt });
+                    if (prev.s1PdfPath) archived.push({ doc: "i9s1", pdfPath: prev.s1PdfPath, signedAt: prev.signedAt || null, replacedAt: signedAt });
                     const patch = {
-                        i9: { ...(mine.i9 || {}), signedAt, s1: stored, s1PdfPath: path, docId },
-                        prefill: { ...pf, firstName: s1.first, lastName: s1.last, middleInitial: s1.mi, street: s1.street, city: s1.city, state: s1.state, zip: s1.zip },
-                        ...onbArchivePatch(mine, "i9")
+                        i9: { docPlan: prev.docPlan || "", docs: prev.docs || [], signedAt, s1: stored, s1PdfPath: path, docId,
+                              s2: FV.delete(), pdfPath: FV.delete(), s2SignedAt: FV.delete() },
+                        prefill: { ...pf, firstName: s1.first, lastName: s1.last, middleInitial: s1.mi, street: s1.street, city: s1.city, state: s1.state, zip: s1.zip }
                     };
+                    if (archived.length) patch.history = FV.arrayUnion(...archived);
+                    if (mine.reissue && mine.reissue.i9) patch["reissue.i9"] = FV.delete();
                     if (!(mine.signature && mine.signature.dataUrl === sig)) patch.signature = { dataUrl: sig, at: signedAt };
                     await db.collection("onboarding").doc(id).set(patch, { merge: true });
                     await onbAudit(id, "i9", "signed", staffName, { docId, pdfPath: path, status: f.status, section: 1 });
@@ -16687,6 +16836,37 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
             const i9 = d.i9 || {}, s1 = i9.s1 || {};
             const id = r.id;
             const verified = !!(i9.s2 && i9.s2.signedAt);
+            // Records countersigned before this build stored full document numbers (a Social
+            // Security card's number is the SSN) in the onboarding record, which can be read
+            // without signing in. Shorten them to the last four the first time an owner opens
+            // the record. The complete I-9 PDF keeps the full numbers, as required.
+            useEffect(() => {
+                if (!verified) return;
+                const s2 = i9.s2 || {};
+                const full = (d) => d && d.num && !String(d.num).startsWith("\u2026") && String(d.num).replace(/[^0-9A-Za-z]/g, "").length > 4;
+                if (![...(s2.a || []), s2.b, s2.c].some(full)) return;
+                const cut = (d) => d ? { ...d, num: d.num ? "\u2026" + String(d.num).replace(/[^0-9A-Za-z]/g, "").slice(-4) : "" } : d;
+                db.collection("onboarding").doc(id).set({ i9: { s2: { ...s2, a: (s2.a || []).map(cut), b: cut(s2.b), c: cut(s2.c) } } }, { merge: true })
+                    .then(() => onbAudit(id, "i9", "numbers-shortened", staffName))
+                    .catch(e => console.error("i9 scrub", e));
+            }, [verified, id]);
+            // Section 2 is the employer's part, so the employer corrects it without making the
+            // employee re-sign Section 1. The old complete PDF moves to history.
+            const redoSection2 = async () => {
+                const ok = await window.askConfirm({
+                    title: L("Redo Section 2?", "\u00bfRehacer la Secci\u00f3n 2?"),
+                    body: L("Use this to correct the employer section. You'll need the original documents in front of you again. Section 1 and the employee's signature stay as they are, and the current PDF is kept in history.",
+                            "\u00dasalo para corregir la secci\u00f3n del empleador. Necesitar\u00e1s los documentos originales otra vez. La Secci\u00f3n 1 y la firma del empleado no cambian, y el PDF actual se guarda en el historial.")
+                });
+                if (!ok) return;
+                try {
+                    const FV = firebase.firestore.FieldValue;
+                    const patch = { i9: { s2: FV.delete(), pdfPath: FV.delete(), s2SignedAt: FV.delete() } };
+                    if (i9.pdfPath) patch.history = FV.arrayUnion({ doc: "i9", pdfPath: i9.pdfPath, signedAt: i9.s2SignedAt || null, replacedAt: new Date().toISOString() });
+                    await db.collection("onboarding").doc(id).set(patch, { merge: true });
+                    await onbAudit(id, "i9", "section2-reopened", staffName);
+                } catch (e) { window.showToast(L("Couldn't reopen: ", "No se pudo reabrir: ") + e.message, "error"); }
+            };
             const [biz, setBiz] = useState(null);
             const [listUsed, setListUsed] = useState((i9.docPlan === "A") ? "A" : "BC");
             const [a, setA] = useState([{ title: "", auth: "", num: "", exp: "" }, { title: "", auth: "", num: "", exp: "" }, { title: "", auth: "", num: "", exp: "" }]);
@@ -16749,7 +16929,9 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     const bytes = await buildI9Pdf({ blankBytes: blank, s1, s2, empSig: (d.signature && d.signature.dataUrl) || null, erSig: sig });
                     const path = await uploadOnbPdf(id, "i9.pdf", bytes);
                     i9SignerCache = { name: s2.byName, title: s2.byTitle, sig };
-                    await db.collection("onboarding").doc(id).set({ i9: { ...i9, s2, pdfPath: path, s2SignedAt: signedAt } }, { merge: true });
+                    const last4 = (d) => d ? { ...d, num: d.num ? "\u2026" + String(d.num).replace(/[^0-9A-Za-z]/g, "").slice(-4) : "" } : d;
+                    const s2Saved = { ...s2, a: (s2.a || []).map(last4), b: last4(s2.b), c: last4(s2.c) };
+                    await db.collection("onboarding").doc(id).set({ i9: { ...i9, s2: s2Saved, pdfPath: path, s2SignedAt: signedAt } }, { merge: true });
                     await onbAudit(id, "i9", "section2-verified", staffName, { pdfPath: path, listUsed, firstDay, section: 2 });
                     try { window.showToast(L("✓ I-9 verified", "✓ I-9 verificado"), "success"); } catch (_) {}
                     onDone && onDone();
@@ -16783,6 +16965,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         <div className="rounded-xl p-2" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
                             <p className="text-[11px] font-bold" style={{ color: "#166534" }}>✓ {L("Verified by", "Verificado por")} {i9.s2.byName} {L("on", "el")} {new Date(i9.s2.signedAt).toLocaleDateString()}</p>
                             <p className="text-[11px] mt-0.5" style={{ color: "#166534" }}>{i9.s2.listUsed === "A" ? (i9.s2.a[0] && i9.s2.a[0].title) : [(i9.s2.b && i9.s2.b.title), (i9.s2.c && i9.s2.c.title)].filter(Boolean).join(" + ")}</p>
+                            <button onClick={redoSection2} className="mt-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#fff", border: "1px solid #bbf7d0", color: "#166534" }}>\u21bb {L("Redo Section 2", "Rehacer Secci\u00f3n 2")}</button>
                         </div>
                     ) : (
                         <div className="space-y-2.5">
@@ -16844,7 +17027,9 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 signed: L("Signed Section 1", "Firmó la Sección 1"),
                 "document-uploaded": L("Uploaded a document photo", "Subió foto de documento"),
                 "section2-verified": L("Section 2 verified & countersigned", "Sección 2 verificada y firmada"),
-                reissued: L("Re-issued by a manager", "Reenviado por un gerente")
+                reissued: L("Re-issued by a manager", "Reenviado por un gerente"),
+                "section2-reopened": L("Section 2 reopened for correction", "Secci\u00f3n 2 reabierta para correcci\u00f3n"),
+                "numbers-shortened": L("Stored document numbers shortened to last 4", "N\u00fameros guardados acortados a 4 d\u00edgitos")
             })[e] || e;
             if (rows === null) return <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("Loading…", "Cargando…")}</p>;
             if (!rows.length) return <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{L("No I-9 activity yet.", "Sin actividad de I-9 todavía.")}</p>;
@@ -16879,7 +17064,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 <div className="space-y-1.5">
                     {hist.map((h, i) => (
                         <div key={"h" + i} className="flex items-center justify-between gap-2" style={{ opacity: 0.6 }}>
-                            <span>🗂 {h.doc === "offer" ? (es ? "Carta de oferta" : "Offer letter") : h.doc === "w4" ? "Federal W-4" : h.doc === "mow4" ? "MO W-4" : (es ? "Depósito directo" : "Direct deposit")} <span style={{ color: "var(--text-muted)" }}>· {es ? "reemplazada" : "replaced"} {h.replacedAt ? new Date(h.replacedAt).toLocaleDateString() : ""}</span></span>
+                            <span>🗂 {h.doc === "offer" ? (es ? "Carta de oferta" : "Offer letter") : h.doc === "w4" ? "Federal W-4" : h.doc === "mow4" ? "MO W-4" : h.doc === "i9" ? (es ? "I-9 completo" : "I-9 (complete)") : h.doc === "i9s1" ? (es ? "I-9 Sección 1" : "I-9 Section 1") : (es ? "Depósito directo" : "Direct deposit")} <span style={{ color: "var(--text-muted)" }}>· {es ? "reemplazada" : "replaced"} {h.replacedAt ? new Date(h.replacedAt).toLocaleDateString() : ""}</span></span>
                             <button onClick={() => openFile({ path: h.pdfPath })} className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)" }}>{es ? "Abrir" : "Open"}</button>
                         </div>
                     ))}
