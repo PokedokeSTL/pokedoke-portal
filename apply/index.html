@@ -15051,8 +15051,10 @@
             const typeMeta = id => TYPES.find(t => t.id === id) || TYPES[TYPES.length - 1];
             const isDisc = id => typeMeta(id).disc;
 
-            const blankForm = { type: "coaching", date: window.fmtLocalDate(), title: "", details: "", policyRef: "", actionPlan: "", consequences: "", followUpDate: "", employeeStatement: "" };
+            const blankForm = { type: "coaching", date: window.fmtLocalDate(), title: "", details: "", policyRef: "", actionPlan: "", consequences: "", followUpDate: "", employeeStatement: "", amendReason: "" };
             const [form, setForm] = useState(blankForm);
+            // Set while writing a corrected version of an already-saved record.
+            const [amendOf, setAmendOf] = useState(null);
 
             useEffect(() => {
                 const u = db.collection("employees").onSnapshot(snap => setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -15075,12 +15077,29 @@
                 ? recsFor(selectedEmp).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || "").localeCompare(a.createdAt || ""))
                 : [];
 
-            const openForm = () => { setForm({ ...blankForm, date: window.fmtLocalDate() }); setPendingFiles([]); setUploadMsg(""); setShowForm(true); };
+            const openForm = () => { setAmendOf(null); setForm({ ...blankForm, date: window.fmtLocalDate() }); setPendingFiles([]); setUploadMsg(""); setShowForm(true); };
+            // A signed record is never edited in place: the employee signed the words they read.
+            // Amending copies it into a new entry, keeps the original, and marks the original
+            // superseded. The corrected version starts unsigned so it can be acknowledged.
+            const openAmend = (rec) => {
+                setAmendOf(rec);
+                setForm({
+                    type: rec.type || "coaching", date: rec.date || window.fmtLocalDate(),
+                    title: rec.title || "", details: rec.details || "", policyRef: rec.policyRef || "",
+                    actionPlan: rec.actionPlan || "", consequences: rec.consequences || "",
+                    followUpDate: rec.followUpDate || "", employeeStatement: rec.employeeStatement || "",
+                    amendReason: ""
+                });
+                setPendingFiles([]); setUploadMsg(""); setViewRec(null); setShowForm(true);
+            };
 
             const saveRecord = async () => {
                 if (!selectedEmp) return;
                 if (!form.title.trim() || !form.details.trim()) {
                     window.showToast(L("Add a subject and details", "Agrega asunto y detalles"), "error"); return;
+                }
+                if (amendOf && !form.amendReason.trim()) {
+                    window.showToast(L("Say what you corrected and why", "Indica qu\u00e9 corregiste y por qu\u00e9"), "error"); return;
                 }
                 setSaving(true);
                 try {
@@ -15093,6 +15112,11 @@
                         author: staffName, createdAt: new Date().toISOString(),
                         ack: { signed: false }, attachments: []
                     };
+                    if (amendOf) {
+                        rec.amends = { id: amendOf.id, date: amendOf.date || "", title: amendOf.title || "", author: amendOf.author || "" };
+                        rec.amendReason = form.amendReason.trim();
+                        rec.amendedBy = staffName;
+                    }
                     // Firestore rejects any undefined value — strip them as a safety net.
                     Object.keys(rec).forEach(k => { if (rec[k] === undefined) delete rec[k]; });
                     const docRef = await db.collection("personnelRecords").add(rec);
@@ -15108,8 +15132,14 @@
                         }
                         await docRef.update({ attachments: urls });
                     }
-                    setShowForm(false); setForm(blankForm); setPendingFiles([]); setUploadMsg("");
-                    window.showToast(L("Record saved", "Registro guardado"), "success");
+                    if (amendOf) {
+                        // The original stays exactly as signed; it just points forward now.
+                        await db.collection("personnelRecords").doc(amendOf.id).update({
+                            supersededBy: docRef.id, supersededAt: new Date().toISOString(), supersededByName: staffName
+                        });
+                    }
+                    setShowForm(false); setForm(blankForm); setPendingFiles([]); setUploadMsg(""); setAmendOf(null);
+                    window.showToast(amendOf ? L("Amended version saved", "Versi\u00f3n corregida guardada") : L("Record saved", "Registro guardado"), "success");
                 } catch (e) {
                     console.error("saveRecord failed:", e);
                     setUploadMsg("");
@@ -15179,9 +15209,12 @@
                                             </div>
                                             <div className="flex flex-col items-end gap-1 flex-shrink-0">
                                                 {r.attachments && r.attachments.length > 0 && <span className="text-xs" style={{ color: "var(--text-muted)" }}>📎 {r.attachments.length}</span>}
-                                                {isDisc(r.type) && (r.ack && r.ack.signed
-                                                    ? <span className="text-[11px] font-bold text-green-600">✓ {L("Signed", "Firmado")}</span>
-                                                    : <span className="text-[11px] font-bold text-amber-600">{L("Unsigned", "Sin firmar")}</span>)}
+                                                {r.supersededBy
+                                                    ? <span className="text-[11px] font-bold" style={{ color: "#6b7280" }}>{L("Superseded", "Reemplazada")}</span>
+                                                    : isDisc(r.type) && (r.ack && r.ack.signed
+                                                        ? <span className="text-[11px] font-bold text-green-600">✓ {L("Signed", "Firmado")}</span>
+                                                        : <span className="text-[11px] font-bold text-amber-600">{L("Unsigned", "Sin firmar")}</span>)}
+                                                {r.amends && <span className="text-[11px] font-bold" style={{ color: "#1e40af" }}>{L("Amended", "Corregida")}</span>}
                                             </div>
                                         </div>
                                     </button>
@@ -15194,10 +15227,19 @@
                             <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => !saving && setShowForm(false)}>
                                 <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                                     <div className="p-4 border-b sticky top-0 bg-white flex justify-between items-center">
-                                        <p className="font-bold" style={{ color: "var(--text-primary)" }}>{L("New entry for", "Nueva entrada para")} {m.name}</p>
+                                        <p className="font-bold" style={{ color: "var(--text-primary)" }}>{amendOf ? L("Amended version for", "Versi\u00f3n corregida para") : L("New entry for", "Nueva entrada para")} {m.name}</p>
                                         <button onClick={() => !saving && setShowForm(false)} className="text-2xl" style={{ color: "var(--text-muted)" }}>×</button>
                                     </div>
                                     <div className="p-4 space-y-3">
+                                        {amendOf && (
+                                            <div className="rounded-xl p-3" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+                                                <p className="text-xs font-bold" style={{ color: "#1e40af" }}>{L("Correcting the entry from", "Corrigiendo la entrada del")} {fmtDate(amendOf.date)}{amendOf.ack && amendOf.ack.signed ? " \u00b7 " + L("already signed", "ya firmada") : ""}</p>
+                                                <p className="text-[11px] mt-1" style={{ color: "#1e40af" }}>{L("The original stays in the file exactly as it was signed. This becomes the current version and needs a new acknowledgment.", "El original permanece en el expediente tal como se firm\u00f3. Esta pasa a ser la versi\u00f3n vigente y necesita un nuevo reconocimiento.")}</p>
+                                                <label className="block text-xs font-bold mt-2" style={{ color: "#1e40af" }}>{L("What changed, and why", "Qu\u00e9 cambi\u00f3 y por qu\u00e9")}</label>
+                                                <input value={form.amendReason} onChange={e => setForm(f => ({ ...f, amendReason: e.target.value }))} placeholder={L("e.g. Corrected wording at employee's request. No change to the facts or outcome.", "ej. Redacci\u00f3n corregida a pedido del empleado. Sin cambios en los hechos ni el resultado.")} className="w-full px-3 py-2 border rounded-xl mt-1" style={{ borderColor: "#bfdbfe", fontSize: 16 }} />
+                                                <p className="text-[10px] mt-1" style={{ color: "#1e40af" }}>{L("Keep this factual. It sits in the employee's file.", "Manti\u00e9nlo objetivo. Queda en el expediente del empleado.")}</p>
+                                            </div>
+                                        )}
                                         <div>
                                             <label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Type", "Tipo")}</label>
                                             <div className="grid grid-cols-2 gap-2 mt-1">
@@ -15239,7 +15281,19 @@
                                         <button onClick={() => setViewRec(null)} className="text-2xl" style={{ color: "var(--text-muted)" }}>×</button>
                                     </div>
                                     <div className="p-4 space-y-3 text-sm" style={{ color: "var(--text-primary)" }}>
-                                        <div><p className="font-bold text-base">{viewRec.title}</p><p className="text-xs" style={{ color: "var(--text-muted)" }}>{fmtDate(viewRec.date)} · {viewRec.employee} · {L("by", "por")} {viewRec.author}</p></div>
+                                        {viewRec.supersededBy && (
+                                            <div className="rounded-xl p-3" style={{ background: "#f3f4f6", border: "1px solid #e5e7eb" }}>
+                                                <p className="text-xs font-bold" style={{ color: "#6b7280" }}>⚠️ {L("Superseded", "Reemplazada")} {viewRec.supersededAt ? new Date(viewRec.supersededAt).toLocaleDateString(language === "es" ? "es-ES" : "en-US", { month: "short", day: "numeric", year: "numeric" }) : ""}{viewRec.supersededByName ? " \u00b7 " + viewRec.supersededByName : ""}</p>
+                                                <p className="text-[11px] mt-1" style={{ color: "#6b7280" }}>{L("A corrected version of this entry is in the file. This copy is kept as it was originally signed.", "Una versi\u00f3n corregida est\u00e1 en el expediente. Esta copia se conserva tal como se firm\u00f3.")}</p>
+                                            </div>
+                                        )}
+                                        {viewRec.amends && (
+                                            <div className="rounded-xl p-3" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+                                                <p className="text-xs font-bold" style={{ color: "#1e40af" }}>✎ {L("Corrected version of the entry from", "Versi\u00f3n corregida de la entrada del")} {fmtDate(viewRec.amends.date)}</p>
+                                                {viewRec.amendReason && <p className="text-[11px] mt-1 whitespace-pre-wrap" style={{ color: "#1e40af" }}>{viewRec.amendReason}</p>}
+                                                {viewRec.amendedBy && <p className="text-[10px] mt-1" style={{ color: "#1e40af" }}>{L("Amended by", "Corregida por")} {viewRec.amendedBy}</p>}
+                                            </div>
+                                        )}                                        <div><p className="font-bold text-base">{viewRec.title}</p><p className="text-xs" style={{ color: "var(--text-muted)" }}>{fmtDate(viewRec.date)} · {viewRec.employee} · {L("by", "por")} {viewRec.author}</p></div>
                                         <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Details", "Detalles")}</p><p className="whitespace-pre-wrap">{viewRec.details}</p></div>
                                         {viewRec.policyRef && <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Policy", "Política")}</p><p>{viewRec.policyRef}</p></div>}
                                         {viewRec.actionPlan && <div><p className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{L("Action plan", "Plan de acción")}</p><p className="whitespace-pre-wrap">{viewRec.actionPlan}</p></div>}
@@ -15256,11 +15310,12 @@
                                                 <p className="text-xs font-bold text-green-700">✓ {L("Acknowledged by", "Reconocido por")} {viewRec.ack.name} · {new Date(viewRec.ack.signedAt).toLocaleString(language === "es" ? "es-ES" : "en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</p>
                                             ) : (
                                                 <div>
-                                                    <p className="text-xs font-bold text-amber-700 mb-2">{L("Not yet acknowledged by the employee.", "Aún no reconocido por el empleado.")}</p>
-                                                    <button onClick={() => { setAckFor(viewRec); setAckPin(""); }} className="w-full py-2 bg-amber-500 text-white rounded-xl text-xs font-bold">✍️ {L("Employee acknowledge (enter PIN)", "El empleado confirma (ingresar PIN)")}</button>
+                                                    <p className="text-xs font-bold text-amber-700 mb-2">{viewRec.supersededBy ? L("Never acknowledged. A corrected version replaced it.", "Nunca reconocida. Una versión corregida la reemplazó.") : L("Not yet acknowledged by the employee.", "Aún no reconocido por el empleado.")}</p>
+                                                    <button disabled={!!viewRec.supersededBy} style={viewRec.supersededBy ? { display: "none" } : undefined} onClick={() => { setAckFor(viewRec); setAckPin(""); }} className="w-full py-2 bg-amber-500 text-white rounded-xl text-xs font-bold">✍️ {L("Employee acknowledge (enter PIN)", "El empleado confirma (ingresar PIN)")}</button>
                                                 </div>
                                             )}
                                         </div>
+                                        {!viewRec.supersededBy && <button onClick={() => openAmend(viewRec)} className="w-full py-2 rounded-xl text-xs font-bold" style={{ background: "var(--bg-card)", border: "1px solid #bfdbfe", color: "#1e40af" }}>✎ {L("Amend this entry", "Corregir esta entrada")}</button>}
                                         {ownerAccess && <button onClick={() => deleteRecord(viewRec)} className="w-full py-2 border border-red-200 text-red-600 rounded-xl text-xs font-bold">🗑️ {L("Delete record", "Eliminar registro")}</button>}
                                     </div>
                                 </div>
