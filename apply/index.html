@@ -13972,6 +13972,117 @@
         const icsEsc = (t) => String(t == null ? "" : t).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
         const icsStamp = (d) => new Date(d).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
         const PD_MAIL_FROM = "aloha@pokedoke.com";
+        // Paste the OAuth client ID from Google Cloud here. Public by design: it identifies the
+        // app, it does not authorize anything on its own.
+        const PD_GCAL_CLIENT_ID = "25862406122-77loo3srfqpcc1hlk56b36cunir9tekn.apps.googleusercontent.com";
+        const PD_GCAL_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+        const PD_TZ = "America/Chicago";
+
+        // Google's sign-in library is only pulled in when someone actually connects a calendar.
+        let gisPromise = null;
+        const loadGis = () => {
+            if (gisPromise) return gisPromise;
+            gisPromise = new Promise((resolve, reject) => {
+                if (window.google && window.google.accounts && window.google.accounts.oauth2) return resolve();
+                const el = document.createElement("script");
+                el.src = "https://accounts.google.com/gsi/client";
+                el.async = true;
+                el.onload = () => resolve();
+                el.onerror = () => reject(new Error("Couldn't load Google sign-in"));
+                document.head.appendChild(el);
+            });
+            return gisPromise;
+        };
+
+        // The access token lives in memory only and lasts about an hour. Which account was
+        // connected is remembered, so the next session can re-authorize without prompting.
+        const gcal = {
+            token: "", expires: 0, email: "",
+            get connected() { return !!this.email; }
+        };
+        try { gcal.email = localStorage.getItem("pdGcalEmail") || ""; } catch (e) {}
+
+        const gcalToken = async ({ interactive }) => {
+            if (!PD_GCAL_CLIENT_ID) throw new Error("Google Calendar isn't set up yet");
+            if (gcal.token && Date.now() < gcal.expires - 60000) return gcal.token;
+            await loadGis();
+            return new Promise((resolve, reject) => {
+                const client = window.google.accounts.oauth2.initTokenClient({
+                    client_id: PD_GCAL_CLIENT_ID,
+                    scope: PD_GCAL_SCOPE,
+                    hint: gcal.email || undefined,
+                    callback: (resp) => {
+                        if (resp.error) return reject(new Error(resp.error_description || resp.error));
+                        gcal.token = resp.access_token;
+                        gcal.expires = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+                        resolve(gcal.token);
+                    },
+                    error_callback: (err) => reject(new Error((err && err.type) === "popup_closed" ? "Sign-in was closed" : "Sign-in failed"))
+                });
+                // An empty prompt reuses an existing grant silently; only a first connect asks.
+                client.requestAccessToken({ prompt: interactive ? "consent" : "" });
+            });
+        };
+
+        const gcalFetch = async (path, opts, retried) => {
+            const token = await gcalToken({ interactive: false });
+            const res = await fetch("https://www.googleapis.com/calendar/v3" + path, Object.assign({}, opts, {
+                headers: Object.assign({ Authorization: "Bearer " + token, "Content-Type": "application/json" }, (opts || {}).headers || {})
+            }));
+            if (res.status === 401 && !retried) { gcal.token = ""; gcal.expires = 0; return gcalFetch(path, opts, true); }
+            if (!res.ok) {
+                let msg = res.status + " " + res.statusText;
+                try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
+                throw new Error(msg);
+            }
+            return res.status === 204 ? null : res.json();
+        };
+
+        const gcalConnect = async () => {
+            await gcalToken({ interactive: true });
+            const me = await gcalFetch("/calendars/primary", { method: "GET" });
+            gcal.email = (me && me.id) || "";
+            try { localStorage.setItem("pdGcalEmail", gcal.email); } catch (e) {}
+            return gcal.email;
+        };
+
+        const gcalDisconnect = () => {
+            gcal.token = ""; gcal.expires = 0; gcal.email = "";
+            try { localStorage.removeItem("pdGcalEmail"); } catch (e) {}
+        };
+
+        const gcalLocal = (d) => {
+            const p = (n) => String(n).padStart(2, "0");
+            return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes()) + ":00";
+        };
+
+        // sendUpdates=all is what makes Google email the candidate a genuine invitation.
+        const gcalSaveEvent = async ({ eventId, start, minutes, summary, description, location, attendeeEmail, attendeeName }) => {
+            const end = new Date(start.getTime() + (minutes || 30) * 60000);
+            const body = {
+                summary, location, description,
+                start: { dateTime: gcalLocal(start), timeZone: PD_TZ },
+                end: { dateTime: gcalLocal(end), timeZone: PD_TZ },
+                attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName || undefined }] : [],
+                reminders: { useDefault: true }
+            };
+            const q = "?sendUpdates=all&conferenceDataVersion=0";
+            if (eventId) {
+                try {
+                    return await gcalFetch("/calendars/primary/events/" + encodeURIComponent(eventId) + q, { method: "PATCH", body: JSON.stringify(body) });
+                } catch (e) {
+                    // The owner may have deleted it by hand; fall through and make a fresh one.
+                    if (!/not found|deleted|404/i.test(e.message || "")) throw e;
+                }
+            }
+            return gcalFetch("/calendars/primary/events" + q, { method: "POST", body: JSON.stringify(body) });
+        };
+
+        const gcalDeleteEvent = async (eventId) => {
+            if (!eventId) return;
+            try { await gcalFetch("/calendars/primary/events/" + encodeURIComponent(eventId) + "?sendUpdates=all", { method: "DELETE" }); }
+            catch (e) { if (!/not found|deleted|410|404/i.test(e.message || "")) throw e; }
+        };
         const buildIcs = ({ start, minutes, summary, description, location, organizerEmail, organizerName, attendees, uid, sequence }) => {
             const end = new Date(new Date(start).getTime() + (minutes || 30) * 60000);
             const method = organizerEmail ? "REQUEST" : "PUBLISH";
@@ -14472,6 +14583,15 @@
             const [hireErr, setHireErr] = useState("");
             const [showInterview, setShowInterview] = useState(false);
             const [schedOpen, setSchedOpen] = useState(false);
+            const [gcalEmail, setGcalEmail] = useState(gcal.email);
+            const [gcalBusy, setGcalBusy] = useState(false);
+            const gcalReady = !!PD_GCAL_CLIENT_ID;
+            const connectCalendar = async () => {
+                setGcalBusy(true);
+                try { const em = await gcalConnect(); setGcalEmail(em); window.showToast((es ? "Calendario conectado: " : "Calendar connected: ") + em, "success"); }
+                catch (e) { window.showToast((es ? "No se pudo conectar: " : "Couldn't connect: ") + (e.message || e), "error"); }
+                setGcalBusy(false);
+            };
             const [sending, setSending] = useState(false);
             const [sched, setSched] = useState({ at: "", minutes: 30, loc: "cwe", note: "", copyTo: "" });
             const openSchedule = (app) => {
@@ -14523,7 +14643,27 @@
                         + "<p><a href=\"" + gLink + "\">" + (es ? "Agregar a Google Calendar" : "Add to Google Calendar") + "</a>"
                         + " \u00b7 " + (es ? "o abre el archivo adjunto" : "or open the attached file") + "</p>"
                         + "<p>" + (es ? "Si no puedes asistir, ll\u00e1manos al " : "If you can't make it, call us at ") + store.phone + ".</p><p>PokeDoke</p>";
+                    if (gcalEmail) {
+                        const ev = await gcalSaveEvent({
+                            eventId: prev.gcalEventId || "", start, minutes: Number(sched.minutes) || 30,
+                            summary, description: details, location: where,
+                            attendeeEmail: app.email, attendeeName: app.fullName
+                        });
+                        await updateApp(app.id, {
+                            status: app.status === "applied" || app.status === "new" ? "interview" : app.status,
+                            interviewSched: { at: start.toISOString(), minutes: Number(sched.minutes) || 30, loc: sched.loc, note: sched.note.trim(),
+                                to: app.email, copyTo: "", uid, sequence, gcalEventId: (ev && ev.id) || "", gcalOwner: gcalEmail,
+                                sentAt: new Date().toISOString(), sentBy: staffName }
+                        }, (es ? "Entrevista agendada para " : "Interview scheduled for ") + when
+                            + " \u00b7 " + (es ? "en el calendario de " : "on ") + gcalEmail
+                            + " \u00b7 " + (es ? "invitaci\u00f3n enviada a " : "invite sent to ") + app.email);
+                        setSchedOpen(false);
+                        window.showToast(es ? "Agendado e invitaci\u00f3n enviada" : "Scheduled and invite sent", "success");
+                        setSending(false);
+                        return;
+                    }
                     const mail = {
+                        from: "PokeDoke <" + PD_MAIL_FROM + ">",
                         to: [app.email],
                         message: {
                             subject: (es ? "Entrevista en PokeDoke " : "Interview at PokeDoke ") + store.name + " \u00b7 " + when,
@@ -14531,7 +14671,7 @@
                             attachments: [{ filename: "interview.ics", content: b64(ics), encoding: "base64", contentType: "text/calendar; method=REQUEST; charset=UTF-8" }]
                         }
                     };
-                    if (copyTo) mail.to.push(copyTo);
+                    if (copyTo) { mail.to.push(copyTo); mail.replyTo = copyTo; }
                     await db.collection("mail").add(mail);
                     try { if (copyTo) localStorage.setItem("pdInterviewCopyTo", copyTo); } catch (e) {}
                     await updateApp(app.id, {
@@ -14545,6 +14685,20 @@
                 } catch (e) {
                     console.error("interview invite failed", e);
                     window.showToast((es ? "No se pudo enviar: " : "Couldn't send: ") + (e.message || e), "error");
+                }
+                setSending(false);
+            };
+            const cancelInterview = async (app) => {
+                const prev = app.interviewSched || {};
+                if (!await window.askConfirm(es ? "\u00bfCancelar esta entrevista y avisar al candidato?" : "Cancel this interview and notify the applicant?")) return;
+                setSending(true);
+                try {
+                    if (prev.gcalEventId) await gcalDeleteEvent(prev.gcalEventId);
+                    await updateApp(app.id, { interviewSched: firebase.firestore.FieldValue.delete() },
+                        (es ? "Entrevista cancelada" : "Interview cancelled") + (prev.gcalEventId ? (es ? " \u00b7 candidato notificado" : " \u00b7 applicant notified") : ""));
+                    window.showToast(es ? "Entrevista cancelada" : "Interview cancelled", "success");
+                } catch (e) {
+                    window.showToast((es ? "No se pudo cancelar: " : "Couldn't cancel: ") + (e.message || e), "error");
                 }
                 setSending(false);
             };
@@ -14972,6 +15126,29 @@
                                             )}
                                             {schedOpen && (
                                                 <div className="mt-2 rounded-2xl p-3 space-y-2" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border-subtle)" }}>
+                                                    {gcalReady && (
+                                                        <div className="rounded-xl px-2.5 py-2" style={{ background: gcalEmail ? "#f0fdf4" : "var(--bg-card)", border: "1px solid " + (gcalEmail ? "#bbf7d0" : "var(--border-subtle)") }}>
+                                                            {gcalEmail ? (
+                                                                <div className="flex items-center justify-between gap-2">
+                                                                    <p className="text-[11px] font-bold" style={{ color: "#166534" }}>
+                                                                        {es ? "Se agregar\u00e1 a " : "Goes on "}{gcalEmail}{es ? " y Google enviar\u00e1 la invitaci\u00f3n." : " and Google sends the invite."}
+                                                                    </p>
+                                                                    <button onClick={() => { gcalDisconnect(); setGcalEmail(""); }} className="text-[11px] underline shrink-0" style={{ color: "var(--text-muted)" }}>
+                                                                        {es ? "Desconectar" : "Disconnect"}
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <div>
+                                                                    <button onClick={connectCalendar} disabled={gcalBusy} className="w-full py-2 rounded-lg text-xs font-bold disabled:opacity-60" style={{ background: "#1a73e8", color: "#fff" }}>
+                                                                        {gcalBusy ? (es ? "Conectando\u2026" : "Connecting\u2026") : (es ? "Conectar Google Calendar" : "Connect Google Calendar")}
+                                                                    </button>
+                                                                    <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                                                                        {es ? "Con el calendario conectado, la entrevista aparece directamente en tu calendario y Google env\u00eda la invitaci\u00f3n. Sin conectar, se env\u00eda por email." : "Connect once and interviews land on your calendar directly, with Google sending the invite. Without it, they go out by email instead."}
+                                                                    </p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                     {!a.email && <p className="text-xs font-bold" style={{ color: "#b91c1c" }}>{es ? "Esta solicitud no tiene email, no se puede enviar." : "This application has no email address, so an invite can't be sent."}</p>}
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <div className="col-span-2">
@@ -14993,15 +15170,20 @@
                                                         </div>
                                                     </div>
                                                     <input value={sched.note} onChange={e => setSched({ ...sched, note: e.target.value })} placeholder={es ? "Nota (ej. entra por la puerta principal y pregunta por Steve)" : "Note (e.g. come in the front door and ask for Steve)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
-                                                    <input value={sched.copyTo} onChange={e => setSched({ ...sched, copyTo: e.target.value })} type="email" placeholder={es ? "Copia a tu email (para tu calendario)" : "Copy to your email (puts it on your calendar)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
-                                                    <p className="text-[11px] font-bold" style={{ color: (sched.copyTo || "").trim() ? "#15803d" : "#b45309" }}>
+                                                    {!gcalEmail && <input value={sched.copyTo} onChange={e => setSched({ ...sched, copyTo: e.target.value })} type="email" placeholder={es ? "Copia a tu email (para tu calendario)" : "Copy to your email (puts it on your calendar)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />}
+                                                    {!gcalEmail && <p className="text-[11px] font-bold" style={{ color: (sched.copyTo || "").trim() ? "#15803d" : "#b45309" }}>
                                                         {(sched.copyTo || "").trim()
                                                             ? (es ? "Se enviar\u00e1 una copia a " : "A copy will go to ") + (sched.copyTo || "").trim() + (es ? " y aparecer\u00e1 en ese calendario." : " and appear on that calendar.")
                                                             : (es ? "Sin copia para ti. Solo el candidato recibir\u00e1 esta invitaci\u00f3n y no aparecer\u00e1 en tu calendario." : "No copy to you. Only the applicant gets this invite, and it will not appear on your calendar.")}
-                                                    </p>
+                                                    </p>}
                                                     <button onClick={() => sendInterviewInvite(a)} disabled={sending || !a.email} className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>
-                                                        {sending ? (es ? "Enviando\u2026" : "Sending\u2026") : a.interviewSched ? (es ? "Reenviar invitaci\u00f3n" : "Send updated invite") : (es ? "Enviar invitaci\u00f3n" : "Send invite")}
+                                                        {sending ? (es ? "Enviando\u2026" : "Sending\u2026") : a.interviewSched ? (es ? "Actualizar entrevista" : "Update interview") : (es ? "Enviar invitaci\u00f3n" : "Send invite")}
                                                     </button>
+                                                    {a.interviewSched && (
+                                                        <button onClick={() => cancelInterview(a)} disabled={sending} className="w-full py-2 rounded-xl text-xs font-bold disabled:opacity-60" style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+                                                            {es ? "Cancelar entrevista" : "Cancel interview"}
+                                                        </button>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
