@@ -14477,6 +14477,7 @@
             const openSchedule = (app) => {
                 let copyTo = "";
                 try { copyTo = localStorage.getItem("pdInterviewCopyTo") || ""; } catch (e) {}
+                if (!copyTo) copyTo = (auth.currentUser && auth.currentUser.email) || "";
                 const prev = app.interviewSched || {};
                 // datetime-local wants local wall time, not the stored UTC string
                 const local = prev.at ? (() => { const d = new Date(prev.at); const p = n => String(n).padStart(2, "0");
@@ -14532,11 +14533,13 @@
                     };
                     if (copyTo) mail.to.push(copyTo);
                     await db.collection("mail").add(mail);
-                    try { localStorage.setItem("pdInterviewCopyTo", copyTo); } catch (e) {}
+                    try { if (copyTo) localStorage.setItem("pdInterviewCopyTo", copyTo); } catch (e) {}
                     await updateApp(app.id, {
                         status: app.status === "applied" || app.status === "new" ? "interview" : app.status,
                         interviewSched: { at: start.toISOString(), minutes: Number(sched.minutes) || 30, loc: sched.loc, note: sched.note.trim(), to: app.email, copyTo, uid, sequence, sentAt: new Date().toISOString(), sentBy: staffName }
-                    }, (es ? "Invitaci\u00f3n de entrevista enviada para " : "Interview invite sent for ") + when);
+                    }, (es ? "Invitaci\u00f3n de entrevista enviada para " : "Interview invite sent for ") + when
+                        + " \u00b7 " + (es ? "para " : "to ") + app.email
+                        + (copyTo ? (es ? ", copia a " : ", copy to ") + copyTo : (es ? ", sin copia" : ", no copy sent")));
                     setSchedOpen(false);
                     window.showToast(es ? "Invitaci\u00f3n enviada" : "Invite sent", "success");
                 } catch (e) {
@@ -14990,8 +14993,12 @@
                                                         </div>
                                                     </div>
                                                     <input value={sched.note} onChange={e => setSched({ ...sched, note: e.target.value })} placeholder={es ? "Nota (ej. entra por la puerta principal y pregunta por Steve)" : "Note (e.g. come in the front door and ask for Steve)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
-                                                    <input value={sched.copyTo} onChange={e => setSched({ ...sched, copyTo: e.target.value })} type="email" placeholder={es ? "Copia para ti (opcional)" : "Copy to your email (optional)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
-                                                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{es ? "Con tu email, la invitaci\u00f3n tambi\u00e9n llega a tu calendario. El candidato puede responder de cualquier forma." : "With your email here, the invite lands on your calendar too. The applicant can RSVP either way."}</p>
+                                                    <input value={sched.copyTo} onChange={e => setSched({ ...sched, copyTo: e.target.value })} type="email" placeholder={es ? "Copia a tu email (para tu calendario)" : "Copy to your email (puts it on your calendar)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                                                    <p className="text-[11px] font-bold" style={{ color: (sched.copyTo || "").trim() ? "#15803d" : "#b45309" }}>
+                                                        {(sched.copyTo || "").trim()
+                                                            ? (es ? "Se enviar\u00e1 una copia a " : "A copy will go to ") + (sched.copyTo || "").trim() + (es ? " y aparecer\u00e1 en ese calendario." : " and appear on that calendar.")
+                                                            : (es ? "Sin copia para ti. Solo el candidato recibir\u00e1 esta invitaci\u00f3n y no aparecer\u00e1 en tu calendario." : "No copy to you. Only the applicant gets this invite, and it will not appear on your calendar.")}
+                                                    </p>
                                                     <button onClick={() => sendInterviewInvite(a)} disabled={sending || !a.email} className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>
                                                         {sending ? (es ? "Enviando\u2026" : "Sending\u2026") : a.interviewSched ? (es ? "Reenviar invitaci\u00f3n" : "Send updated invite") : (es ? "Enviar invitaci\u00f3n" : "Send invite")}
                                                     </button>
