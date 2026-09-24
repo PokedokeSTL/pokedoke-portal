@@ -14505,7 +14505,7 @@
                     const copyTo = (sched.copyTo || "").trim();
                     const ics = buildIcs({ start, minutes: Number(sched.minutes) || 30, summary, description: details, location: where,
                         organizerEmail: PD_MAIL_FROM, organizerName: "PokeDoke",
-                        attendees: [{ email: app.email, name: app.fullName }, copyTo ? { email: copyTo, name: "PokeDoke", accepted: true } : null],
+                        attendees: [{ email: app.email, name: app.fullName }, copyTo ? { email: copyTo, name: "PokeDoke" } : null],
                         uid, sequence });
                     const gLink = gCalLink({ start, minutes: Number(sched.minutes) || 30, summary, description: details, location: where });
                     const greet = es ? "Hola " + (app.fullName || "").split(" ")[0] + "," : "Hi " + (app.fullName || "").split(" ")[0] + ",";
@@ -14530,7 +14530,7 @@
                             attachments: [{ filename: "interview.ics", content: b64(ics), encoding: "base64", contentType: "text/calendar; method=REQUEST; charset=UTF-8" }]
                         }
                     };
-                    if (copyTo) mail.cc = [copyTo];
+                    if (copyTo) mail.to.push(copyTo);
                     await db.collection("mail").add(mail);
                     try { localStorage.setItem("pdInterviewCopyTo", copyTo); } catch (e) {}
                     await updateApp(app.id, {
