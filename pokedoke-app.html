@@ -13971,7 +13971,8 @@
         // line ends CRLF or strict clients reject the file.
         const icsEsc = (t) => String(t == null ? "" : t).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
         const icsStamp = (d) => new Date(d).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-        const buildIcs = ({ start, minutes, summary, description, location, organizerEmail, organizerName, attendeeEmail, attendeeName, uid }) => {
+        const PD_MAIL_FROM = "aloha@pokedoke.com";
+        const buildIcs = ({ start, minutes, summary, description, location, organizerEmail, organizerName, attendees, uid, sequence }) => {
             const end = new Date(new Date(start).getTime() + (minutes || 30) * 60000);
             const method = organizerEmail ? "REQUEST" : "PUBLISH";
             const lines = [
@@ -13984,10 +13985,17 @@
                 "SUMMARY:" + icsEsc(summary),
                 "DESCRIPTION:" + icsEsc(description),
                 "LOCATION:" + icsEsc(location),
-                "STATUS:CONFIRMED"
+                "STATUS:CONFIRMED",
+                "SEQUENCE:" + (Number(sequence) || 0)
             ];
             if (organizerEmail) lines.push("ORGANIZER;CN=" + icsEsc(organizerName || "PokeDoke") + ":mailto:" + organizerEmail);
-            if (attendeeEmail) lines.push("ATTENDEE;CN=" + icsEsc(attendeeName || "") + ";RSVP=TRUE:mailto:" + attendeeEmail);
+            (attendees || []).filter(a => a && a.email).forEach(a => {
+                // The applicant is asked to reply; our own copy is already accepted, which is what
+                // makes Google file it on the calendar instead of asking us to RSVP to ourselves.
+                lines.push("ATTENDEE;CN=" + icsEsc(a.name || a.email)
+                    + (a.accepted ? ";PARTSTAT=ACCEPTED;RSVP=FALSE" : ";PARTSTAT=NEEDS-ACTION;RSVP=TRUE")
+                    + ":mailto:" + a.email);
+            });
             lines.push("END:VEVENT", "END:VCALENDAR");
             return lines.join("\r\n") + "\r\n";
         };
@@ -14491,10 +14499,14 @@
                         ? "Entrevista para " + (app.position || "un puesto") + " en PokeDoke " + store.name + ". Preg\u00fantanos por " + store.phone + " si necesitas reprogramar."
                         : "Interview for " + (app.position || "a position") + " at PokeDoke " + store.name + ". Call " + store.phone + " if you need to reschedule.")
                         + (sched.note ? "\n\n" + sched.note : "");
-                    const uid = "interview-" + app.id + "-" + Date.now() + "@pokedoke.com";
+                    const prev = app.interviewSched || {};
+                    const uid = prev.uid || ("interview-" + app.id + "-" + Date.now() + "@pokedoke.com");
+                    const sequence = (Number(prev.sequence) || 0) + (prev.uid ? 1 : 0);
                     const copyTo = (sched.copyTo || "").trim();
                     const ics = buildIcs({ start, minutes: Number(sched.minutes) || 30, summary, description: details, location: where,
-                        organizerEmail: copyTo || null, organizerName: "PokeDoke", attendeeEmail: app.email, attendeeName: app.fullName, uid });
+                        organizerEmail: PD_MAIL_FROM, organizerName: "PokeDoke",
+                        attendees: [{ email: app.email, name: app.fullName }, copyTo ? { email: copyTo, name: "PokeDoke", accepted: true } : null],
+                        uid, sequence });
                     const gLink = gCalLink({ start, minutes: Number(sched.minutes) || 30, summary, description: details, location: where });
                     const greet = es ? "Hola " + (app.fullName || "").split(" ")[0] + "," : "Hi " + (app.fullName || "").split(" ")[0] + ",";
                     const text = [greet, "",
@@ -14523,7 +14535,7 @@
                     try { localStorage.setItem("pdInterviewCopyTo", copyTo); } catch (e) {}
                     await updateApp(app.id, {
                         status: app.status === "applied" || app.status === "new" ? "interview" : app.status,
-                        interviewSched: { at: start.toISOString(), minutes: Number(sched.minutes) || 30, loc: sched.loc, note: sched.note.trim(), to: app.email, copyTo, sentAt: new Date().toISOString(), sentBy: staffName }
+                        interviewSched: { at: start.toISOString(), minutes: Number(sched.minutes) || 30, loc: sched.loc, note: sched.note.trim(), to: app.email, copyTo, uid, sequence, sentAt: new Date().toISOString(), sentBy: staffName }
                     }, (es ? "Invitaci\u00f3n de entrevista enviada para " : "Interview invite sent for ") + when);
                     setSchedOpen(false);
                     window.showToast(es ? "Invitaci\u00f3n enviada" : "Invite sent", "success");
@@ -14979,7 +14991,7 @@
                                                     </div>
                                                     <input value={sched.note} onChange={e => setSched({ ...sched, note: e.target.value })} placeholder={es ? "Nota (ej. entra por la puerta principal y pregunta por Steve)" : "Note (e.g. come in the front door and ask for Steve)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
                                                     <input value={sched.copyTo} onChange={e => setSched({ ...sched, copyTo: e.target.value })} type="email" placeholder={es ? "Copia para ti (opcional)" : "Copy to your email (optional)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
-                                                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{es ? "Con tu email, la invitaci\u00f3n tambi\u00e9n llega a tu calendario y el candidato puede responder." : "With your email, the invite lands on your calendar too and the applicant can RSVP."}</p>
+                                                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{es ? "Con tu email, la invitaci\u00f3n tambi\u00e9n llega a tu calendario. El candidato puede responder de cualquier forma." : "With your email here, the invite lands on your calendar too. The applicant can RSVP either way."}</p>
                                                     <button onClick={() => sendInterviewInvite(a)} disabled={sending || !a.email} className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>
                                                         {sending ? (es ? "Enviando\u2026" : "Sending\u2026") : a.interviewSched ? (es ? "Reenviar invitaci\u00f3n" : "Send updated invite") : (es ? "Enviar invitaci\u00f3n" : "Send invite")}
                                                     </button>
