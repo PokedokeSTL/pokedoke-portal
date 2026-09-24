@@ -14527,7 +14527,7 @@
                         message: {
                             subject: (es ? "Entrevista en PokeDoke " : "Interview at PokeDoke ") + store.name + " \u00b7 " + when,
                             text, html,
-                            attachments: [{ filename: "interview.ics", content: b64(ics), encoding: "base64", contentType: "text/calendar; method=" + (copyTo ? "REQUEST" : "PUBLISH") + "; charset=UTF-8" }]
+                            attachments: [{ filename: "interview.ics", content: b64(ics), encoding: "base64", contentType: "text/calendar; method=REQUEST; charset=UTF-8" }]
                         }
                     };
                     if (copyTo) mail.cc = [copyTo];
@@ -14957,14 +14957,14 @@
                                             <button onClick={() => schedOpen ? setSchedOpen(false) : openSchedule(a)}
                                                 className="w-full py-2.5 rounded-xl text-sm font-bold border transition flex items-center justify-between px-3"
                                                 style={{ background: a.interviewSched ? "#ecfeff" : "var(--bg-card)", borderColor: a.interviewSched ? "#a5f3fc" : "var(--border-subtle)", color: "var(--text-primary)" }}>
-                                                <span>\ud83d\udcc5 {a.interviewSched
+                                                <span>📅 {a.interviewSched
                                                     ? (es ? "Entrevista: " : "Interview: ") + new Date(a.interviewSched.at).toLocaleString(es ? "es-US" : "en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
                                                     : (es ? "Programar entrevista" : "Schedule interview")}</span>
                                                 <span className="text-xs">{schedOpen ? "\u25b4" : "\u25be"}</span>
                                             </button>
                                             {a.interviewSched && !schedOpen && (
                                                 <p className="text-[11px] mt-1 px-1" style={{ color: "var(--text-muted)" }}>
-                                                    {(PD_STORES[a.interviewSched.loc] || PD_STORES.cwe).name} \u00b7 {a.interviewSched.minutes} min \u00b7 {es ? "invitaci\u00f3n enviada a " : "invite sent to "}{a.interviewSched.to}
+                                                    {(PD_STORES[a.interviewSched.loc] || PD_STORES.cwe).name} · {a.interviewSched.minutes} min · {es ? "invitaci\u00f3n enviada a " : "invite sent to "}{a.interviewSched.to}
                                                 </p>
                                             )}
                                             {schedOpen && (
@@ -17334,7 +17334,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         <div className="rounded-xl p-2" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
                             <p className="text-[11px] font-bold" style={{ color: "#166534" }}>✓ {L("Verified by", "Verificado por")} {i9.s2.byName} {L("on", "el")} {new Date(i9.s2.signedAt).toLocaleDateString()}</p>
                             <p className="text-[11px] mt-0.5" style={{ color: "#166534" }}>{i9.s2.listUsed === "A" ? (i9.s2.a[0] && i9.s2.a[0].title) : [(i9.s2.b && i9.s2.b.title), (i9.s2.c && i9.s2.c.title)].filter(Boolean).join(" + ")}</p>
-                            <button onClick={redoSection2} className="mt-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#fff", border: "1px solid #bbf7d0", color: "#166534" }}>\u21bb {L("Redo Section 2", "Rehacer Secci\u00f3n 2")}</button>
+                            <button onClick={redoSection2} className="mt-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#fff", border: "1px solid #bbf7d0", color: "#166534" }}>↻ {L("Redo Section 2", "Rehacer Secci\u00f3n 2")}</button>
                         </div>
                     ) : (
                         <div className="space-y-2.5">
