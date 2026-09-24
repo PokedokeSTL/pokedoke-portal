@@ -4923,6 +4923,8 @@
             const todayCardRef = useRef(null);
             const [gridHeaderH, setGridHeaderH] = useState(46);
             const [publishPrompt, setPublishPrompt] = useState(false);
+            const [lastEdit, setLastEdit] = useState({ by: "", at: "" });
+            const [showDiff, setShowDiff] = useState(false);
 
             useEffect(() => {
                 const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
@@ -5069,11 +5071,13 @@
                         setSchedStatus(data.status || "draft");
                         setHasUnpublishedChanges(!!data.hasUnpublishedChanges);
                         setDayNotes(data.dayNotes || {});
+                        setLastEdit({ by: data.updatedBy || "", at: data.updatedAt || "" });
                     } else {
                         setPublishedShifts([]);
                         setShifts([]);
                         setSchedStatus("draft");
                         setHasUnpublishedChanges(false);
+                        setLastEdit({ by: "", at: "" });
                         setDayNotes({});
                     }
                 });
@@ -5575,6 +5579,52 @@
 
             // Signature of one employee's shifts, to detect who changed between published and draft
             const empShiftSig = (list, n) => list.filter(s=>s.employee===n).map(s=>s.day+"|"+s.startTime+"|"+s.endTime+"|"+(s.role||"")+"|"+(s.notes||"")).sort().join(";");
+            // What's different between what the team can see and what's in the draft. Matching
+            // is by shift id, so an edited shift reads as an edit instead of a delete plus an add.
+            const diffSchedule = () => {
+                const pub = publishedShifts || [], dr = shifts || [];
+                const byId = (arr) => { const m = new Map(); arr.forEach(x => m.set(String(x.id), x)); return m; };
+                const P = byId(pub), D = byId(dr);
+                const who = (s) => s.employee === "__OPEN__" ? (language === "es" ? "Turno abierto" : "Open shift") : s.employee;
+                const dayName = (dk) => { const i = DAY_KEYS.indexOf(dk); return i < 0 ? dk : DAYS[i] + " " + getDateForDay(i); };
+                const added = [], removed = [], changed = [];
+                D.forEach((d, id) => {
+                    const p = P.get(id);
+                    if (!p) { added.push(d); return; }
+                    const bits = [];
+                    if (p.day !== d.day) bits.push({ what: language === "es" ? "d\u00eda" : "day", from: dayName(p.day), to: dayName(d.day) });
+                    if (p.employee !== d.employee) bits.push({ what: language === "es" ? "persona" : "person", from: who(p), to: who(d) });
+                    if (p.startTime !== d.startTime || p.endTime !== d.endTime || !!p.isBD !== !!d.isBD) bits.push({ what: language === "es" ? "horario" : "time", from: fmtShiftRange(p), to: fmtShiftRange(d) });
+                    if ((p.role || "") !== (d.role || "")) bits.push({ what: language === "es" ? "puesto" : "role", from: p.role || "\u2014", to: d.role || "\u2014" });
+                    if ((p.notes || "") !== (d.notes || "")) bits.push({ what: language === "es" ? "nota" : "note", from: p.notes || "\u2014", to: d.notes || "\u2014" });
+                    if (bits.length) changed.push({ before: p, after: d, bits });
+                });
+                P.forEach((p, id) => { if (!D.has(id)) removed.push(p); });
+                const bySlot = (a, b) => DAY_KEYS.indexOf(a.day) - DAY_KEYS.indexOf(b.day) || (a.startTime || "").localeCompare(b.startTime || "");
+                added.sort(bySlot); removed.sort(bySlot); changed.sort((a, b) => bySlot(a.after, b.after));
+                return { added, removed, changed, dayName, who, total: added.length + removed.length + changed.length };
+            };
+            const ChangeList = ({ d, compact }) => {
+                const row = (icon, color, bg, main, sub, key) => (
+                    <div key={key} className="rounded-xl px-2.5 py-1.5" style={{ background: bg }}>
+                        <p className="text-[11px] font-bold" style={{ color }}>{icon} {main}</p>
+                        {sub && <p className="text-[11px] mt-0.5" style={{ color }}>{sub}</p>}
+                    </div>
+                );
+                return (
+                    <div className={compact ? "space-y-1 max-h-48 overflow-y-auto" : "space-y-1"}>
+                        {d.added.map((x, i) => row("\u2795", "#166534", "#f0fdf4",
+                            d.who(x) + " \u00b7 " + d.dayName(x.day) + " " + fmtShiftRange(x),
+                            language === "es" ? "turno nuevo" : "new shift", "a" + i))}
+                        {d.changed.map((c, i) => row("\u270e", "#92400e", "#fffbeb",
+                            d.who(c.after) + " \u00b7 " + d.dayName(c.after.day),
+                            c.bits.map(b => b.what + ": " + b.from + " \u2192 " + b.to).join("   \u00b7   "), "c" + i))}
+                        {d.removed.map((x, i) => row("\u2716", "#991b1b", "#fef2f2",
+                            d.who(x) + " \u00b7 " + d.dayName(x.day) + " " + fmtShiftRange(x),
+                            language === "es" ? "turno eliminado" : "shift removed", "r" + i))}
+                    </div>
+                );
+            };
             const changedEmployees = () => {
                 const names = new Set([...publishedShifts, ...shifts].filter(s=>s.employee!=="__OPEN__").map(s=>s.employee));
                 return [...names].filter(n => !isOwner(n) && empShiftSig(publishedShifts, n) !== empShiftSig(shifts, n));
@@ -6653,6 +6703,25 @@
                                 <div className="bg-orange-50 border border-orange-200 rounded-2xl p-3">
                                     <p className="font-bold text-orange-800 text-sm">⚠️ {language==="es"?"Cambios Sin Publicar":"Unpublished Changes"}</p>
                                     <p className="text-xs text-orange-700 mt-1">{language==="es"?"El equipo aún ve la versión publicada. Publica de nuevo para que vean tus cambios, o descarta para volver a la versión publicada.":"Staff still see the published version. Publish again to push your changes, or revert to discard them."}</p>
+                                    {lastEdit.by && <p className="text-[11px] text-orange-700 mt-1">{language==="es"?"\u00daltima edici\u00f3n: ":"Last edited by "}{lastEdit.by}{lastEdit.at ? " \u00b7 " + new Date(lastEdit.at).toLocaleString(language==="es"?"es-ES":"en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : ""}</p>}
+                                    {(() => {
+                                        const d = diffSchedule();
+                                        return (
+                                            <div className="mt-2">
+                                                <button onClick={()=>setShowDiff(v=>!v)} className="w-full flex items-center justify-between py-1.5 px-2 rounded-xl bg-white border border-orange-300">
+                                                    <span className="text-xs font-bold text-orange-800">{language==="es"?"Ver qu\u00e9 cambi\u00f3":"See what changed"} ({d.total})</span>
+                                                    <span className="text-xs text-orange-700">{showDiff?"\u25b4":"\u25be"}</span>
+                                                </button>
+                                                {showDiff && (
+                                                    <div className="mt-2">
+                                                        {d.total === 0
+                                                            ? <p className="text-[11px] text-orange-700">{language==="es"?"Los turnos coinciden con la versi\u00f3n publicada. Probablemente solo cambiaron las notas del d\u00eda.":"The shifts match the published version. Something else changed, most likely a day note."}</p>
+                                                            : <ChangeList d={d} compact={true} />}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                     <div className="flex gap-2 mt-2">
                                         <button onClick={()=>setPublishPrompt(true)} className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold active:scale-95">✅ {language==="es"?"Republicar":"Republish"}</button>
                                         <button onClick={revertChanges} className="flex-1 py-2 bg-white border border-orange-300 text-orange-700 rounded-xl text-xs font-bold active:scale-95">↩️ {language==="es"?"Descartar":"Revert"}</button>
@@ -7216,6 +7285,16 @@
                             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in" style={{background:"rgba(0,0,0,0.5)"}} onClick={()=>setPublishPrompt(false)}>
                                 <div className="bg-white rounded-2xl p-5 w-full max-w-sm animate-scale" onClick={e=>e.stopPropagation()}>
                                     <h3 className="font-display text-lg font-bold text-gray-800 mb-1">📅 {language==="es"?"Publicar Horario":"Publish Schedule"}</h3>
+                                    {wasPublished && (() => {
+                                        const d = diffSchedule();
+                                        if (!d.total) return null;
+                                        return (
+                                            <div className="mb-3">
+                                                <p className="text-xs font-bold text-gray-600 mb-1">{language==="es"?"Se publicar\u00e1":"About to publish"} ({d.total})</p>
+                                                <ChangeList d={d} compact={true} />
+                                            </div>
+                                        );
+                                    })()}
                                     <p className="text-sm text-gray-500 mb-4">{language==="es"?"¿A quién quieres notificar?":"Who should be notified?"}</p>
                                     <div className="space-y-2">
                                         <button onClick={async()=>{setPublishPrompt(false); await publishSchedule("all");}} className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-poke-400 active:scale-95 transition">
