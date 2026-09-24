@@ -14582,6 +14582,79 @@
             const [hireForm, setHireForm] = useState(null); // { pin, role, location }
             const [hireErr, setHireErr] = useState("");
             const [showInterview, setShowInterview] = useState(false);
+            const MANUAL_BLANK = {
+                fullName: "", email: "", phone: "", position: "Line Server", location: "cwe",
+                ageGroup: "18+", source: "referral", sourceNote: "",
+                street: "", city: "", state: "MO", zip: "",
+                status: "new", note: ""
+            };
+            const MANUAL_SOURCES = [
+                { id: "referral", en: "Referral", es: "Referido" },
+                { id: "higherme", en: "HigherMe", es: "HigherMe" },
+                { id: "walkin", en: "Walk-in", es: "Se present\u00f3 en persona" },
+                { id: "indeed", en: "Indeed", es: "Indeed" },
+                { id: "other", en: "Other", es: "Otro" }
+            ];
+            const [manualOpen, setManualOpen] = useState(false);
+            const [manual, setManual] = useState(MANUAL_BLANK);
+            const [manualBusy, setManualBusy] = useState(false);
+            const saveManualApplicant = async () => {
+                const name = manual.fullName.trim();
+                if (!name) { window.showToast(es ? "Falta el nombre" : "Name is required", "error"); return; }
+                const email = manual.email.trim();
+                const phone = manual.phone.trim();
+                if (!email && !phone) { window.showToast(es ? "Agrega email o tel\u00e9fono" : "Add an email or a phone number", "error"); return; }
+                setManualBusy(true);
+                try {
+                    const now = new Date();
+                    const src = MANUAL_SOURCES.find(x => x.id === manual.source) || MANUAL_SOURCES[0];
+                    const srcLabel = (es ? src.es : src.en) + (manual.sourceNote.trim() ? " \u00b7 " + manual.sourceNote.trim() : "");
+                    const entry = {
+                        postingId: null,
+                        postingTitle: "",
+                        position: manual.position.trim(),
+                        location: manual.location,
+                        postingLocation: manual.location,
+                        fullName: name,
+                        email, phone,
+                        address: { street: manual.street.trim(), city: manual.city.trim(), state: manual.state.trim().toUpperCase(), zip: manual.zip.trim() },
+                        preferredType: "",
+                        ageGroup: manual.ageGroup,
+                        over18: manual.ageGroup === "18+",
+                        shifts: {},
+                        isStudent: "", school: "",
+                        lastJob: null,
+                        attested: false,
+                        references: [],
+                        legalToWork: false,
+                        availability: {},
+                        availabilityNote: "",
+                        earliestStart: "",
+                        experience: "",
+                        howHeard: srcLabel,
+                        resumePath: "", resumeName: "",
+                        status: manual.status,
+                        rating: 0,
+                        // The record says plainly that a person typed this in, so nobody later
+                        // mistakes an unanswered field for something the applicant declined to give.
+                        manualEntry: { by: staffName, at: now.toISOString(), source: manual.source, sourceNote: manual.sourceNote.trim() },
+                        notes: [{ text: (es ? "Agregado manualmente por " : "Added manually by ") + staffName + " \u00b7 " + srcLabel, by: staffName, at: now.toISOString() }]
+                            .concat(manual.note.trim() ? [{ text: manual.note.trim(), by: staffName, at: now.toISOString() }] : []),
+                        createdAt: now.toISOString(),
+                        updatedAt: now.toISOString(),
+                        date: now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0")
+                    };
+                    const ref = await db.collection("applications").add(entry);
+                    setManual(MANUAL_BLANK);
+                    setManualOpen(false);
+                    window.showToast(es ? "Candidato agregado" : "Applicant added", "success");
+                    setSelectedApp(Object.assign({ id: ref.id }, entry));
+                } catch (e) {
+                    console.error("manual applicant", e);
+                    window.showToast((es ? "No se pudo guardar: " : "Couldn't save: ") + (e.message || e), "error");
+                }
+                setManualBusy(false);
+            };
             const [schedOpen, setSchedOpen] = useState(false);
             const [gcalEmail, setGcalEmail] = useState(gcal.email);
             const [gcalBusy, setGcalBusy] = useState(false);
@@ -14918,6 +14991,82 @@
 
                     {sub === "applicants" && (
                         <div>
+                            <button onClick={() => setManualOpen(v => !v)}
+                                className="w-full mb-3 py-2.5 rounded-xl text-sm font-bold border border-dashed transition"
+                                style={{ borderColor: manualOpen ? "var(--poke-600,#0891b2)" : "#d1d5db", color: manualOpen ? "var(--poke-600,#0891b2)" : "#6b7280", background: "#fff" }}>
+                                {manualOpen ? (es ? "Cancelar" : "Cancel") : "\u2795 " + (es ? "Agregar candidato manualmente" : "Add applicant manually")}
+                            </button>
+                            {manualOpen && (
+                                <div className="mb-4 p-3 rounded-2xl border border-gray-200 bg-white space-y-2">
+                                    <p className="text-[11px] text-gray-500">
+                                        {es ? "Para referidos, gente que llega en persona, o entrevistas que ya ten\u00edas en otro sistema. Solo el nombre y una forma de contacto son obligatorios."
+                                            : "For referrals, walk-ins, or interviews you already had lined up somewhere else. Only a name and one way to reach them are required."}
+                                    </p>
+                                    <input className={inputCls} placeholder={es ? "Nombre completo *" : "Full name *"} value={manual.fullName} onChange={e => setManual({ ...manual, fullName: e.target.value })} />
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <input className={inputCls} type="email" placeholder="Email" value={manual.email} onChange={e => setManual({ ...manual, email: e.target.value })} />
+                                        <input className={inputCls} type="tel" placeholder={es ? "Tel\u00e9fono" : "Phone"} value={manual.phone} onChange={e => setManual({ ...manual, phone: e.target.value })} />
+                                    </div>
+                                    <p className="text-[11px] text-gray-400 -mt-1">
+                                        {es ? "El email permite enviar la invitaci\u00f3n de entrevista y el enlace de onboarding." : "An email is what lets you send them an interview invite and the onboarding link."}
+                                    </p>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-600 mb-1">{es ? "Puesto" : "Position"}</label>
+                                            <input className={inputCls} value={manual.position} onChange={e => setManual({ ...manual, position: e.target.value })} />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-600 mb-1">{es ? "Tienda" : "Store"}</label>
+                                            <select className={inputCls} value={manual.location} onChange={e => setManual({ ...manual, location: e.target.value })}>
+                                                <option value="cwe">{PD_STORES.cwe.name}</option>
+                                                <option value="kirkwood">{PD_STORES.kirkwood.name}</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-600 mb-1">{es ? "Edad" : "Age"}</label>
+                                            <select className={inputCls} value={manual.ageGroup} onChange={e => setManual({ ...manual, ageGroup: e.target.value })}>
+                                                <option value="18+">{es ? "18 o mayor" : "18 or older"}</option>
+                                                <option value="16-17">{es ? "16 a 17" : "16 to 17"}</option>
+                                                <option value="14-15">{es ? "14 a 15" : "14 to 15"}</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-600 mb-1">{es ? "Estado" : "Stage"}</label>
+                                            <select className={inputCls} value={manual.status} onChange={e => setManual({ ...manual, status: e.target.value })}>
+                                                {HIRE_PIPELINE.map(st => <option key={st.id} value={st.id}>{es ? st.es : st.en}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-600 mb-1">{es ? "\u00bfDe d\u00f3nde viene?" : "Where did they come from?"}</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <select className={inputCls} value={manual.source} onChange={e => setManual({ ...manual, source: e.target.value })}>
+                                                {MANUAL_SOURCES.map(x => <option key={x.id} value={x.id}>{es ? x.es : x.en}</option>)}
+                                            </select>
+                                            <input className={inputCls} placeholder={manual.source === "referral" ? (es ? "Referido por qui\u00e9n" : "Referred by whom") : (es ? "Detalle (opcional)" : "Detail (optional)")}
+                                                value={manual.sourceNote} onChange={e => setManual({ ...manual, sourceNote: e.target.value })} />
+                                        </div>
+                                    </div>
+                                    <details>
+                                        <summary className="text-xs font-bold text-gray-500 cursor-pointer py-1">{es ? "Direcci\u00f3n (opcional, adelanta el onboarding)" : "Address (optional, pre-fills onboarding)"}</summary>
+                                        <div className="space-y-2 mt-2">
+                                            <input className={inputCls} placeholder={es ? "Calle" : "Street"} value={manual.street} onChange={e => setManual({ ...manual, street: e.target.value })} />
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <input className={inputCls} placeholder={es ? "Ciudad" : "City"} value={manual.city} onChange={e => setManual({ ...manual, city: e.target.value })} />
+                                                <input className={inputCls} placeholder={es ? "Estado" : "State"} maxLength={2} value={manual.state} onChange={e => setManual({ ...manual, state: e.target.value })} />
+                                                <input className={inputCls} placeholder={es ? "C\u00f3digo postal" : "ZIP"} value={manual.zip} onChange={e => setManual({ ...manual, zip: e.target.value })} />
+                                            </div>
+                                        </div>
+                                    </details>
+                                    <input className={inputCls} placeholder={es ? "Nota inicial (opcional)" : "Opening note (optional)"} value={manual.note} onChange={e => setManual({ ...manual, note: e.target.value })} />
+                                    <button onClick={saveManualApplicant} disabled={manualBusy}
+                                        className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>
+                                        {manualBusy ? (es ? "Guardando\u2026" : "Saving\u2026") : (es ? "Agregar candidato" : "Add applicant")}
+                                    </button>
+                                </div>
+                            )}
                             <input className={inputCls + " mb-3"} placeholder={es ? "Buscar candidatos..." : "Search applicants..."} value={search} onChange={e => setSearch(e.target.value)} />
                             <div className="flex gap-2 overflow-x-auto pb-2 mb-3 -mx-1 px-1">
                                 <button onClick={() => setStatusFilter("all")}
