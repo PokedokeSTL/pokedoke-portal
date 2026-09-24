@@ -6290,10 +6290,7 @@
             // Print and Download are built from one grid so they can never disagree. Both use
             // the screen's store filter: the old print read the raw week document, which could
             // hold shifts for the other store's staff that the screen had been hiding.
-            const STORE_CONTACT = {
-                cwe: { address: "23 S. Euclid Ave, Ste B, St. Louis, MO 63108", phone: "(314) 833-5900" },
-                kirkwood: { address: "130 S. Kirkwood Rd, Kirkwood, MO", phone: "(314) 784-5900" }
-            };
+            const STORE_CONTACT = PD_STORES;
             const [postAddr, setPostAddr] = useState({});
             const [weekTimeOff, setWeekTimeOff] = useState([]);
             useEffect(() => {
@@ -10252,7 +10249,7 @@
             const [deactivating, setDeactivating] = useState(null); // emp being deactivated
             const [awayDraftFrom, setAwayDraftFrom] = useState("");
             const [awayDraftUntil, setAwayDraftUntil] = useState("");
-            const [deactForm, setDeactForm] = useState({ reason: "quit", rehirable: true, note: "" });
+            const [deactForm, setDeactForm] = useState({ reason: "quit", rehirable: true, note: "", lastDay: window.fmtLocalDate() });
             const [viewArchived, setViewArchived] = useState(false);
 
             // Opened from the Admin Panel "Add Staff Member" button
@@ -10409,7 +10406,7 @@
             // Deactivate opens a reason modal; reactivate is a simple confirm
             const toggleStatus = async () => {
                 if (selectedEmp.status === "active") {
-                    setDeactForm({ reason: "quit", rehirable: true, note: "" });
+                    setDeactForm({ reason: "quit", rehirable: true, note: "", lastDay: window.fmtLocalDate() });
                     setDeactivating(selectedEmp);
                     return;
                 }
@@ -10498,8 +10495,11 @@
                 const emp = deactivating;
                 const docId = emp.name.replace(/\s/g, "_");
                 const now = new Date().toISOString();
-                const deactivation = { reason: deactForm.reason, rehirable: !!deactForm.rehirable, note: deactForm.note.trim(), date: now, by: staffName };
-                const event = { id: Date.now().toString(), type: "deactivated", reason: deactForm.reason, rehirable: !!deactForm.rehirable, date: now, by: staffName };
+                // lastDay is the actual final shift, which is what the I-9 retention clock runs
+                // from. `date` stays the moment this was recorded.
+                const lastDay = deactForm.lastDay || window.fmtLocalDate();
+                const deactivation = { reason: deactForm.reason, rehirable: !!deactForm.rehirable, note: deactForm.note.trim(), date: now, lastDay, by: staffName };
+                const event = { id: Date.now().toString(), type: "deactivated", reason: deactForm.reason, rehirable: !!deactForm.rehirable, date: now, lastDay, by: staffName };
                 const history = [...(emp.history || []), event];
                 await db.collection("employees").doc(docId).update({ status: "inactive", deactivation, history, updatedAt: now });
                 // Also flag the staff record so the deactivated person can't log in and drops off the schedule.
@@ -10591,6 +10591,29 @@
                                         <p><span className="text-gray-400">{language==="es"?"Ubicación":"Location"}:</span> {selectedEmp.location}</p>
                                         <p><span className="text-gray-400">{language==="es"?"Tarifa":"Wage"}:</span> ${selectedEmp.wage || "—"}/hr</p>
                                         <p><span className="text-gray-400">{language==="es"?"PIN":"PIN"}:</span> {selectedEmp.pin}</p>
+                                        {selectedEmp.deactivation && selectedEmp.deactivation.lastDay && (
+                                            <p><span className="text-gray-400">{language==="es"?"Último día":"Last day"}:</span> {selectedEmp.deactivation.lastDay}</p>
+                                        )}
+                                        {(() => {
+                                            const ks = i9KeepStatus(selectedEmp.hireDate, selectedEmp.deactivation && selectedEmp.deactivation.lastDay);
+                                            if (!ks) return selectedEmp.status === "inactive"
+                                                ? <p className="text-xs mt-1" style={{color:"var(--text-muted)"}}>{language==="es"?"Agrega el último día trabajado para calcular la retención del I-9.":"Add a last day worked to work out I-9 retention."}</p>
+                                                : null;
+                                            return (
+                                                <div className="rounded-xl p-2 mt-2" style={{background: ks.clear ? "#f0fdf4" : "#eff6ff", border: "1px solid " + (ks.clear ? "#bbf7d0" : "#bfdbfe")}}>
+                                                    <p className="text-xs font-bold" style={{color: ks.clear ? "#166534" : "#1e40af"}}>
+                                                        {ks.clear
+                                                            ? (language==="es"?"I-9: se puede destruir (venció " + ks.until + ")":"I-9: clear to destroy (retention ended " + ks.until + ")")
+                                                            : (language==="es"?"I-9: conservar hasta " + ks.until : "I-9: keep until " + ks.until)}
+                                                    </p>
+                                                    <p className="text-[11px] mt-0.5" style={{color: ks.clear ? "#166534" : "#1e40af"}}>
+                                                        {ks.basis === "hire"
+                                                            ? (language==="es"?"3 años desde la contratación (la fecha más lejana).":"3 years from hire, the later of the two.")
+                                                            : (language==="es"?"1 año desde el último día (la fecha más lejana).":"1 year from the last day worked, the later of the two.")}
+                                                    </p>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
 
@@ -10700,6 +10723,9 @@
                                     <p className="text-sm mb-4" style={{color:"var(--text-muted)"}}>{deactivating.name}</p>
                                     <div className="space-y-3">
                                         <div>
+                                            <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Último día trabajado":"Last day worked"}</label>
+                                            <input type="date" value={deactForm.lastDay} onChange={e=>setDeactForm({...deactForm,lastDay:e.target.value})} className="w-full px-3 py-2 border rounded-xl mt-1 mb-3" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)",fontSize:16}} />
+                                            <p className="text-[11px] mb-3" style={{color:"var(--text-muted)"}}>{language==="es"?"Inicia el reloj de retención del I-9.":"Starts the I-9 retention clock."}</p>
                                             <label className="text-xs font-bold" style={{color:"var(--text-secondary)"}}>{language==="es"?"Motivo de baja":"Reason for leaving"}</label>
                                             <select value={deactForm.reason} onChange={e=>setDeactForm({...deactForm,reason:e.target.value})} className="w-full px-3 py-2 border rounded-xl text-sm mt-1" style={{background:"var(--bg-card)",borderColor:"var(--border-subtle)",color:"var(--text-primary)"}}>
                                                 {DEACT_REASONS.map(r=><option key={r.key} value={r.key}>{language==="es"?r.es:r.en}</option>)}
@@ -13856,6 +13882,62 @@
             { id: "rejected",  en: "Rejected",  es: "Rechazado",   color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
         ];
         const hireStage = (id) => HIRE_PIPELINE.find(s => s.id === id) || HIRE_PIPELINE[0];
+        const PD_STORES = {
+            cwe: { name: "Central West End", address: "23 S. Euclid Ave, Ste B, St. Louis, MO 63108", phone: "(314) 833-5900" },
+            kirkwood: { name: "Kirkwood", address: "130 S. Kirkwood Rd, Kirkwood, MO", phone: "(314) 784-5900" }
+        };
+        // ---- Calendar invites ---------------------------------------------------------
+        // A .ics attachment so the applicant can add it to Google, Apple or Outlook from the
+        // email itself. Text fields have to escape commas, semicolons and newlines, and every
+        // line ends CRLF or strict clients reject the file.
+        const icsEsc = (t) => String(t == null ? "" : t).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+        const icsStamp = (d) => new Date(d).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+        const buildIcs = ({ start, minutes, summary, description, location, organizerEmail, organizerName, attendeeEmail, attendeeName, uid }) => {
+            const end = new Date(new Date(start).getTime() + (minutes || 30) * 60000);
+            const method = organizerEmail ? "REQUEST" : "PUBLISH";
+            const lines = [
+                "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//PokeDoke//Staff Portal//EN", "CALSCALE:GREGORIAN", "METHOD:" + method,
+                "BEGIN:VEVENT",
+                "UID:" + uid,
+                "DTSTAMP:" + icsStamp(new Date()),
+                "DTSTART:" + icsStamp(start),
+                "DTEND:" + icsStamp(end),
+                "SUMMARY:" + icsEsc(summary),
+                "DESCRIPTION:" + icsEsc(description),
+                "LOCATION:" + icsEsc(location),
+                "STATUS:CONFIRMED"
+            ];
+            if (organizerEmail) lines.push("ORGANIZER;CN=" + icsEsc(organizerName || "PokeDoke") + ":mailto:" + organizerEmail);
+            if (attendeeEmail) lines.push("ATTENDEE;CN=" + icsEsc(attendeeName || "") + ";RSVP=TRUE:mailto:" + attendeeEmail);
+            lines.push("END:VEVENT", "END:VCALENDAR");
+            return lines.join("\r\n") + "\r\n";
+        };
+        const gCalLink = ({ start, minutes, summary, description, location }) => {
+            const end = new Date(new Date(start).getTime() + (minutes || 30) * 60000);
+            const q = (o) => Object.keys(o).map(k => k + "=" + encodeURIComponent(o[k])).join("&");
+            return "https://calendar.google.com/calendar/render?" + q({
+                action: "TEMPLATE", text: summary, dates: icsStamp(start) + "/" + icsStamp(end), details: description, location: location
+            });
+        };
+        const b64 = (str) => { try { return btoa(unescape(encodeURIComponent(str))); } catch (e) { return btoa(str); } };
+        // ---- I-9 retention -----------------------------------------------------------
+        // Keep a form I-9 until 3 years after the hire date or 1 year after the last day
+        // worked, whichever falls later. Returns null while someone is still employed,
+        // because the clock can't finish until they leave.
+        const addYears = (iso, n) => { const d = new Date(iso + "T12:00:00"); if (isNaN(d)) return null; d.setFullYear(d.getFullYear() + n); return window.fmtLocalDate(d); };
+        const i9KeepUntil = (hireDate, lastDay) => {
+            if (!lastDay) return null;
+            const a = hireDate ? addYears(hireDate, 3) : null;
+            const b = addYears(lastDay, 1);
+            if (!b) return null;
+            return (a && a > b) ? a : b;
+        };
+        const i9KeepStatus = (hireDate, lastDay) => {
+            const until = i9KeepUntil(hireDate, lastDay);
+            if (!until) return null;
+            const today = window.fmtLocalDate();
+            return { until, clear: until < today, basis: (hireDate && addYears(hireDate, 3) > addYears(lastDay, 1)) ? "hire" : "last-day" };
+        };
         // ---- Onboarding packet helpers (shared by App lock, Hiring, Onboarding) ----
         const onbId = (name) => String(name || "").replace(/\s/g, "_");
         const onbPacketComplete = (d) => !!(d && d.offer && d.offer.signedAt && d.i9 && d.i9.signedAt && d.w4 && d.w4.signedAt && d.mow4 && d.mow4.signedAt);
@@ -14302,6 +14384,76 @@
             const [hireForm, setHireForm] = useState(null); // { pin, role, location }
             const [hireErr, setHireErr] = useState("");
             const [showInterview, setShowInterview] = useState(false);
+            const [schedOpen, setSchedOpen] = useState(false);
+            const [sending, setSending] = useState(false);
+            const [sched, setSched] = useState({ at: "", minutes: 30, loc: "cwe", note: "", copyTo: "" });
+            const openSchedule = (app) => {
+                let copyTo = "";
+                try { copyTo = localStorage.getItem("pdInterviewCopyTo") || ""; } catch (e) {}
+                const prev = app.interviewSched || {};
+                // datetime-local wants local wall time, not the stored UTC string
+                const local = prev.at ? (() => { const d = new Date(prev.at); const p = n => String(n).padStart(2, "0");
+                    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes()); })() : "";
+                setSched({ at: local, minutes: prev.minutes || 30, loc: prev.loc || (app.location === "kirkwood" ? "kirkwood" : "cwe"), note: prev.note || "", copyTo });
+                setSchedOpen(true);
+            };
+            const sendInterviewInvite = async (app) => {
+                if (!sched.at) { window.showToast(es ? "Elige fecha y hora" : "Pick a date and time", "error"); return; }
+                if (!app.email) { window.showToast(es ? "Esta solicitud no tiene email" : "This application has no email address", "error"); return; }
+                const start = new Date(sched.at);
+                if (isNaN(start)) { window.showToast(es ? "Fecha inv\u00e1lida" : "That date isn't valid", "error"); return; }
+                setSending(true);
+                try {
+                    const store = PD_STORES[sched.loc] || PD_STORES.cwe;
+                    const where = "PokeDoke " + store.name + ", " + store.address;
+                    const when = start.toLocaleString(es ? "es-US" : "en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+                    const summary = "Interview \u00b7 PokeDoke " + store.name;
+                    const details = (es
+                        ? "Entrevista para " + (app.position || "un puesto") + " en PokeDoke " + store.name + ". Preg\u00fantanos por " + store.phone + " si necesitas reprogramar."
+                        : "Interview for " + (app.position || "a position") + " at PokeDoke " + store.name + ". Call " + store.phone + " if you need to reschedule.")
+                        + (sched.note ? "\n\n" + sched.note : "");
+                    const uid = "interview-" + app.id + "-" + Date.now() + "@pokedoke.com";
+                    const copyTo = (sched.copyTo || "").trim();
+                    const ics = buildIcs({ start, minutes: Number(sched.minutes) || 30, summary, description: details, location: where,
+                        organizerEmail: copyTo || null, organizerName: "PokeDoke", attendeeEmail: app.email, attendeeName: app.fullName, uid });
+                    const gLink = gCalLink({ start, minutes: Number(sched.minutes) || 30, summary, description: details, location: where });
+                    const greet = es ? "Hola " + (app.fullName || "").split(" ")[0] + "," : "Hi " + (app.fullName || "").split(" ")[0] + ",";
+                    const text = [greet, "",
+                        es ? "Gracias por aplicar a PokeDoke. Nos gustar\u00eda conocerte." : "Thanks for applying to PokeDoke. We'd like to meet you.",
+                        "", (es ? "Cu\u00e1ndo: " : "When: ") + when, (es ? "D\u00f3nde: " : "Where: ") + where,
+                        sched.note ? "" : null, sched.note || null, "",
+                        es ? "El archivo adjunto agrega la cita a tu calendario. Si no puedes asistir, ll\u00e1manos al " + store.phone + "."
+                           : "The attached file adds it to your calendar. If you can't make it, call us at " + store.phone + ".",
+                        "", es ? "Nos vemos pronto," : "See you soon,", "PokeDoke"].filter(x => x !== null).join("\n");
+                    const html = "<p>" + greet + "</p><p>" + (es ? "Gracias por aplicar a PokeDoke. Nos gustar\u00eda conocerte." : "Thanks for applying to PokeDoke. We'd like to meet you.") + "</p>"
+                        + "<p><b>" + (es ? "Cu\u00e1ndo" : "When") + ":</b> " + when + "<br><b>" + (es ? "D\u00f3nde" : "Where") + ":</b> " + where + "</p>"
+                        + (sched.note ? "<p>" + sched.note + "</p>" : "")
+                        + "<p><a href=\"" + gLink + "\">" + (es ? "Agregar a Google Calendar" : "Add to Google Calendar") + "</a>"
+                        + " \u00b7 " + (es ? "o abre el archivo adjunto" : "or open the attached file") + "</p>"
+                        + "<p>" + (es ? "Si no puedes asistir, ll\u00e1manos al " : "If you can't make it, call us at ") + store.phone + ".</p><p>PokeDoke</p>";
+                    const mail = {
+                        to: [app.email],
+                        message: {
+                            subject: (es ? "Entrevista en PokeDoke " : "Interview at PokeDoke ") + store.name + " \u00b7 " + when,
+                            text, html,
+                            attachments: [{ filename: "interview.ics", content: b64(ics), encoding: "base64", contentType: "text/calendar; method=" + (copyTo ? "REQUEST" : "PUBLISH") + "; charset=UTF-8" }]
+                        }
+                    };
+                    if (copyTo) mail.cc = [copyTo];
+                    await db.collection("mail").add(mail);
+                    try { localStorage.setItem("pdInterviewCopyTo", copyTo); } catch (e) {}
+                    await updateApp(app.id, {
+                        status: app.status === "applied" || app.status === "new" ? "interview" : app.status,
+                        interviewSched: { at: start.toISOString(), minutes: Number(sched.minutes) || 30, loc: sched.loc, note: sched.note.trim(), to: app.email, copyTo, sentAt: new Date().toISOString(), sentBy: staffName }
+                    }, (es ? "Invitaci\u00f3n de entrevista enviada para " : "Interview invite sent for ") + when);
+                    setSchedOpen(false);
+                    window.showToast(es ? "Invitaci\u00f3n enviada" : "Invite sent", "success");
+                } catch (e) {
+                    console.error("interview invite failed", e);
+                    window.showToast((es ? "No se pudo enviar: " : "Couldn't send: ") + (e.message || e), "error");
+                }
+                setSending(false);
+            };
             const [iv, setIv] = useState(null); // local interview draft: { answers, scores, flags, verdict, next }
             const [ivSaving, setIvSaving] = useState(false);
             const openInterview = (app) => {
@@ -14408,7 +14560,12 @@
                     confirmLabel: es ? "Eliminar" : "Delete", danger: true
                 });
                 if (!ok) return;
-                try { await db.collection("applications").doc(app.id).delete(); setSelectedApp(null); window.showToast(es ? "Eliminada" : "Deleted", "success"); }
+                try {
+                    const failed = await deleteStoredFiles([app.resumePath ? { path: app.resumePath } : (app.resumeUrl ? { url: app.resumeUrl } : null)]);
+                    await db.collection("applications").doc(app.id).delete();
+                    setSelectedApp(null);
+                    window.showToast(failed ? (es ? "Eliminada, pero el curr\u00edculum sigue guardado" : "Deleted, but the resume file is still stored") : (es ? "Eliminada" : "Deleted"), failed ? "error" : "success");
+                }
                 catch (e) { console.error(e); }
             };
 
@@ -14703,6 +14860,53 @@
                                                 </div>
                                             </div>
                                         )}
+
+                                        {/* Schedule an interview */}
+                                        <div>
+                                            <button onClick={() => schedOpen ? setSchedOpen(false) : openSchedule(a)}
+                                                className="w-full py-2.5 rounded-xl text-sm font-bold border transition flex items-center justify-between px-3"
+                                                style={{ background: a.interviewSched ? "#ecfeff" : "var(--bg-card)", borderColor: a.interviewSched ? "#a5f3fc" : "var(--border-subtle)", color: "var(--text-primary)" }}>
+                                                <span>\ud83d\udcc5 {a.interviewSched
+                                                    ? (es ? "Entrevista: " : "Interview: ") + new Date(a.interviewSched.at).toLocaleString(es ? "es-US" : "en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+                                                    : (es ? "Programar entrevista" : "Schedule interview")}</span>
+                                                <span className="text-xs">{schedOpen ? "\u25b4" : "\u25be"}</span>
+                                            </button>
+                                            {a.interviewSched && !schedOpen && (
+                                                <p className="text-[11px] mt-1 px-1" style={{ color: "var(--text-muted)" }}>
+                                                    {(PD_STORES[a.interviewSched.loc] || PD_STORES.cwe).name} \u00b7 {a.interviewSched.minutes} min \u00b7 {es ? "invitaci\u00f3n enviada a " : "invite sent to "}{a.interviewSched.to}
+                                                </p>
+                                            )}
+                                            {schedOpen && (
+                                                <div className="mt-2 rounded-2xl p-3 space-y-2" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border-subtle)" }}>
+                                                    {!a.email && <p className="text-xs font-bold" style={{ color: "#b91c1c" }}>{es ? "Esta solicitud no tiene email, no se puede enviar." : "This application has no email address, so an invite can't be sent."}</p>}
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <div className="col-span-2">
+                                                            <label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{es ? "Fecha y hora" : "Date and time"}</label>
+                                                            <input type="datetime-local" value={sched.at} onChange={e => setSched({ ...sched, at: e.target.value })} className="w-full px-3 py-2 border rounded-xl mt-1" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{es ? "Duraci\u00f3n" : "Length"}</label>
+                                                            <select value={sched.minutes} onChange={e => setSched({ ...sched, minutes: e.target.value })} className="w-full px-2 py-2 border rounded-xl mt-1" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }}>
+                                                                {[15, 30, 45, 60].map(m => <option key={m} value={m}>{m} min</option>)}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs font-bold" style={{ color: "var(--text-secondary)" }}>{es ? "Tienda" : "Store"}</label>
+                                                            <select value={sched.loc} onChange={e => setSched({ ...sched, loc: e.target.value })} className="w-full px-2 py-2 border rounded-xl mt-1" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }}>
+                                                                <option value="cwe">{PD_STORES.cwe.name}</option>
+                                                                <option value="kirkwood">{PD_STORES.kirkwood.name}</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <input value={sched.note} onChange={e => setSched({ ...sched, note: e.target.value })} placeholder={es ? "Nota (ej. entra por la puerta principal y pregunta por Steve)" : "Note (e.g. come in the front door and ask for Steve)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                                                    <input value={sched.copyTo} onChange={e => setSched({ ...sched, copyTo: e.target.value })} type="email" placeholder={es ? "Copia para ti (opcional)" : "Copy to your email (optional)"} className="w-full px-3 py-2 border rounded-xl" style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", color: "var(--text-primary)", fontSize: 16 }} />
+                                                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{es ? "Con tu email, la invitaci\u00f3n tambi\u00e9n llega a tu calendario y el candidato puede responder." : "With your email, the invite lands on your calendar too and the applicant can RSVP."}</p>
+                                                    <button onClick={() => sendInterviewInvite(a)} disabled={sending || !a.email} className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60" style={{ background: "var(--poke-600,#0891b2)" }}>
+                                                        {sending ? (es ? "Enviando\u2026" : "Sending\u2026") : a.interviewSched ? (es ? "Reenviar invitaci\u00f3n" : "Send updated invite") : (es ? "Enviar invitaci\u00f3n" : "Send invite")}
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
 
                                         {/* Interview guide */}
                                         <div>
@@ -15169,9 +15373,12 @@
                     danger: true
                 });
                 if (!ok) return;
+                const failed = await deleteStoredFiles((rec.attachments || []).map(a => ({ url: a.url })));
                 await db.collection("personnelRecords").doc(rec.id).delete();
                 setViewRec(null);
-                window.showToast(L("Record deleted", "Registro eliminado"), "success");
+                window.showToast(failed
+                    ? L("Record deleted, but " + failed + " attachment(s) couldn't be removed", "Registro eliminado, pero no se pudieron borrar " + failed + " adjunto(s)")
+                    : L("Record deleted", "Registro eliminado"), failed ? "error" : "success");
             };
 
             const locLabel = l => l === "cwe" ? "CWE" : l === "kirkwood" ? "Kirkwood" : l === "all" ? L("All", "Todas") : (l || "");
@@ -15624,6 +15831,22 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                 if (line) out.push(line);
             });
             return out;
+        };
+        // Deleting a Firestore document leaves its uploads sitting in Storage forever, still
+        // downloadable by anyone with the link. Remove the files first, then the record.
+        const deleteStoredFiles = async (refs) => {
+            let failed = 0;
+            for (const r of (refs || [])) {
+                if (!r) continue;
+                try {
+                    if (r.path) await storage.ref().child(r.path).delete();
+                    else if (r.url) await storage.refFromURL(r.url).delete();
+                } catch (e) {
+                    // Already gone is fine; anything else is worth knowing about.
+                    if (!e || (e.code !== "storage/object-not-found")) { failed++; console.error("file delete failed", r, e && e.message); }
+                }
+            }
+            return failed;
         };
         const uploadOnbPdf = async (employeeId, fileName, bytes) => {
             // Unique name per version: employees may create files but not overwrite them,
