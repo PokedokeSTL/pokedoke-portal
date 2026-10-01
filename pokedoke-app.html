@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="/icon-180.png">
     <link rel="icon" type="image/png" href="/icon-192.png">
@@ -6549,12 +6549,7 @@
                     footer();
                     const bytes = await pdf.save();
                     const blob = new Blob([bytes], { type: "application/pdf" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = "PokeDoke-" + g.storeName.replace(/\s+/g, "") + "-Schedule-" + weekStart + (g.isDraft ? "-DRAFT" : "") + ".pdf";
-                    document.body.appendChild(a); a.click(); a.remove();
-                    setTimeout(() => URL.revokeObjectURL(url), 4000);
+                    await window.PDDevice.saveFile(blob, "PokeDoke-" + g.storeName.replace(/\s+/g, "") + "-Schedule-" + weekStart + (g.isDraft ? "-DRAFT" : "") + ".pdf");
                 } catch (e) { console.error("schedule pdf", e); window.showToast(L("Couldn't make the PDF: ", "No se pudo crear el PDF: ") + (e.message || e), "error"); }
             };
 
@@ -10466,12 +10461,39 @@
 
             const saveEmployee = async () => {
                 const docId = selectedEmp.name.replace(/\s/g,"_");
-                await db.collection("employees").doc(docId).set({
-                    ...editData, updatedAt: new Date().toISOString(), updatedBy: staffName
-                }, { merge: true });
-                setEditMode(false);
-                setSelectedEmp({...selectedEmp,...editData});
+                const movedTo = editData.location && editData.location !== selectedEmp.location ? editData.location : null;
+                try {
+                    await db.collection("employees").doc(docId).set({
+                        ...editData, updatedAt: new Date().toISOString(), updatedBy: staffName
+                    }, { merge: true });
+
+                    if (movedTo) {
+                        const updatedStaff = (staffList || []).map(x =>
+                            x.name === selectedEmp.name ? { ...x, location: movedTo } : x);
+                        await db.collection("config").doc("staff").set({ list: updatedStaff });
+                        if (typeof setStaffList === "function") setStaffList(updatedStaff);
+                        // A move is the kind of thing someone asks about three months later.
+                        const histNote = {
+                            id: Date.now().toString(),
+                            text: (language === "es" ? "Ubicación cambiada de " : "Location changed from ")
+                                + locLabel(selectedEmp.location) + (language === "es" ? " a " : " to ") + locLabel(movedTo),
+                            date: new Date().toISOString(), addedBy: staffName
+                        };
+                        await db.collection("employees").doc(docId).update({
+                            notes: [...(selectedEmp.notes || []), histNote]
+                        });
+                        editData.notes = [...(selectedEmp.notes || []), histNote];
+                    }
+                    setEditMode(false);
+                    setSelectedEmp({...selectedEmp,...editData});
+                    if (movedTo) window.showToast((language === "es" ? "Movido a " : "Moved to ") + locLabel(movedTo), "success");
+                } catch (e) {
+                    console.error("save employee", e);
+                    window.showToast((language === "es" ? "No se pudo guardar: " : "Couldn't save: ") + (e.message || e), "error");
+                }
             };
+            const locLabel = (v) => v === "all" ? (language === "es" ? "Ambas tiendas" : "Both stores")
+                : v === "kirkwood" ? "Kirkwood" : v === "cwe" ? "Central West End" : (v || "—");
 
             const addNote = async () => {
                 if(!noteText)return;
@@ -10782,6 +10804,21 @@
                                 <div><label className="text-xs text-gray-500">{language==="es"?"Dirección":"Address"}</label><input type="text" value={editData.address||""} onChange={e=>setEditData({...editData,address:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
                                 <div><label className="text-xs text-gray-500">{language==="es"?"Contacto de Emergencia":"Emergency Contact"}</label><input type="text" value={editData.emergencyContact||""} onChange={e=>setEditData({...editData,emergencyContact:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
                                 <div><label className="text-xs text-gray-500">{language==="es"?"Tel. de Emergencia":"Emergency Phone"}</label><input type="tel" value={editData.emergencyPhone||""} onChange={e=>setEditData({...editData,emergencyPhone:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
+                                <div>
+                                    <label className="text-xs text-gray-500">{language==="es"?"Tienda":"Store"}</label>
+                                    <select value={editData.location||""} onChange={e=>setEditData({...editData,location:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                                        <option value="cwe">Central West End</option>
+                                        <option value="kirkwood">Kirkwood</option>
+                                        <option value="all">{language==="es"?"Ambas tiendas":"Both stores"}</option>
+                                    </select>
+                                    {editData.location && editData.location !== selectedEmp.location && (
+                                        <p className="text-[11px] mt-1 font-bold" style={{color:"#b45309"}}>
+                                            {language==="es"
+                                                ? "Cambia dónde aparece en el horario y qué límites de tiempo libre se le aplican."
+                                                : "Changes which schedule they appear on and which time-off limits apply to them."}
+                                        </p>
+                                    )}
+                                </div>
                                 <div><label className="text-xs text-gray-500">{language==="es"?"Fecha de Contratación":"Hire Date"}</label><input type="date" value={editData.hireDate||""} onChange={e=>setEditData({...editData,hireDate:e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
                                 <div><label className="text-xs text-gray-500">{language==="es"?"Tarifa por Hora":"Hourly Wage"} ($)</label><input type="number" step="0.25" value={editData.wage||""} onChange={e=>setEditData({...editData,wage:parseFloat(e.target.value)||0})} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"/></div>
                                 <div className="flex gap-2 mt-3">
@@ -13961,6 +13998,84 @@
             { id: "rejected",  en: "Rejected",  es: "Rechazado",   color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
         ];
         const hireStage = (id) => HIRE_PIPELINE.find(s => s.id === id) || HIRE_PIPELINE[0];
+        const PDDevice = {
+            // Capacitor injects this global when the app runs inside a native shell.
+            get native() { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); },
+            get platform() { return this.native ? (window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "native") : "web"; },
+            // Installed to the home screen, which behaves differently from a browser tab even on the web.
+            get standalone() {
+                try { return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true; }
+                catch (e) { return false; }
+            },
+
+            // Hand the user a file. An anchor with a download attribute is ignored inside
+            // WKWebView, so the native path has to write the file and open it instead.
+            async saveFile(blob, filename) {
+                if (this.native && window.PDNativeSave) return window.PDNativeSave(blob, filename);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = filename;
+                a.rel = "noopener";
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 4000);
+                return true;
+            },
+
+            // Ask for a file. `accept` is a normal accept string; `camera` true nudges phones
+            // toward the camera without locking out the file picker the way capture= does.
+            pickFile({ accept, camera, multiple } = {}) {
+                return new Promise(resolve => {
+                    const el = document.createElement("input");
+                    el.type = "file";
+                    if (accept) el.accept = accept;
+                    if (multiple) el.multiple = true;
+                    if (camera) el.setAttribute("capture", "environment");
+                    el.style.position = "fixed";
+                    el.style.left = "-9999px";
+                    document.body.appendChild(el);
+                    el.onchange = () => { const f = multiple ? Array.from(el.files || []) : (el.files || [])[0] || null; el.remove(); resolve(f); };
+                    el.click();
+                });
+            },
+
+            async share({ title, text, url, files }) {
+                try {
+                    if (navigator.share) {
+                        if (files && files.length && navigator.canShare && navigator.canShare({ files })) {
+                            await navigator.share({ title, text, files });
+                        } else {
+                            await navigator.share({ title, text, url });
+                        }
+                        return true;
+                    }
+                } catch (e) { if (e && e.name === "AbortError") return false; }
+                try { await navigator.clipboard.writeText([text, url].filter(Boolean).join(" ")); return "copied"; } catch (e) {}
+                return false;
+            },
+
+            openUrl(url, external) {
+                if (external || this.native) { window.open(url, "_blank", "noopener"); return; }
+                window.location.href = url;
+            },
+
+            // No-ops on the web today, real feedback in a native shell.
+            haptic(kind) {
+                try { if (navigator.vibrate) navigator.vibrate(kind === "heavy" ? 30 : kind === "error" ? [15, 40, 15] : 10); } catch (e) {}
+            },
+
+            get online() { return navigator.onLine !== false; },
+            onConnectivity(fn) {
+                const up = () => fn(true), down = () => fn(false);
+                window.addEventListener("online", up);
+                window.addEventListener("offline", down);
+                return () => { window.removeEventListener("online", up); window.removeEventListener("offline", down); };
+            }
+        };
+        window.PDDevice = PDDevice;
+
         const PD_STORES = {
             cwe: { name: "Central West End", address: "23 S. Euclid Ave, Ste B, St. Louis, MO 63108", phone: "(314) 833-5900" },
             kirkwood: { name: "Kirkwood", address: "130 S. Kirkwood Rd, Kirkwood, MO", phone: "(314) 784-5900" }
