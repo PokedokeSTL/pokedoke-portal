@@ -1470,6 +1470,192 @@
             return T[key]?.[lang === "es" ? "es" : "en"] || key;
         };
 
+        // ---- Server-side PIN verification ---------------------------------------------------
+        // The PIN is checked by a Cloud Function rather than against a list in this file, and a
+        // login only succeeds when the device has also been approved by an owner.
+
+        // A random id kept in this browser. It identifies the device, nothing about the person.
+        const pdDeviceId = () => {
+            try {
+                let id = localStorage.getItem("pdDeviceId");
+                if (!id) {
+                    id = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID()
+                        : "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+                    localStorage.setItem("pdDeviceId", id);
+                }
+                return id;
+            } catch (e) {
+                // Private browsing with storage blocked. Each visit then reads as a new device,
+                // which is inconvenient but not wrong.
+                return "nostore-" + Math.random().toString(36).slice(2, 12);
+            }
+        };
+
+        // Something an owner can recognise in an approval prompt.
+        const pdDeviceLabel = () => {
+            const ua = navigator.userAgent || "";
+            const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad"
+                : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac"
+                : /Windows/.test(ua) ? "Windows" : "Device";
+            const br = /CriOS|Chrome/.test(ua) ? "Chrome" : /FxiOS|Firefox/.test(ua) ? "Firefox"
+                : /Edg/.test(ua) ? "Edge" : /Safari/.test(ua) ? "Safari" : "browser";
+            let standalone = false;
+            try { standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true; } catch (e) {}
+            return os + " \u00b7 " + (standalone ? "installed app" : br);
+        };
+
+        // Returns {status}. "ok" also signs the person in to Firebase so security rules can see
+        // who they are. "unavailable" means the check could not be reached at all, which is the
+        // only case the caller is allowed to fall back on.
+        const pdVerifyPin = async (pin) => {
+            let res;
+            try {
+                const call = firebase.functions().httpsCallable("verifyPin");
+                res = await call({ pin, deviceId: pdDeviceId(), deviceLabel: pdDeviceLabel() });
+            } catch (e) {
+                const code = (e && e.code) || "";
+                // These are real answers from the function, not failures to reach it.
+                if (code === "functions/permission-denied") return { status: "denied", message: e.message };
+                if (code === "functions/resource-exhausted") return { status: "locked", message: e.message };
+                if (code === "functions/invalid-argument") return { status: "denied", message: e.message };
+                console.warn("verifyPin unreachable:", code, e && e.message);
+                return { status: "unavailable" };
+            }
+            const d = (res && res.data) || {};
+            if (d.status === "pending") return { status: "pending", name: d.name };
+            if (d.status !== "ok" || !d.token) return { status: "unavailable" };
+            try {
+                await auth.signInWithCustomToken(d.token);
+            } catch (e) {
+                console.error("custom token sign-in failed", e);
+                return { status: "unavailable" };
+            }
+            return { status: "ok", name: d.name, role: d.role, location: d.location };
+        };
+
+        // Owners approve the devices their staff log in from. Nothing here can read staffAuth;
+        // deviceRequests is the owner-visible record of which device belongs to whom.
+        function DeviceApprovals({ language, staffName }) {
+            const es = language === "es";
+            const [open, setOpen] = useState(false);
+            const [rows, setRows] = useState([]);
+            const [busy, setBusy] = useState("");
+            const [err, setErr] = useState("");
+
+            useEffect(() => {
+                const unsub = db.collection("deviceRequests").onSnapshot(
+                    snap => { setRows(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setErr(""); },
+                    e => { setErr(e.code === "permission-denied" ? (es ? "Inicia sesi\u00f3n como due\u00f1o para ver esto." : "Sign in as an owner to see this.") : e.message); }
+                );
+                return () => unsub();
+            }, []);
+
+            const pending = rows.filter(r => r.status === "pending")
+                .sort((a, b) => String(b.lastAttemptAt || "").localeCompare(String(a.lastAttemptAt || "")));
+            const approved = rows.filter(r => r.status === "approved")
+                .sort((a, b) => String(a.staffName || "").localeCompare(String(b.staffName || "")));
+
+            const decide = async (row, approve) => {
+                setBusy(row.id); setErr("");
+                try {
+                    await firebase.functions().httpsCallable("decideDevice")({ requestId: row.id, approve });
+                    window.showToast(approve ? (es ? "Dispositivo aprobado" : "Device approved") : (es ? "Dispositivo rechazado" : "Device denied"), "success");
+                } catch (e) { setErr(e.message || String(e)); }
+                setBusy("");
+            };
+
+            const revoke = async (row) => {
+                if (!await window.askConfirm(es
+                    ? "\u00bfQuitar este dispositivo? " + row.staffName + " tendr\u00e1 que pedir aprobaci\u00f3n otra vez."
+                    : "Remove this device? " + row.staffName + " will have to be approved again.")) return;
+                setBusy(row.id); setErr("");
+                try {
+                    await firebase.functions().httpsCallable("revokeDevice")({ staffId: row.staffId, deviceId: row.deviceId });
+                    await firebase.functions().httpsCallable("decideDevice")({ requestId: row.id, approve: false });
+                    window.showToast(es ? "Dispositivo quitado" : "Device removed", "success");
+                } catch (e) { setErr(e.message || String(e)); }
+                setBusy("");
+            };
+
+            const when = (iso) => { try { return new Date(iso).toLocaleString(es ? "es-US" : "en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch (e) { return ""; } };
+
+            return (
+                <div className="mb-6">
+                    <button onClick={() => setOpen(!open)}
+                        className="w-full flex items-center justify-between rounded-xl p-4 border-2 transition"
+                        style={{ background: pending.length ? "#fffbeb" : "#f8fafc", borderColor: pending.length ? "#fde68a" : "#e2e8f0" }}>
+                        <div className="text-left">
+                            <p className="font-bold text-gray-800">\ud83d\udcf1 {es ? "Dispositivos" : "Device approvals"}</p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                                {pending.length
+                                    ? (es ? pending.length + " esperando aprobaci\u00f3n" : pending.length + " waiting for you")
+                                    : (es ? "Nada pendiente" : "Nothing pending")}
+                            </p>
+                        </div>
+                        <span className="text-gray-400 text-xl">{open ? "\u25bc" : "\u25b6"}</span>
+                    </button>
+
+                    {open && (
+                        <div className="mt-2 space-y-3">
+                            {err && <p className="text-xs font-bold px-1" style={{ color: "#b91c1c" }}>{err}</p>}
+
+                            {pending.length === 0 && !err && (
+                                <p className="text-xs text-gray-500 px-1">
+                                    {es ? "Cuando alguien inicie sesi\u00f3n en un tel\u00e9fono nuevo, aparecer\u00e1 aqu\u00ed para que lo apruebes."
+                                        : "When someone signs in on a new phone, it shows up here for you to approve."}
+                                </p>
+                            )}
+
+                            {pending.map(r => (
+                                <div key={r.id} className="bg-white rounded-2xl border-2 p-3" style={{ borderColor: "#fde68a" }}>
+                                    <p className="font-bold text-gray-800 text-sm">{r.staffName}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">{r.deviceLabel || (es ? "Dispositivo desconocido" : "Unknown device")}</p>
+                                    <p className="text-[11px] text-gray-400 mt-0.5">{es ? "Intento: " : "Tried "}{when(r.lastAttemptAt || r.requestedAt)}</p>
+                                    <div className="flex gap-2 mt-2.5">
+                                        <button onClick={() => decide(r, true)} disabled={busy === r.id}
+                                            className="flex-1 py-2 rounded-xl font-bold text-sm text-white disabled:opacity-60" style={{ background: "#16a34a" }}>
+                                            {busy === r.id ? "\u2026" : (es ? "Aprobar" : "Approve")}
+                                        </button>
+                                        <button onClick={() => decide(r, false)} disabled={busy === r.id}
+                                            className="flex-1 py-2 rounded-xl font-bold text-sm disabled:opacity-60" style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+                                            {es ? "Rechazar" : "Deny"}
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {approved.length > 0 && (
+                                <div>
+                                    <p className="text-xs font-bold text-gray-500 px-1 mt-3 mb-1">
+                                        {es ? "Dispositivos aprobados" : "Approved devices"} ({approved.length})
+                                    </p>
+                                    <div className="space-y-1.5">
+                                        {approved.map(r => (
+                                            <div key={r.id} className="flex items-center justify-between gap-2 bg-white rounded-xl border border-gray-100 px-3 py-2">
+                                                <div className="min-w-0">
+                                                    <p className="text-sm font-bold text-gray-800 truncate">{r.staffName}</p>
+                                                    <p className="text-[11px] text-gray-400 truncate">{r.deviceLabel}</p>
+                                                </div>
+                                                <button onClick={() => revoke(r)} disabled={busy === r.id}
+                                                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg shrink-0 disabled:opacity-60"
+                                                    style={{ background: "#f8fafc", color: "#991b1b", border: "1px solid #e2e8f0" }}>
+                                                    {busy === r.id ? "\u2026" : (es ? "Quitar" : "Remove")}
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-[11px] text-gray-400 px-1 mt-2">
+                                        {es ? "Quita un dispositivo si alguien pierde su tel\u00e9fono o deja de trabajar aqu\u00ed."
+                                            : "Remove a device if someone loses their phone or leaves."}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         // Home Page Component
         function HomePage({ onSelectStaff, language, setLanguage, staffList }) {
             const [pin, setPin] = useState("");
@@ -1477,6 +1663,8 @@
             const [bioName, setBioName] = useState(null);
             const [bioBusy, setBioBusy] = useState(false);
             const [autoTried, setAutoTried] = useState(false);
+            const [checking, setChecking] = useState(false);
+            const [pendingName, setPendingName] = useState("");
 
             useEffect(() => {
                 if (window.pdBio && window.pdBio.isEnabled()) setBioName(window.pdBio.enabledName());
@@ -1515,10 +1703,10 @@
                 onSelectStaff(match.name);
             };
 
-            const handlePinSubmit = () => {
+            const localFallback = () => {
                 const match = staffList.find(s => s.pin === pin);
                 if (match && match.active === false) {
-                    setError(language === "es" ? "Cuenta desactivada — contacta a un gerente" : "Account deactivated — contact a manager");
+                    setError(language === "es" ? "Cuenta desactivada \u2014 contacta a un gerente" : "Account deactivated \u2014 contact a manager");
                     setPin("");
                 } else if (match) {
                     loginByName(match.name);
@@ -1526,6 +1714,43 @@
                     setError(language === "es" ? "PIN incorrecto" : "Incorrect PIN");
                     setPin("");
                 }
+            };
+
+            const handlePinSubmit = async () => {
+                if (checking) return;
+                setError(""); setPendingName("");
+                setChecking(true);
+                let r;
+                try { r = await pdVerifyPin(pin); }
+                catch (e) { console.error("login", e); r = { status: "unavailable" }; }
+                setChecking(false);
+
+                if (r.status === "ok") {
+                    const rec = staffList.find(x => x.name === r.name);
+                    if (rec && rec.active === false) {
+                        setError(language === "es" ? "Cuenta desactivada \u2014 contacta a un gerente" : "Account deactivated \u2014 contact a manager");
+                        setPin("");
+                        try { auth.signOut(); } catch (e) {}
+                        return;
+                    }
+                    setPin("");
+                    loginByName(r.name);
+                    return;
+                }
+                if (r.status === "pending") {
+                    setPendingName(r.name || "");
+                    setPin("");
+                    return;
+                }
+                if (r.status === "locked" || r.status === "denied") {
+                    setError(r.message || (language === "es" ? "PIN incorrecto" : "Incorrect PIN"));
+                    setPin("");
+                    return;
+                }
+                // Could not reach the check. Rather than lock the floor out over a network
+                // blip, fall back to the old behaviour and leave a trace in the console.
+                console.warn("Falling back to local PIN check");
+                localFallback();
             };
 
             const handleBiometric = async (silent) => {
@@ -1567,6 +1792,18 @@
                             ))}
                         </div>
                         {error && <p className="text-red-300 text-xs mb-2 text-center font-medium">{error}</p>}
+                        {pendingName && (
+                            <div className="mb-3 rounded-xl px-3 py-2.5 text-center" style={{ background: "rgba(255,255,255,0.14)" }}>
+                                <p className="text-white text-xs font-bold">
+                                    {language === "es" ? "Esperando aprobaci\u00f3n" : "Waiting for approval"}
+                                </p>
+                                <p className="text-poke-100 text-[11px] mt-1 leading-snug">
+                                    {language === "es"
+                                        ? "Tu PIN es correcto, pero este dispositivo es nuevo. Un due\u00f1o tiene que aprobarlo. Av\u00edsale y vuelve a intentar."
+                                        : "Your PIN is right, but this device is new. An owner has to approve it. Let one know, then try again."}
+                                </p>
+                            </div>
+                        )}
                         <div className="grid grid-cols-3 gap-2 mt-3">
                             {[1,2,3,4,5,6,7,8,9].map(n => (
                                 <button key={n} onClick={() => { setError(""); if (pin.length < 4) setPin(pin + n); }}
@@ -1582,10 +1819,10 @@
                                 className="h-14 rounded-xl bg-white/10 border border-white/10 text-xl font-semibold text-white hover:bg-white/20 active:bg-gold-400/30 active:border-gold-400/50 transition-all duration-150">
                                 0
                             </button>
-                            <button onClick={handlePinSubmit}
+                            <button onClick={handlePinSubmit} disabled={checking}
                                 className={"h-14 rounded-xl text-sm font-bold transition-all duration-200 " +
                                     (pin.length === 4 ? "bg-gold-400 text-poke-900 hover:bg-gold-300 shadow-lg shadow-gold-400/30" : "bg-white/5 text-white/30 border border-white/10")}>
-                                OK
+                                {checking ? "\u2026" : "OK"}
                             </button>
                         </div>
                         {bioName && (
@@ -9862,6 +10099,9 @@
                         </div>
                     )}
 
+                    {/* ── DEVICE APPROVALS ── */}
+                    <DeviceApprovals language={language} staffName={staffName} />
+
                     {/* ── MAINTENANCE REQUESTS ── */}
                     <div className="mb-6">
                         <button onClick={() => setMaintenanceExpanded(!maintenanceExpanded)}
@@ -14263,7 +14503,7 @@
         const onbArchivePatch = (d, key) => {
             const patch = {};
             if (d && d[key] && d[key].pdfPath) patch.history = firebase.firestore.FieldValue.arrayUnion({ doc: key, pdfPath: d[key].pdfPath, signedAt: d[key].signedAt || null, replacedAt: new Date().toISOString() });
-            if (d && d.reissue && d.reissue[key]) patch["reissue." + key] = firebase.firestore.FieldValue.delete();
+            if (d && d.reissue && d.reissue[key]) patch.reissue = { [key]: firebase.firestore.FieldValue.delete() };
             return patch;
         };
         const parseAddr = (a) => { const parts = String(a || "").split(",").map(x => x.trim()); const m = (parts[2] || "").match(/([A-Z]{2})\s*(\d{5})?/i); return { street: parts[0] || "", city: parts[1] || "", state: m ? m[1].toUpperCase() : "MO", zip: m && m[2] ? m[2] : "" }; };
@@ -14907,13 +15147,23 @@
                 window.showToast(es ? "Entrevista guardada" : "Interview saved", "success");
             };
 
-            // Firebase owner sign-in gate (protects applicant PII via Firestore rules)
-            const [authUser, setAuthUser] = useState(auth.currentUser);
+            // Firebase owner sign-in gate (protects applicant PII via Firestore rules).
+            // Staff hold Firebase identities now, so being signed in is not enough on its own.
+            const [authUser, setAuthUser] = useState(null);
             const [authReady, setAuthReady] = useState(false);
             const [signin, setSignin] = useState({ email: "", pass: "", err: "", busy: false });
             useEffect(() => {
-                const unsub = auth.onAuthStateChanged(u => { setAuthUser(u); setAuthReady(true); });
-                return () => unsub();
+                let alive = true;
+                const unsub = auth.onAuthStateChanged(async u => {
+                    if (!u) { if (alive) { setAuthUser(null); setAuthReady(true); } return; }
+                    let owner = !!u.email;
+                    if (!owner) {
+                        try { const r = await u.getIdTokenResult(); owner = !!(r && r.claims && r.claims.owner === true); }
+                        catch (e) { owner = false; }
+                    }
+                    if (alive) { setAuthUser(owner ? u : null); setAuthReady(true); }
+                });
+                return () => { alive = false; unsub(); };
             }, []);
             const doSignIn = async () => {
                 setSignin(s => ({ ...s, err: "", busy: true }));
@@ -15695,13 +15945,25 @@
         // Same Firebase email/password account the Hiring tab uses.
         function OwnerGate({ language, title, note, children }) {
             const es = language === "es";
-            const [authUser, setAuthUser] = useState(auth.currentUser);
+            const [authUser, setAuthUser] = useState(null);
             const [authReady, setAuthReady] = useState(false);
             const [signin, setSignin] = useState({ email: "", pass: "", err: "", busy: false });
 
             useEffect(() => {
-                const unsub = auth.onAuthStateChanged(u => { setAuthUser(u); setAuthReady(true); });
-                return () => unsub();
+                let alive = true;
+                const unsub = auth.onAuthStateChanged(async u => {
+                    if (!u) { if (alive) { setAuthUser(null); setAuthReady(true); } return; }
+                    let owner = !!u.email;
+                    if (!owner) {
+                        // A staff member signed in by PIN. Only an Owner-role token gets through.
+                        try {
+                            const r = await u.getIdTokenResult();
+                            owner = !!(r && r.claims && r.claims.owner === true);
+                        } catch (e) { owner = false; }
+                    }
+                    if (alive) { setAuthUser(owner ? u : null); setAuthReady(true); }
+                });
+                return () => { alive = false; unsub(); };
             }, []);
 
             const doSignIn = async () => {
@@ -18025,6 +18287,18 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                     await onbAudit(r.id, key, "reissued", staffName);
                     try { window.showToast(L("Re-issued " + label + " to " + r.name, "Reenviado " + label + " a " + r.name), "success"); } catch (_) {}
                 };
+                const cancelReissue = async (r, key, label) => {
+                    const ok = await window.askConfirm({ title: L("Cancel the " + label + " redo?", "\u00bfCancelar " + label + "?"), body: L("The step goes back to complete using their most recent submission. Nothing is deleted.", "El paso vuelve a estar completo con su \u00faltimo env\u00edo. No se borra nada.") });
+                    if (!ok) return;
+                    try {
+                        await db.collection("onboarding").doc(r.id).set({ reissue: { [key]: firebase.firestore.FieldValue.delete() } }, { merge: true });
+                        await onbAudit(r.id, key, "reissue-cancelled", staffName);
+                        window.showToast(L("Redo cancelled for " + label, "Cancelado: " + label), "success");
+                    } catch (e) {
+                        console.error("cancel reissue", e);
+                        window.showToast(L("Couldn't cancel: ", "No se pudo cancelar: ") + (e.message || e), "error");
+                    }
+                };
                 const resetOnboarding = async (r) => {
                     const ok = await window.askConfirm({ title: L("Reset " + r.name + "'s onboarding?", "¿Reiniciar la incorporación de " + r.name + "?"), body: L("This deletes their signed documents and progress. Only use for test accounts or a true do-over. Not for departed employees (tax forms must be kept 4 years).", "Esto borra sus documentos firmados y su progreso. Solo para cuentas de prueba o un verdadero reinicio. No para empleados que se fueron (los formularios de impuestos se guardan 4 años).") });
                     if (!ok) return;
@@ -18101,7 +18375,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                 </div>
                                 {openEmp === r.id && (
                                     <div className="mt-2 pt-2 text-xs space-y-1.5" style={{ borderTop: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
-                                        {r.isNew && (
+                                        {(r.isNew || (r.d && ((r.d.pay && (r.d.pay.pdfPath || r.d.pay.checkPath)) || (r.d.history || []).length))) && (
                                             <div className="rounded-xl p-2" style={{ background: "var(--bg-subtle)" }}>
                                                 <div className="font-bold mb-1">{L("Signed documents", "Documentos firmados")}</div>
                                                 <OwnerGate language={language} title={L("Onboarding packet", "Paquete de incorporación")} note={L("Protects tax forms and signed documents.", "Protege formularios de impuestos y documentos firmados.")}>
@@ -18129,7 +18403,36 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                                                     <button key={k} onClick={() => reissueStep(r, k, label)} disabled={onbReissued(r.d, k)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg disabled:opacity-50" style={{ background: onbReissued(r.d, k) ? "#fef3c7" : "var(--bg-card)", color: onbReissued(r.d, k) ? "#92400e" : "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}>{onbReissued(r.d, k) ? "🔁 " : ""}{label}</button>
                                                 ))}
                                             </div>
-                                            {r.d && r.d.history && r.d.history.length > 0 && <p className="mt-1.5" style={{ color: "var(--text-muted)" }}>{r.d.history.length} {L("previous version(s) on file", "versión(es) anterior(es) archivadas")}</p>}
+                                                            {(() => {
+                                                const keys = (r.isNew ? ["offer", "i9", "w4", "mow4", "pay", "handbook", "emergency"] : ["pay", "handbook", "emergency"])
+                                                    .filter(k => onbReissued(r.d, k));
+                                                if (!keys.length) return null;
+                                                const nameOf = (k) => k === "offer" ? L("Offer letter", "Carta de oferta") : k === "i9" ? "I-9" : k === "w4" ? "W-4"
+                                                    : k === "mow4" ? "MO W-4" : k === "pay" ? L("Direct deposit", "Dep\u00f3sito directo")
+                                                    : k === "handbook" ? L("Handbook", "Manual") : L("Emergency contact", "Contacto de emergencia");
+                                                return (
+                                                    <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+                                                        <div className="font-bold mb-1" style={{ color: "#b45309" }}>{L("Waiting on a redo", "Esperando que lo rehagan")}</div>
+                                                        <div className="space-y-1">
+                                                            {keys.map(k => (
+                                                                <div key={k} className="flex items-center justify-between gap-2">
+                                                                    <span>{nameOf(k)}</span>
+                                                                    <button onClick={() => cancelReissue(r, k, nameOf(k))}
+                                                                        className="text-[11px] font-bold px-2.5 py-1 rounded-lg"
+                                                                        style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
+                                                                        {L("Cancel redo", "Cancelar")}
+                                                                    </button>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                        <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                                                            {L("Cancelling marks the step complete again using whatever they last submitted.",
+                                                               "Cancelar marca el paso como completo con lo \u00faltimo que enviaron.")}
+                                                        </p>
+                                                    </div>
+                                                );
+                                            })()}
+                            {r.d && r.d.history && r.d.history.length > 0 && <p className="mt-1.5" style={{ color: "var(--text-muted)" }}>{r.d.history.length} {L("previous version(s) on file", "versión(es) anterior(es) archivadas")}</p>}
                                         </div>
                                         {r.isNew && <button onClick={() => resetOnboarding(r)} className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#fef2f2", color: "#991b1b" }}>🗑 {L("Reset onboarding (test accounts)", "Reiniciar incorporación (pruebas)")}</button>}
                                         {r.isNew && (r.locked
