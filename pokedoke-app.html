@@ -1585,7 +1585,7 @@
                         className="w-full flex items-center justify-between rounded-xl p-4 border-2 transition"
                         style={{ background: pending.length ? "#fffbeb" : "#f8fafc", borderColor: pending.length ? "#fde68a" : "#e2e8f0" }}>
                         <div className="text-left">
-                            <p className="font-bold text-gray-800">\ud83d\udcf1 {es ? "Dispositivos" : "Device approvals"}</p>
+                            <p className="font-bold text-gray-800">📱 {es ? "Dispositivos" : "Device approvals"}</p>
                             <p className="text-xs text-gray-500 mt-0.5">
                                 {pending.length
                                     ? (es ? pending.length + " esperando aprobaci\u00f3n" : pending.length + " waiting for you")
@@ -1596,6 +1596,7 @@
                     </button>
 
                     {open && (
+                        <OwnerGate language={language} title={es ? "Dispositivos" : "Device approvals"} note={es ? "Protege qui\u00e9n puede entrar a la app." : "Controls who can get into the app."}>
                         <div className="mt-2 space-y-3">
                             {err && <p className="text-xs font-bold px-1" style={{ color: "#b91c1c" }}>{err}</p>}
 
@@ -1648,6 +1649,903 @@
                                         {es ? "Quita un dispositivo si alguien pierde su tel\u00e9fono o deja de trabajar aqu\u00ed."
                                             : "Remove a device if someone loses their phone or leaves."}
                                     </p>
+                                </div>
+                            )}
+                        </div>
+                        </OwnerGate>
+                    )}
+                </div>
+            );
+        }
+
+        // ---- Manager Hub ------------------------------------------------------------------------
+        // Three things a manager needs mid-shift: somewhere to write down what happened as it
+        // happens, something to hand the team when the line is empty, and the rules of the job
+        // close enough to check before making a call.
+
+        const MGR_GUIDE = {"version": "2026-11-16", "intro": "As a manager you run the shift. You are in charge of the food, the team and the guest experience from the time you clock in until you hand off to the next manager or lock up. That is true whether or not Steve is in the building. The store is meant to run on its managers, not on the owner.", "sections": [{"id": "running-the-shift", "title": "Running the shift", "blocks": [{"t": "p", "text": "The shift is yours from the moment you clock in. If something is not right, you fix it or you make sure it gets fixed."}, {"t": "ul", "items": ["Open or close the store on time, following the opening and closing checklists start to finish.", "Make sure the line is stocked, prep is done and food goes out the way it is supposed to: right portions, right build, fresh. Over-scooping is food cost, so correct it when you see it.", "Keep service moving. Watch the line and step into whatever position is falling behind.", "Stay on top of online and delivery orders. When an item runs out, mark it unavailable in the POS right away so guests cannot order it.", "Check deliveries against the invoice, put cold product away first and report shorts or bad product the same day.", "Watch stock through the shift and write what is running low in the shift log. If something will run out before the next delivery, text Steve that day. Record anything thrown away.", "Keep the dining room, restroom and front entrance clean and presentable all shift, not only at close.", "Check that the next shift is set up before you leave: prep levels, stock, a clean station.", "Write the shift log before you leave: how the rush went, call-offs and points, anyone sent home, write-ups, low stock, problems and anything unfinished. The log is how Steve and the next manager find out what happened, so it has to be complete. Routine items go in the log, not in a text to Steve.", "Report anything broken or out of the ordinary the same day. Do not leave it for the next manager to find."]}]}, {"id": "leading-the-team", "title": "Leading the team", "blocks": [{"t": "p", "text": "You set the pace and the tone. The team works the way the manager on duty works."}, {"t": "ul", "items": ["Assign positions at the start of the shift and move people as the rush changes.", "Schedule breaks so every employee gets their one-hour break and the line stays covered.", "Match staffing to the business. When it is slow and there are more people on than the shift needs, send people home early. That is your call to make, and you are expected to make it every time rather than keep extra people on the clock. Who goes home is at your discretion.", "Coach in the moment. If a bowl is built wrong, a station is dirty or someone is on their phone, correct it then, respectfully and in private when you can.", "Hold everyone to the handbook the same way, including friends and yourself. Dress code, phones, food handling and conduct apply on every shift.", "Train new employees on their station and check their work until they have it.", "Same-day shift and schedule change requests come to you, not to Steve. Decide based on coverage, not on who is asking.", "Posted schedules are not renegotiated. Availability is a request, and time off goes through the staff portal at least 14 days ahead.", "Verbal and written warnings are yours to give. Write it up the same day (who, what happened, what you said), have the employee sign it and note it in the shift log. Final warnings, demotions and terminations are Steve's.", "When Steve asks for a written statement about something you saw or heard, write what happened with times, and only what you witnessed yourself. You may also be asked to sit in as a witness when a write-up is delivered.", "Discipline is private. Do not discuss another employee's write-up, points or pay with the team.", "If an employee comes to you about harassment, discrimination or feeling unsafe, take it seriously, do not investigate it yourself and tell Steve the same day.", "If an employee seems impaired by alcohol or drugs, take them off the line, send them home safely and write it up. Tell Steve the same day.", "Treat every employee with respect, including the name and pronouns they use."]}]}, {"id": "call-offs-and-coverage", "title": "Call-offs and coverage", "blocks": [{"t": "p", "text": "Call-offs come to the manager leading that day. You record it, apply the points the policy calls for and make sure the shift is handled. Points follow the written policy, not your opinion of the reason."}, {"t": "p", "text": "When someone calls off:"}, {"t": "ul", "items": ["Write down who called, the time they called and the reason they gave.", "Note whether they gave at least 2 hours notice. A call-off is 1 attendance point, or 1.5 points with less than 2 hours notice.", "Ask whether they have coverage. Finding coverage is the employee's responsibility, not yours.", "If the shift is not covered, decide whether it can run short. If it cannot, call in staff who are off. This is your decision. Call Steve only if the store cannot open or stay open.", "Record the call-off and the points in the shift log, including whether the shift was covered.", "If they are out sick more than one day, they need a provider's release on office letterhead before they handle food again. A telehealth visit counts."]}, {"t": "p", "text": "When someone finds their own coverage, there is no attendance point as long as all three happen before the shift starts:"}, {"t": "ul", "items": ["They find another employee to take the shift.", "They release the shift in the staff portal and the other employee accepts it there.", "They tell the manager on duty."]}, {"t": "p", "text": "If any of the three is missing, treat it as a call-off. A text that says \"so-and-so is covering for me\" is not coverage until it is accepted in the portal."}, {"t": "p", "text": "Other situations that come up:"}, {"t": "ul", "items": ["\"I don't feel well\" the night before. That is not a call-off yet. Have them check in first thing in the morning with whoever is leading that day.", "No-call, no-show. Note the shift start time, try to reach them once, write down when you tried and write it up. Anything beyond a written warning is Steve's decision.", "\"That day is not in my availability.\" Availability is a preference and scheduling is based on coverage. The posted schedule in the staff portal is the notice, and every employee is responsible for checking it each week.", "A reason that turns out to be false. Lying about why a shift was missed is a serious violation, separate from attendance points. If you learn the reason was not true, tell Steve exactly what you heard and when.", "Leaving early. Nobody leaves before their scheduled end without the manager on duty approving it. Decide based on coverage."]}]}, {"id": "food-safety-and-cleanliness", "title": "Food safety and cleanliness", "blocks": [{"t": "p", "text": "We serve raw fish. Food safety is the one area where there is no judgment call and no shortcut."}, {"t": "ul", "items": ["Check and log cooler, freezer and line temperatures at the times on the log sheet. If a reading is out of range, act right away and tell Steve.", "Enforce handwashing, gloves and clean utensils. Stop and correct it on the spot, every time.", "Label, date and rotate everything. First in, first out. If it is past date or you are not sure, throw it out.", "Take every allergy question seriously. Change gloves, use clean utensils and a clean surface, and never guess about an ingredient.", "Send home anyone who shows up sick with vomiting, diarrhea or fever. They do not work the line that day.", "Keep sanitizer buckets fresh and at the right strength, and keep surfaces wiped through the shift.", "Be ready for a health inspection on any shift. When an inspector arrives, be respectful and polite, walk with them for the whole inspection and talk with them. If they raise a concern, fix it on the spot while they are still there. The health binder has the ServSafe certificates, the health permit and the other documents if they ask to see them. Let Steve know right away that the inspector is in the store, every time. If he is not there or cannot come, you manage the inspection yourself from start to finish. Send him the report when they leave."]}]}, {"id": "guests-and-incidents", "title": "Guests and incidents", "blocks": [{"t": "p", "text": "You are the person a guest talks to when something goes wrong. Handle it calmly, fix what you can and write down what happened."}, {"t": "ul", "items": ["Greet complaints with a fix, not an argument. You can remake any order on the spot without asking.", "You are authorized to give refunds and comps. They have to be for a legitimate reason, such as a wrong order, a quality problem or a long wait. Never refund or comp for friends or family, or for yourself, without Steve's approval first. Record every refund and comp in the shift log with the reason.", "Do not promise anything you cannot deliver, and do not admit fault for an injury or illness. Say you are sorry it happened and that the owner will follow up.", "If a guest or employee is hurt, or a guest says the food made them sick: get them help first, then write down the name, phone number, time and exactly what happened. Take photos of the area. Call Steve right away, not at the end of the shift.", "Once you have their information, stop discussing the incident with the guest and do not contact them afterward. Steve and the insurance company take it from there.", "If a guest becomes threatening or will not leave, do not confront them. Keep the team back and call the police.", "Do not reply to online reviews or social media comments about the store. Send them to Steve."]}]}, {"id": "cash-pos-and-closing-out", "title": "Cash, POS and closing out", "blocks": [{"t": "p", "text": "The drawer and the building are your responsibility while you hold the keys."}, {"t": "ul", "items": ["Count the drawer at the start of your shift, and count and close it at the end. Record both. Report any overage or shortage the same day.", "Voids, discounts and employee meals follow the policy. Do not ring up your own.", "Never share your POS login or manager code, and never use someone else's.", "Check that everyone clocks in and out for their own shifts and breaks. Note missed or wrong punches in the shift log instead of fixing them from memory.", "Keys and alarm codes are issued to you personally. Do not lend or share them, and tell Steve immediately if a key is lost.", "Do not delete, change or share camera footage. If something happens on your shift, give Steve the time so the footage can be saved.", "At close: secure the cash, complete the closing checklist, lock every door, and confirm the equipment that should be off is off."]}]}, {"id": "what-is-expected-of-you-as-a-manager", "title": "What is expected of you as a manager", "blocks": [{"t": "p", "text": "Managers are held to a higher standard than the rest of the team. That is the trade for the title and the pay."}, {"t": "ul", "items": ["Reliability comes first. A manager who calls off or leaves a shift puts the whole store at risk. Your attendance is expected to be better than the team's, not equal to it.", "When you are scheduled, the shift is yours. If you have a conflict, bring it to Steve in advance and he will listen. You do not decide on your own that you are not coming in.", "Flexible availability. Your schedule follows what the store needs. A preferred day off is a preference, not a guarantee. When the other manager has time off, your schedule changes to cover it.", "You work the whole shift. Take your break, then come back from it. You do not leave before your scheduled end unless Steve or another manager has taken over.", "You answer messages about work. When Steve or another manager texts about a shift, reply as soon as you can. Silence is not an answer.", "You are honest. About why you are late or out, about what happened on your shift, and about what you saw. One false statement costs more trust than the mistake it was covering.", "You follow every policy you enforce. The team watches what you do more than what you say.", "You answer for the shift. That includes the food, the store and the drawer. If it went wrong on your shift, own it and say what you will do differently.", "You disagree respectfully. Bring any disagreement straight to Steve. Scheduling and staffing decisions are his, and how you raise a concern matters as much as the concern.", "You keep it professional. No gossip about coworkers, pay or discipline. What an employee tells you as their manager stays between you, them and Steve."]}, {"t": "p", "text": "The title and the pay rate come with these standards. A manager who does not meet them can be returned to their previous position and rate."}]}, {"id": "what-you-decide-and-what-goes-to-steve", "title": "What you decide and what goes to Steve", "blocks": [{"t": "p", "text": "Anything in the \"You handle\" column is your decision. Make it without asking, even when Steve is standing in the store. Only the last column needs him."}, {"t": "table"}, {"t": "p", "text": "Call or text Steve right away for these, and only these:"}, {"t": "ul", "items": ["An injury, a guest illness complaint or a threat of a lawsuit", "A health inspector, police, press or the landlord in the store", "A harassment or discrimination complaint", "The store cannot open or has to close early", "Equipment failure that puts food at risk or stops service", "A lost key, missing cash or a break-in"]}, {"t": "p", "text": "Everything else goes in the shift log, and Steve reads it there."}]}], "decide": [{"s": "Call-off", "you": "Record it, apply the points per policy, handle coverage", "steve": "Nothing. It goes in the shift log"}, {"s": "No-call, no-show", "you": "Record it, try to reach them once, write it up", "steve": "Anything beyond a written warning"}, {"s": "Same-day shift change", "you": "Approve or deny based on coverage", "steve": "Anything that changes the posted schedule beyond that day"}, {"s": "Employee asks to leave early", "you": "Approve or deny based on coverage", "steve": ""}, {"s": "Time off request", "you": "Point them to the staff portal", "steve": "Approval"}, {"s": "Slow shift, more staff on than needed", "you": "Send people home early. Your call, and expected every time", "steve": "Overtime is never approved without Steve"}, {"s": "Shift cannot be staffed", "you": "Run short or call people in. Your decision", "steve": "Closing early, changing hours or pausing online orders"}, {"s": "Performance or conduct problem", "you": "Coach, verbal warning or written warning", "steve": "Final warnings, demotion, suspension, termination"}, {"s": "Sending someone home", "you": "Sick, impaired, unsafe or out of line: send them, then write it up", "steve": "No call first. Tell Steve the same day if it was conduct or impairment"}, {"s": "Harassment or discrimination complaint", "you": "Listen and write down what was said", "steve": "Same day, Steve handles it"}, {"s": "Hiring, pay, raises, promised hours", "you": "Make no promises", "steve": "All of it"}, {"s": "Refund or comp", "you": "For a legitimate reason: your call. Log it with the reason", "steve": "Anything for friends, family or yourself needs approval first"}, {"s": "Injury, illness complaint, threat of a lawsuit", "you": "Help, gather details, photos", "steve": "Call immediately"}, {"s": "Equipment down or safety hazard", "you": "Stop using it, make the area safe", "steve": "Text the same day, Steve arranges repair"}, {"s": "Online review or social media comment", "you": "Do not reply", "steve": "Send it to Steve"}, {"s": "Police, landlord, press", "you": "Cooperate and stay polite", "steve": "Call immediately, Steve speaks for the business"}, {"s": "Health inspector", "you": "Manage the inspection: walk with them, fix concerns on the spot, show the health binder if asked", "steve": "Let Steve know when they arrive, every time. Send the report after"}], "ack": "I have read these responsibilities and duties, I understand them, and I understand that I am accountable for them as a condition of holding a manager position. This document does not replace the employee handbook and does not change the at-will nature of my employment."};
+
+        const mhDay = (d) => { const p = n => String(n).padStart(2, "0"); return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()); };
+        const mhToday = () => mhDay(new Date());
+        const mhNowTime = () => { const d = new Date(); const p = n => String(n).padStart(2, "0"); return p(d.getHours()) + ":" + p(d.getMinutes()); };
+        const mhClock = (hhmm) => {
+            if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return hhmm || "";
+            const [h, m] = hhmm.split(":").map(Number);
+            return ((h % 12) || 12) + ":" + String(m).padStart(2, "0") + (h < 12 ? "am" : "pm");
+        };
+
+        // Every kind of entry, and the handful of fields each one needs. The form is drawn from
+        // this, so a shift with no call-offs never shows a call-off field.
+        const SL_TYPES = [
+            { id: "calloff", icon: "📵", en: "Call-off", es: "Falta avisada",
+              hint: "Points follow the written policy, not your opinion of the reason. Out sick more than one day means a provider's release before they handle food again.",
+              fields: [
+                { k: "emp", label: "Who called off", type: "emp", req: true },
+                { k: "calledAt", label: "Time they called", type: "time", req: true },
+                { k: "reason", label: "Reason they gave", type: "text", req: true },
+                { k: "notice", label: "Notice before the shift", type: "select", req: true, opts: ["2 hours or more", "Less than 2 hours"] },
+                { k: "coverage", label: "Coverage", type: "select", req: true, opts: ["Not covered, ran short", "Not covered, called someone in", "Covered by them and accepted in the portal before the shift"] },
+                { k: "coveredBy", label: "Who covered (if anyone)", type: "text" }
+              ] },
+            { id: "nocall", icon: "👻", en: "No-call, no-show", es: "No se presentó",
+              hint: "Try to reach them once, then write it up. Anything beyond a written warning is Steve's decision.",
+              fields: [
+                { k: "emp", label: "Who", type: "emp", req: true },
+                { k: "shiftStart", label: "Shift start time", type: "time", req: true },
+                { k: "triedAt", label: "Time you tried to reach them", type: "time" },
+                { k: "note", label: "What happened", type: "area" }
+              ] },
+            { id: "senthome", icon: "🏠", en: "Sent home", es: "Enviado a casa",
+              fields: [
+                { k: "emp", label: "Who", type: "emp", req: true },
+                { k: "time", label: "Time", type: "time", req: true },
+                { k: "why", label: "Why", type: "select", req: true, opts: ["Slow, cut early", "Sick", "Conduct", "Impaired", "Other"] },
+                { k: "note", label: "Details", type: "area" }
+              ] },
+            { id: "writeup", icon: "📝", en: "Warning given", es: "Advertencia",
+              hint: "Verbal and written warnings are yours. Final warnings, demotions and terminations are Steve's.",
+              fields: [
+                { k: "emp", label: "Who", type: "emp", req: true },
+                { k: "level", label: "Level", type: "select", req: true, opts: ["Verbal", "Written"] },
+                { k: "what", label: "What happened and what you said", type: "area", req: true },
+                { k: "signed", label: "Employee signed it", type: "yesno" }
+              ] },
+            { id: "comp", icon: "💵", en: "Refund or comp", es: "Reembolso",
+              hint: "Never for friends, family or yourself without Steve's approval first.",
+              fields: [
+                { k: "kind", label: "What you did", type: "select", req: true, opts: ["Refund", "Comp", "Remake"] },
+                { k: "amount", label: "Amount ($)", type: "money" },
+                { k: "why", label: "Reason", type: "select", req: true, opts: ["Wrong order", "Quality problem", "Long wait", "Other"] },
+                { k: "note", label: "Details", type: "text" }
+              ] },
+            { id: "lowstock", icon: "📉", en: "Low stock", es: "Poco inventario",
+              fields: [
+                { k: "item", label: "What is running low", type: "text", req: true },
+                { k: "runout", label: "Will run out before the next delivery", type: "yesno" },
+                { k: "note", label: "Notes", type: "text" }
+              ] },
+            { id: "waste", icon: "🗑️", en: "Waste", es: "Desperdicio",
+              fields: [
+                { k: "item", label: "What was thrown away", type: "text", req: true },
+                { k: "qty", label: "How much", type: "text" },
+                { k: "why", label: "Why", type: "select", req: true, opts: ["Past date", "Dropped or contaminated", "Over-prepped", "Temperature", "Other"] }
+              ] },
+            { id: "equipment", icon: "🔧", en: "Equipment", es: "Equipo",
+              fields: [
+                { k: "what", label: "What is broken", type: "text", req: true },
+                { k: "problem", label: "What it is doing", type: "area" },
+                { k: "safe", label: "Stopped using it and made the area safe", type: "yesno" },
+                { k: "risk", label: "Puts food at risk or stops service", type: "yesno" }
+              ] },
+            { id: "punch", icon: "⏱️", en: "Missed punch", es: "Marcaje",
+              hint: "Note it here instead of fixing it from memory.",
+              fields: [
+                { k: "emp", label: "Who", type: "emp", req: true },
+                { k: "what", label: "What is wrong and the real time", type: "text", req: true }
+              ] },
+            { id: "incident", icon: "🚨", en: "Injury or illness", es: "Lesión o enfermedad", urgent: true,
+              hint: "Get them help first, then call Steve right away. Say you are sorry it happened and that the owner will follow up. Do not admit fault, and do not contact the guest afterward.",
+              fields: [
+                { k: "who", label: "Who was affected", type: "select", req: true, opts: ["Guest", "Employee"] },
+                { k: "name", label: "Their name", type: "text" },
+                { k: "phone", label: "Their phone number", type: "text" },
+                { k: "time", label: "Time it happened", type: "time", req: true },
+                { k: "what", label: "Exactly what happened", type: "area", req: true },
+                { k: "photos", label: "Took photos of the area", type: "yesno" }
+              ] },
+            { id: "visitor", icon: "🏛️", en: "Inspector or police", es: "Inspector o policía", urgent: true,
+              hint: "Let Steve know now, every time. Be polite and walk with them. For a health inspection, fix concerns on the spot and send Steve the report after.",
+              fields: [
+                { k: "who", label: "Who is here", type: "select", req: true, opts: ["Health inspector", "Police", "Landlord", "Press"] },
+                { k: "time", label: "Time they arrived", type: "time", req: true },
+                { k: "what", label: "What they wanted and what happened", type: "area" }
+              ] },
+            { id: "note", icon: "🗒️", en: "Note", es: "Nota",
+              fields: [ { k: "what", label: "Note", type: "area", req: true } ] },
+            { id: "closeout", icon: "✅", en: "Close out the shift", es: "Cerrar el turno", closing: true,
+              hint: "Everything you logged during the shift is already saved. This is only the summary.",
+              fields: [
+                { k: "rush", label: "How did the rush go?", type: "area", req: true },
+                { k: "unfinished", label: "Anything unfinished or for the next manager", type: "area" },
+                { k: "nextReady", label: "Next shift is set up: prep, stock, clean station", type: "yesno" },
+                { k: "drawerStart", label: "Drawer at start ($)", type: "money" },
+                { k: "drawerEnd", label: "Drawer at end ($)", type: "money" },
+                { k: "drawerNote", label: "Over or short, and why", type: "text" }
+              ] }
+        ];
+        const slType = (id) => SL_TYPES.find(t => t.id === id) || SL_TYPES[SL_TYPES.length - 2];
+
+        // Attendance points come from the policy, so the form works them out.
+        const slPoints = (d) => {
+            if (!d) return 0;
+            if ((d.coverage || "").indexOf("accepted in the portal") >= 0) return 0;
+            return d.notice === "Less than 2 hours" ? 1.5 : 1;
+        };
+
+        // Which entries need Steve today, beyond sitting in the log.
+        const slEscalation = (type, d) => {
+            if (type === "incident" || type === "visitor") return "call";
+            if (type === "equipment" && d.risk === "yes") return "call";
+            if (type === "equipment") return "text";
+            if (type === "lowstock" && d.runout === "yes") return "text";
+            if (type === "senthome" && (d.why === "Conduct" || d.why === "Impaired")) return "text";
+            return "";
+        };
+
+        const slSummary = (e) => {
+            const d = e.data || {};
+            const j = (...parts) => parts.filter(Boolean).join(" · ");
+            switch (e.type) {
+                case "calloff": return j(d.emp, "called " + mhClock(d.calledAt), d.reason, (e.points === 0 ? "no point (covered in portal)" : e.points + " pt"), d.coverage, d.coveredBy && ("covered by " + d.coveredBy));
+                case "nocall": return j(d.emp, "shift at " + mhClock(d.shiftStart), d.triedAt && ("tried " + mhClock(d.triedAt)), d.note);
+                case "senthome": return j(d.emp, mhClock(d.time), d.why, d.note);
+                case "writeup": return j(d.emp, d.level + " warning", d.what, d.signed === "yes" ? "signed" : d.signed === "no" ? "not signed" : "");
+                case "comp": return j(d.kind, d.amount && ("$" + d.amount), d.why, d.note);
+                case "lowstock": return j(d.item, d.runout === "yes" ? "will run out before delivery" : "", d.note);
+                case "waste": return j(d.item, d.qty, d.why);
+                case "equipment": return j(d.what, d.problem, d.risk === "yes" ? "food at risk or service stopped" : "", d.safe === "yes" ? "made safe" : "");
+                case "punch": return j(d.emp, d.what);
+                case "incident": return j(d.who, mhClock(d.time), d.what, d.name, d.phone, d.photos === "yes" ? "photos taken" : "");
+                case "visitor": return j(d.who, mhClock(d.time), d.what);
+                case "closeout": return j(d.rush, d.unfinished && ("Unfinished: " + d.unfinished), d.nextReady === "yes" ? "next shift set up" : d.nextReady === "no" ? "next shift NOT set up" : "", (d.drawerStart || d.drawerEnd) && ("drawer $" + (d.drawerStart || "?") + " to $" + (d.drawerEnd || "?")), d.drawerNote);
+                default: return d.what || "";
+            }
+        };
+
+        // A starting list for slow stretches, most important first within each area. Managers
+        // and owners can change it in the app.
+        const DT_AREAS = ["Food safety", "Line", "Prep", "Front of house", "Restroom", "Back of house", "Walk-in and storage", "Team"];
+        const DT_DEFAULT = [
+            ["Food safety", "Check and log cooler, freezer and line temperatures if a reading is due", "daily"],
+            ["Food safety", "Change the sanitizer buckets and test the strength", "daily"],
+            ["Food safety", "Check date labels on the line and pull anything past date", "daily"],
+            ["Food safety", "Wipe and sanitize line surfaces, handles and the POS", "daily"],
+            ["Line", "Restock the line: proteins, bases, toppings, sauces", "daily"],
+            ["Line", "Swap scoops and utensils for clean ones", "daily"],
+            ["Line", "Refill sauce bottles and wipe the bottles and caps", "daily"],
+            ["Line", "Restock bowls, lids, utensils, napkins and bags", "daily"],
+            ["Line", "Wipe the sneeze guard inside and out", "daily"],
+            ["Line", "Pull the inserts and deep clean the line wells", "weekly"],
+            ["Prep", "Check prep levels against par and start whatever is low", "daily"],
+            ["Prep", "Cook rice ahead of the next rush", "daily"],
+            ["Prep", "Portion backup proteins and toppings", "daily"],
+            ["Prep", "Label and date everything prepped today", "daily"],
+            ["Front of house", "Wipe tables, chairs and high chairs", "daily"],
+            ["Front of house", "Sweep the dining room and the front entrance", "daily"],
+            ["Front of house", "Clean the front door glass and handles", "daily"],
+            ["Front of house", "Restock the drink cooler and face the bottles forward", "daily"],
+            ["Front of house", "Wipe the drink station and nozzles", "daily"],
+            ["Front of house", "Empty dining room trash that is half full or more", "daily"],
+            ["Front of house", "Wipe the counters, menu boards and screens", "daily"],
+            ["Front of house", "Dust ledges, window sills and light fixtures", "weekly"],
+            ["Front of house", "Wipe dining room walls and baseboards", "weekly"],
+            ["Restroom", "Check the restroom: toilet, sink, mirror, floor", "daily"],
+            ["Restroom", "Restock soap, paper towels and toilet paper", "daily"],
+            ["Restroom", "Deep clean the restroom: walls, door, behind the toilet", "weekly"],
+            ["Back of house", "Catch up on dishes and put the clean ones away", "daily"],
+            ["Back of house", "Sweep and spot-mop the kitchen floor", "daily"],
+            ["Back of house", "Empty kitchen trash and break down boxes", "daily"],
+            ["Back of house", "Wipe reach-in doors, handles and gaskets", "daily"],
+            ["Back of house", "Clean the rice cookers and warmers", "daily"],
+            ["Back of house", "Clean under and behind the equipment", "weekly"],
+            ["Back of house", "Scrub the sinks and floor drains", "weekly"],
+            ["Back of house", "Wipe the hood exterior and backsplash", "weekly"],
+            ["Walk-in and storage", "Organize the walk-in: first in first out, labels out, nothing on the floor", "daily"],
+            ["Walk-in and storage", "Organize dry storage and combine open cases", "daily"],
+            ["Walk-in and storage", "Check paper and to-go stock, and log anything low", "daily"],
+            ["Walk-in and storage", "Wipe the walk-in shelves and sweep the floor", "weekly"],
+            ["Team", "Train or cross-train someone on a station", "daily"],
+            ["Team", "Check that items marked unavailable in the POS match the line", "daily"],
+            ["Team", "Look over the next two days of the schedule for gaps", "daily"]
+        ].map((r, i) => ({ id: "dt" + (i + 1), area: r[0], text: r[1], freq: r[2] }));
+
+        function ManagerHub({ language, staffName, staffList }) {
+            const es = language === "es";
+            const L = (en, sp) => es ? sp : en;
+            const me = (staffList || []).find(x => x.name === staffName) || {};
+            const owner = isOwner(staffName);
+            const [tab, setTab] = useState("log");
+            const [loc, setLoc] = useState(me.location === "kirkwood" ? "kirkwood" : "cwe");
+            const canPickLoc = me.location === "all" || owner || !me.location;
+            const team = (staffList || []).filter(x => x.active !== false && (x.location === loc || x.location === "all")).map(x => x.name).sort();
+
+            const tabs = [
+                { id: "log", label: L("Shift log", "Bitácora") },
+                { id: "slow", label: L("When it's slow", "Cuando está lento") },
+                { id: "guide", label: L("My guide", "Mi guía") },
+                { id: "history", label: L("Look back", "Historial") }
+            ];
+
+            return (
+                <div className="p-4 pb-24 animate-in">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-1">🧭 {L("Manager Hub", "Centro del gerente")}</h2>
+                    <p className="text-sm text-gray-400 mb-3">{L("Log it when it happens. Find the next task. Check before you decide.", "Anótalo cuando pasa. Encuentra la siguiente tarea. Revisa antes de decidir.")}</p>
+
+                    {canPickLoc && (
+                        <div className="flex gap-2 mb-3">
+                            {["cwe", "kirkwood"].map(k => (
+                                <button key={k} onClick={() => setLoc(k)}
+                                    className={"flex-1 py-2 rounded-xl text-sm font-bold border " + (loc === k ? "bg-poke-700 text-white border-poke-700" : "bg-white text-gray-600 border-gray-200")}>
+                                    {PD_STORES[k].name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    <div className="flex gap-1 mb-4 p-1 rounded-xl bg-gray-100 overflow-x-auto">
+                        {tabs.map(t => (
+                            <button key={t.id} onClick={() => setTab(t.id)}
+                                className={"flex-1 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-bold transition " + (tab === t.id ? "bg-white text-poke-700 shadow-sm" : "text-gray-500")}>
+                                {t.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {tab === "log" && <MgrIdentity language={language}><ShiftLogToday language={language} staffName={staffName} loc={loc} team={team} /></MgrIdentity>}
+                    {tab === "slow" && <DowntimeBoard language={language} staffName={staffName} loc={loc} team={team} />}
+                    {tab === "guide" && <ManagerGuide language={language} staffName={staffName} owner={owner} />}
+                    {tab === "history" && <MgrIdentity language={language}><ShiftLogHistory language={language} staffName={staffName} loc={loc} owner={owner} /></MgrIdentity>}
+                </div>
+            );
+        }
+
+        // The shift log holds discipline and incident details, so it needs to know who is asking.
+        // Someone who came in through Face ID or the offline fallback has no identity yet, and
+        // gets asked for their PIN once here.
+        function MgrIdentity({ language, children }) {
+            const es = language === "es";
+            const [user, setUser] = useState(auth.currentUser);
+            const [ready, setReady] = useState(false);
+            const [pin, setPin] = useState("");
+            const [busy, setBusy] = useState(false);
+            const [msg, setMsg] = useState("");
+            useEffect(() => auth.onAuthStateChanged(u => { setUser(u); setReady(true); }), []);
+
+            if (!ready) return <p className="text-sm text-gray-400 py-6 text-center">…</p>;
+            if (user) return children;
+
+            const go = async () => {
+                if (busy || pin.length < 4) return;
+                setBusy(true); setMsg("");
+                const r = await pdVerifyPin(pin);
+                setBusy(false); setPin("");
+                if (r.status === "ok") return;
+                setMsg(r.status === "pending" ? (es ? "Este dispositivo necesita aprobación de un dueño primero." : "This device needs an owner's approval first.")
+                    : r.status === "unavailable" ? (es ? "No se pudo verificar. Revisa la conexión e intenta de nuevo." : "Couldn't check right now. Check the connection and try again.")
+                    : (r.message || (es ? "PIN incorrecto" : "That PIN wasn't recognized.")));
+            };
+            return (
+                <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                    <p className="font-bold text-gray-800 text-sm">{es ? "Confirma tu PIN" : "Confirm your PIN"}</p>
+                    <p className="text-xs text-gray-500 mt-1 mb-3">{es ? "La bitácora contiene información privada del equipo, así que necesita saber quién eres." : "The shift log holds private team information, so it needs to know it's you."}</p>
+                    <div className="flex gap-2">
+                        <input type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                            onKeyDown={e => { if (e.key === "Enter") go(); }}
+                            className="flex-1 px-3 py-2.5 border border-gray-200 rounded-xl" style={{ fontSize: 16 }} placeholder="PIN" />
+                        <button onClick={go} disabled={busy || pin.length < 4} className="px-5 rounded-xl font-bold text-white bg-poke-700 disabled:opacity-50">{busy ? "…" : "OK"}</button>
+                    </div>
+                    {msg && <p className="text-xs font-bold mt-2" style={{ color: "#b91c1c" }}>{msg}</p>}
+                </div>
+            );
+        }
+
+        function SLForm({ type, team, onSave, onCancel, busy }) {
+            const T = slType(type);
+            const [d, setD] = useState(() => {
+                const init = {};
+                T.fields.forEach(f => { if (f.type === "time" && f.req) init[f.k] = mhNowTime(); });
+                return init;
+            });
+            const [otherEmp, setOtherEmp] = useState(false);
+            const set = (k, v) => setD(prev => ({ ...prev, [k]: v }));
+            const missing = T.fields.filter(f => f.req && !String(d[f.k] || "").trim()).map(f => f.label);
+            const esc = slEscalation(type, d);
+            const inputCls = "w-full px-3 py-2.5 border border-gray-200 rounded-xl bg-white";
+
+            return (
+                <div className="bg-white rounded-2xl border-2 p-4 mb-4" style={{ borderColor: T.urgent ? "#fca5a5" : "#bae6fd" }}>
+                    <div className="flex items-center justify-between mb-2">
+                        <p className="font-bold text-gray-800">{T.icon} {T.en}</p>
+                        <button onClick={onCancel} className="text-gray-400 text-xl leading-none px-2">×</button>
+                    </div>
+                    {T.hint && <p className="text-xs rounded-xl px-3 py-2 mb-3" style={T.urgent ? { background: "#fef2f2", color: "#991b1b", fontWeight: 700 } : { background: "#f8fafc", color: "#475569" }}>{T.hint}</p>}
+
+                    <div className="space-y-3">
+                        {T.fields.map(f => (
+                            <div key={f.k}>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">{f.label}{f.req ? " *" : ""}</label>
+                                {f.type === "emp" && !otherEmp && (
+                                    <select className={inputCls} style={{ fontSize: 16 }} value={d[f.k] || ""} onChange={e => { if (e.target.value === "__other") { setOtherEmp(true); set(f.k, ""); } else set(f.k, e.target.value); }}>
+                                        <option value="">Choose…</option>
+                                        {team.map(n => <option key={n} value={n}>{n}</option>)}
+                                        <option value="__other">Someone not listed</option>
+                                    </select>
+                                )}
+                                {f.type === "emp" && otherEmp && <input className={inputCls} style={{ fontSize: 16 }} value={d[f.k] || ""} onChange={e => set(f.k, e.target.value)} placeholder="Full name" />}
+                                {f.type === "text" && <input className={inputCls} style={{ fontSize: 16 }} value={d[f.k] || ""} onChange={e => set(f.k, e.target.value)} />}
+                                {f.type === "money" && <input className={inputCls} style={{ fontSize: 16 }} inputMode="decimal" value={d[f.k] || ""} onChange={e => set(f.k, e.target.value.replace(/[^0-9.]/g, ""))} />}
+                                {f.type === "time" && <input type="time" className={inputCls} style={{ fontSize: 16 }} value={d[f.k] || ""} onChange={e => set(f.k, e.target.value)} />}
+                                {f.type === "area" && <textarea rows={3} className={inputCls} style={{ fontSize: 16 }} value={d[f.k] || ""} onChange={e => set(f.k, e.target.value)} />}
+                                {f.type === "select" && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {f.opts.map(o => (
+                                            <button key={o} onClick={() => set(f.k, o)}
+                                                className={"px-3 py-2 rounded-xl text-xs font-bold border text-left " + (d[f.k] === o ? "bg-poke-700 text-white border-poke-700" : "bg-white text-gray-600 border-gray-200")}>{o}</button>
+                                        ))}
+                                    </div>
+                                )}
+                                {f.type === "yesno" && (
+                                    <div className="flex gap-1.5">
+                                        {[["yes", "Yes"], ["no", "No"]].map(([v, lab]) => (
+                                            <button key={v} onClick={() => set(f.k, d[f.k] === v ? "" : v)}
+                                                className={"px-5 py-2 rounded-xl text-xs font-bold border " + (d[f.k] === v ? "bg-poke-700 text-white border-poke-700" : "bg-white text-gray-600 border-gray-200")}>{lab}</button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+
+                    {type === "calloff" && d.notice && d.coverage && (
+                        <p className="text-sm font-bold mt-3 rounded-xl px-3 py-2" style={{ background: "#fffbeb", color: "#92400e" }}>
+                            {slPoints(d) === 0 ? "No attendance point. Coverage was accepted in the portal before the shift." : "Attendance points: " + slPoints(d)}
+                        </p>
+                    )}
+                    {esc === "call" && !T.urgent && <p className="text-sm font-bold mt-3 rounded-xl px-3 py-2" style={{ background: "#fef2f2", color: "#991b1b" }}>Call Steve right away for this one.</p>}
+                    {esc === "text" && <p className="text-sm font-bold mt-3 rounded-xl px-3 py-2" style={{ background: "#fffbeb", color: "#92400e" }}>Text Steve today about this. He also gets a notification when you save.</p>}
+
+                    <button onClick={() => onSave(d)} disabled={busy || missing.length > 0}
+                        className="w-full mt-4 py-3 rounded-xl font-bold text-white bg-poke-700 disabled:opacity-50">
+                        {busy ? "Saving…" : missing.length ? "Still needed: " + missing[0] : (T.closing ? "Close out the shift" : "Save to the log")}
+                    </button>
+                </div>
+            );
+        }
+
+        function SLEntry({ e, showDate, onDelete }) {
+            const T = slType(e.type);
+            const t = new Date(e.at);
+            const when = (showDate ? t.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " · " : "") + t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+            return (
+                <div className="bg-white rounded-xl border px-3 py-2.5" style={{ borderColor: T.urgent ? "#fecaca" : T.closing ? "#bbf7d0" : "#f1f5f9" }}>
+                    <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-bold" style={{ color: T.urgent ? "#991b1b" : T.closing ? "#166534" : "#334155" }}>{T.icon} {T.en}</p>
+                        <p className="text-[11px] text-gray-400 shrink-0">{when} · {(e.by || "").split(" ")[0]}</p>
+                    </div>
+                    <p className="text-sm text-gray-700 mt-1 leading-snug" style={{ whiteSpace: "pre-wrap" }}>{slSummary(e)}</p>
+                    {onDelete && <button onClick={() => onDelete(e)} className="text-[11px] text-gray-400 underline mt-1">Remove</button>}
+                </div>
+            );
+        }
+
+        function ShiftLogToday({ language, staffName, loc, team }) {
+            const es = language === "es";
+            const today = mhToday();
+            const [rows, setRows] = useState([]);
+            const [open, setOpen] = useState("");
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState("");
+
+            useEffect(() => {
+                setErr("");
+                const unsub = db.collection("shiftLog").where("date", "==", today).onSnapshot(
+                    snap => setRows(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+                    e => setErr(e.code === "permission-denied" ? "Your login doesn't have shift log access yet. Ask Steve to check your role." : (e.message || String(e)))
+                );
+                return () => unsub();
+            }, [today]);
+
+            const mine = rows.filter(r => r.loc === loc).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+            const closed = mine.find(r => r.type === "closeout");
+
+            const save = async (d) => {
+                setBusy(true); setErr("");
+                try {
+                    const clean = {};
+                    Object.keys(d).forEach(k => { const v = typeof d[k] === "string" ? d[k].trim() : d[k]; if (v !== "" && v != null) clean[k] = v; });
+                    const entry = { type: open, date: today, loc, by: staffName, at: new Date().toISOString(), data: clean };
+                    if (clean.emp) entry.emp = clean.emp;
+                    if (open === "calloff") entry.points = slPoints(clean);
+                    const esc = slEscalation(open, clean);
+                    if (esc) entry.escalate = esc;
+                    await db.collection("shiftLog").add(entry);
+
+                    const T = slType(open);
+                    const store = PD_STORES[loc].name;
+                    if (esc) sendNotification(OWNER_NAMES, (esc === "call" ? "🚨 " : "") + T.en + " at " + store, slSummary(entry).slice(0, 180), { type: "shiftlog" });
+                    else if (open === "closeout") sendNotification(OWNER_NAMES, "Shift log closed out at " + store, staffName + ": " + (clean.rush || "").slice(0, 160), { type: "shiftlog" });
+
+                    window.showToast(open === "closeout" ? "Shift closed out" : "Saved to the log", "success");
+                    setOpen("");
+                } catch (e) {
+                    setErr(e.code === "permission-denied" ? "Your login doesn't have shift log access yet. Ask Steve to check your role." : (e.message || String(e)));
+                }
+                setBusy(false);
+            };
+
+            const quick = SL_TYPES.filter(t => !t.closing);
+            return (
+                <div>
+                    {err && <p className="text-xs font-bold mb-3 rounded-xl px-3 py-2" style={{ background: "#fef2f2", color: "#991b1b" }}>{err}</p>}
+
+                    {open ? (
+                        <SLForm key={open} type={open} team={team} busy={busy} onSave={save} onCancel={() => setOpen("")} />
+                    ) : (
+                        <div className="mb-4">
+                            <p className="text-xs font-bold text-gray-500 mb-2">{es ? "¿Qué pasó?" : "Something happened? Log it now."}</p>
+                            <div className="grid grid-cols-3 gap-2">
+                                {quick.map(t => (
+                                    <button key={t.id} onClick={() => setOpen(t.id)}
+                                        className="bg-white rounded-xl border px-2 py-3 text-center active:scale-95 transition"
+                                        style={{ borderColor: t.urgent ? "#fecaca" : "#e2e8f0" }}>
+                                        <div className="text-xl">{t.icon}</div>
+                                        <div className="text-[11px] font-bold mt-1 leading-tight" style={{ color: t.urgent ? "#991b1b" : "#334155" }}>{es ? t.es : t.en}</div>
+                                    </button>
+                                ))}
+                            </div>
+                            <button onClick={() => setOpen("closeout")}
+                                className="w-full mt-3 py-3 rounded-xl font-bold text-sm border-2"
+                                style={closed ? { background: "#f0fdf4", borderColor: "#bbf7d0", color: "#166534" } : { background: "#0e7490", borderColor: "#0e7490", color: "#fff" }}>
+                                {closed ? "✅ Closed out by " + (closed.by || "").split(" ")[0] + ". Add another close-out" : "✅ Close out the shift"}
+                            </button>
+                            <p className="text-[11px] text-gray-400 mt-2">A harassment or discrimination complaint does not go in this log. Write down what was said and tell Steve the same day.</p>
+                        </div>
+                    )}
+
+                    <p className="text-xs font-bold text-gray-500 mb-2">
+                        {es ? "Hoy en " : "Today at "}{PD_STORES[loc].name} ({mine.length})
+                    </p>
+                    {mine.length === 0
+                        ? <p className="text-sm text-gray-400 bg-white rounded-xl border border-gray-100 px-3 py-4 text-center">Nothing logged yet today.</p>
+                        : <div className="space-y-2">{mine.map(e => <SLEntry key={e.id} e={e} />)}</div>}
+                </div>
+            );
+        }
+
+        function ShiftLogHistory({ language, staffName, loc, owner }) {
+            const [rows, setRows] = useState(null);
+            const [err, setErr] = useState("");
+            const [type, setType] = useState("");
+            const [who, setWho] = useState("");
+            const [days, setDays] = useState(30);
+            const [q, setQ] = useState("");
+
+            useEffect(() => {
+                const unsub = db.collection("shiftLog").orderBy("date", "desc").limit(600).onSnapshot(
+                    snap => setRows(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+                    e => { setRows([]); setErr(e.code === "permission-denied" ? "Your login doesn't have shift log access yet. Ask Steve to check your role." : (e.message || String(e))); }
+                );
+                return () => unsub();
+            }, []);
+
+            if (rows === null) return <p className="text-sm text-gray-400 py-6 text-center">Loading…</p>;
+
+            const since = mhDay(new Date(Date.now() - days * 86400000));
+            const inStore = rows.filter(r => r.loc === loc && r.date >= since);
+            const people = Array.from(new Set(inStore.map(r => r.emp).filter(Boolean))).sort();
+            const needle = q.trim().toLowerCase();
+            const shown = inStore
+                .filter(r => !type || r.type === type)
+                .filter(r => !who || r.emp === who)
+                .filter(r => !needle || (slSummary(r) + " " + (r.by || "")).toLowerCase().indexOf(needle) >= 0)
+                .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+
+            // The patterns worth seeing at a glance for whatever is filtered.
+            const tally = (list, keyFn, valFn) => {
+                const m = {};
+                list.forEach(r => { const k = keyFn(r); if (k) m[k] = (m[k] || 0) + valFn(r); });
+                return Object.keys(m).map(k => [k, m[k]]).sort((a, b) => b[1] - a[1]);
+            };
+            const attendance = tally(inStore.filter(r => r.type === "calloff" || r.type === "nocall"), r => r.emp, r => r.type === "calloff" ? (r.points || 0) : 0);
+            const noShows = tally(inStore.filter(r => r.type === "nocall"), r => r.emp, () => 1);
+            const comps = inStore.filter(r => r.type === "comp");
+            const compTotal = comps.reduce((s, r) => s + (parseFloat((r.data || {}).amount) || 0), 0);
+            const compBy = tally(comps, r => r.by, r => parseFloat((r.data || {}).amount) || 0);
+            const counts = tally(inStore, r => r.type, () => 1);
+
+            const remove = async (e) => {
+                if (!await window.askConfirm({ title: "Remove this entry?", body: "This deletes it from the log for good." })) return;
+                try { await db.collection("shiftLog").doc(e.id).delete(); window.showToast("Removed", "success"); }
+                catch (x) { window.showToast("Couldn't remove: " + (x.message || x), "error"); }
+            };
+
+            const chip = (active) => "px-3 py-1.5 rounded-full text-xs font-bold border whitespace-nowrap " + (active ? "bg-poke-700 text-white border-poke-700" : "bg-white text-gray-600 border-gray-200");
+            return (
+                <div>
+                    {err && <p className="text-xs font-bold mb-3 rounded-xl px-3 py-2" style={{ background: "#fef2f2", color: "#991b1b" }}>{err}</p>}
+
+                    <div className="flex gap-1.5 mb-2">
+                        {[7, 30, 90, 365].map(n => <button key={n} onClick={() => setDays(n)} className={chip(days === n)}>{n === 365 ? "1 year" : n + " days"}</button>)}
+                    </div>
+                    <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1">
+                        <button onClick={() => setType("")} className={chip(!type)}>All ({inStore.length})</button>
+                        {counts.map(([id, n]) => <button key={id} onClick={() => setType(type === id ? "" : id)} className={chip(type === id)}>{slType(id).icon} {slType(id).en} ({n})</button>)}
+                    </div>
+                    <div className="flex gap-2 mb-3">
+                        <select value={who} onChange={e => setWho(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-xl bg-white text-sm">
+                            <option value="">Everyone</option>
+                            {people.map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search" className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm" style={{ fontSize: 16 }} />
+                    </div>
+
+                    {!type && !who && !needle && (attendance.length > 0 || comps.length > 0) && (
+                        <div className="bg-white rounded-2xl border border-gray-100 p-3 mb-3">
+                            <p className="text-xs font-bold text-gray-500 mb-2">Patterns, last {days === 365 ? "year" : days + " days"}</p>
+                            {attendance.length > 0 && (
+                                <div className="mb-2">
+                                    <p className="text-[11px] font-bold text-gray-400 mb-1">ATTENDANCE POINTS FROM CALL-OFFS</p>
+                                    {attendance.slice(0, 6).map(([n, pts]) => {
+                                        const ns = (noShows.find(x => x[0] === n) || [0, 0])[1];
+                                        return (
+                                            <button key={n} onClick={() => setWho(n)} className="w-full flex justify-between text-sm py-0.5 text-left">
+                                                <span className="text-gray-700">{n}</span>
+                                                <span className="font-bold text-gray-800">{pts} pt{ns ? " + " + ns + " no-show" : ""}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                            {comps.length > 0 && (
+                                <div>
+                                    <p className="text-[11px] font-bold text-gray-400 mb-1">REFUNDS AND COMPS: {comps.length} for ${compTotal.toFixed(2)}</p>
+                                    {compBy.slice(0, 4).map(([n, amt]) => (
+                                        <div key={n} className="flex justify-between text-sm py-0.5">
+                                            <span className="text-gray-700">{n}</span>
+                                            <span className="font-bold text-gray-800">${amt.toFixed(2)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {shown.length === 0
+                        ? <p className="text-sm text-gray-400 bg-white rounded-xl border border-gray-100 px-3 py-4 text-center">Nothing matches.</p>
+                        : <div className="space-y-2">{shown.slice(0, 150).map(e => <SLEntry key={e.id} e={e} showDate={true} onDelete={owner ? remove : null} />)}</div>}
+                    {shown.length > 150 && <p className="text-[11px] text-gray-400 mt-2 text-center">Showing the newest 150 of {shown.length}. Narrow the filters to see the rest.</p>}
+                </div>
+            );
+        }
+
+        function DowntimeBoard({ language, staffName, loc, team }) {
+            const es = language === "es";
+            const [tasks, setTasks] = useState(DT_DEFAULT);
+            const [state, setState] = useState({ last: {}, assigned: {} });
+            const [assigning, setAssigning] = useState("");
+            const [editing, setEditing] = useState(false);
+            const [draft, setDraft] = useState({ area: DT_AREAS[0], text: "", freq: "daily" });
+            const [showDone, setShowDone] = useState(false);
+            const canEdit = isAdmin(staffName);
+
+            useEffect(() => {
+                const u1 = db.collection("config").doc("downtimeTasks").onSnapshot(s => {
+                    const list = s.exists && s.data() && Array.isArray(s.data().list) ? s.data().list : null;
+                    setTasks(list && list.length ? list : DT_DEFAULT);
+                });
+                const u2 = db.collection("ops").doc("downtime_" + loc).onSnapshot(s => {
+                    const d = (s.exists && s.data()) || {};
+                    setState({ last: d.last || {}, assigned: d.assigned || {} });
+                });
+                return () => { u1(); u2(); };
+            }, [loc]);
+
+            const today = mhToday();
+            const isDue = (t) => {
+                const l = state.last[t.id];
+                if (!l || !l.at) return true;
+                if (t.freq === "weekly") return (Date.now() - new Date(l.at).getTime()) > 6 * 86400000;
+                return mhDay(new Date(l.at)) !== today;
+            };
+            const due = tasks.filter(isDue);
+            const doneToday = tasks.filter(t => { const l = state.last[t.id]; return l && l.at && mhDay(new Date(l.at)) === today; });
+            const free = due.filter(t => !state.assigned[t.id]);
+            const upNext = free.slice(0, 3);
+            const ref = db.collection("ops").doc("downtime_" + loc);
+
+            const assign = async (t, who) => {
+                setAssigning("");
+                try { await ref.set({ assigned: { [t.id]: { who, by: staffName, at: new Date().toISOString() } } }, { merge: true }); }
+                catch (e) { window.showToast("Couldn't assign: " + (e.message || e), "error"); }
+            };
+            const unassign = async (t) => {
+                try { await ref.set({ assigned: { [t.id]: firebase.firestore.FieldValue.delete() } }, { merge: true }); } catch (e) {}
+            };
+            const done = async (t) => {
+                const a = state.assigned[t.id];
+                try {
+                    await ref.set({
+                        last: { [t.id]: { at: new Date().toISOString(), by: staffName, who: (a && a.who) || staffName } },
+                        assigned: { [t.id]: firebase.firestore.FieldValue.delete() }
+                    }, { merge: true });
+                    if (window.PDDevice) window.PDDevice.haptic("light");
+                } catch (e) { window.showToast("Couldn't save: " + (e.message || e), "error"); }
+            };
+            const undo = async (t) => {
+                try { await ref.set({ last: { [t.id]: firebase.firestore.FieldValue.delete() } }, { merge: true }); } catch (e) {}
+            };
+            const saveList = async (list) => {
+                try { await db.collection("config").doc("downtimeTasks").set({ list, updatedBy: staffName, updatedAt: new Date().toISOString() }); }
+                catch (e) { window.showToast("Couldn't save the list: " + (e.message || e), "error"); }
+            };
+            const addTask = () => {
+                const text = draft.text.trim();
+                if (!text) return;
+                saveList(tasks.concat([{ id: "dt" + Date.now().toString(36), area: draft.area, text, freq: draft.freq }]));
+                setDraft({ ...draft, text: "" });
+            };
+            const removeTask = async (t) => {
+                if (!await window.askConfirm({ title: "Remove this task?", body: t.text })) return;
+                saveList(tasks.filter(x => x.id !== t.id));
+            };
+
+            const Row = ({ t, highlight }) => {
+                const a = state.assigned[t.id];
+                return (
+                    <div className="bg-white rounded-xl border px-3 py-2.5" style={{ borderColor: highlight ? "#a5f3fc" : "#f1f5f9" }}>
+                        <div className="flex items-start gap-2">
+                            <button onClick={() => done(t)} aria-label="Mark done"
+                                className="shrink-0 w-7 h-7 rounded-full border-2 border-gray-300 mt-0.5 active:bg-green-100"></button>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm text-gray-800 leading-snug">{t.text}</p>
+                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                    {t.freq === "weekly" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700">WEEKLY</span>}
+                                    {a
+                                        ? <button onClick={() => unassign(t)} className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800">→ {a.who} ×</button>
+                                        : assigning === t.id
+                                            ? <select autoFocus className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white" defaultValue="" onChange={e => e.target.value && assign(t, e.target.value)} onBlur={() => setAssigning("")}>
+                                                <option value="">Give it to…</option>
+                                                {team.map(n => <option key={n} value={n}>{n}</option>)}
+                                              </select>
+                                            : <button onClick={() => setAssigning(t.id)} className="text-[11px] font-bold text-poke-700 underline">{es ? "Asignar" : "Assign"}</button>}
+                                    {editing && <button onClick={() => removeTask(t)} className="text-[11px] text-red-600 underline">Remove</button>}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const assignedList = due.filter(t => state.assigned[t.id]);
+            return (
+                <div>
+                    {upNext.length > 0 && (
+                        <div className="rounded-2xl p-3 mb-4" style={{ background: "#ecfeff", border: "1px solid #a5f3fc" }}>
+                            <p className="text-xs font-bold mb-2" style={{ color: "#155e75" }}>{es ? "SIGUIENTE" : "NO CUSTOMERS? START HERE"}</p>
+                            <div className="space-y-2">{upNext.map(t => <Row key={t.id} t={t} highlight={true} />)}</div>
+                        </div>
+                    )}
+                    {due.length === 0 && <p className="text-sm font-bold rounded-2xl px-3 py-4 mb-4 text-center" style={{ background: "#f0fdf4", color: "#166534" }}>Everything on the list is done for today. Nice work.</p>}
+
+                    {assignedList.length > 0 && (
+                        <div className="mb-4">
+                            <p className="text-xs font-bold text-gray-500 mb-2">{es ? "Asignadas" : "Handed out"} ({assignedList.length})</p>
+                            <div className="space-y-2">{assignedList.map(t => <Row key={t.id} t={t} />)}</div>
+                        </div>
+                    )}
+
+                    {DT_AREAS.concat(Array.from(new Set(tasks.map(t => t.area))).filter(a => DT_AREAS.indexOf(a) < 0)).map(area => {
+                        const list = free.filter(t => t.area === area && upNext.indexOf(t) < 0);
+                        if (!list.length) return null;
+                        return (
+                            <div key={area} className="mb-4">
+                                <p className="text-xs font-bold text-gray-500 mb-2">{area} ({list.length})</p>
+                                <div className="space-y-2">{list.map(t => <Row key={t.id} t={t} />)}</div>
+                            </div>
+                        );
+                    })}
+
+                    {doneToday.length > 0 && (
+                        <div className="mb-4">
+                            <button onClick={() => setShowDone(!showDone)} className="text-xs font-bold text-gray-500">{showDone ? "▼" : "▶"} {es ? "Hechas hoy" : "Done today"} ({doneToday.length})</button>
+                            {showDone && (
+                                <div className="space-y-1.5 mt-2">
+                                    {doneToday.map(t => {
+                                        const l = state.last[t.id];
+                                        return (
+                                            <div key={t.id} className="flex items-center justify-between gap-2 bg-white rounded-xl border border-gray-100 px-3 py-2">
+                                                <div className="min-w-0">
+                                                    <p className="text-sm text-gray-500 line-through truncate">{t.text}</p>
+                                                    <p className="text-[11px] text-gray-400">{l.who}{l.by && l.by !== l.who ? " (checked by " + l.by.split(" ")[0] + ")" : ""} · {new Date(l.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</p>
+                                                </div>
+                                                <button onClick={() => undo(t)} className="text-[11px] text-gray-400 underline shrink-0">Undo</button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {canEdit && (
+                        <div className="mt-6 pt-4 border-t border-gray-100">
+                            <button onClick={() => setEditing(!editing)} className="text-xs font-bold text-poke-700 underline">{editing ? "Done editing" : "Edit this list"}</button>
+                            {editing && (
+                                <div className="bg-white rounded-2xl border border-gray-200 p-3 mt-2 space-y-2">
+                                    <p className="text-xs text-gray-500">Add a task below, or use Remove on any task above. Changes apply to both stores.</p>
+                                    <input value={draft.text} onChange={e => setDraft({ ...draft, text: e.target.value })} placeholder="New task" className="w-full px-3 py-2 border border-gray-200 rounded-xl" style={{ fontSize: 16 }} />
+                                    <div className="flex gap-2">
+                                        <select value={draft.area} onChange={e => setDraft({ ...draft, area: e.target.value })} className="flex-1 px-2 py-2 border border-gray-200 rounded-xl bg-white text-sm">
+                                            {DT_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
+                                        </select>
+                                        <select value={draft.freq} onChange={e => setDraft({ ...draft, freq: e.target.value })} className="px-2 py-2 border border-gray-200 rounded-xl bg-white text-sm">
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                        </select>
+                                        <button onClick={addTask} disabled={!draft.text.trim()} className="px-4 rounded-xl font-bold text-white bg-poke-700 disabled:opacity-50 text-sm">Add</button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        function ManagerGuide({ language, staffName, owner }) {
+            const [view, setView] = useState("decide");
+            const [q, setQ] = useState("");
+            const [openSec, setOpenSec] = useState("");
+            const [acks, setAcks] = useState([]);
+            const [typed, setTyped] = useState("");
+            const [agree, setAgree] = useState(false);
+            const [busy, setBusy] = useState(false);
+
+            useEffect(() => db.collection("managerAck").onSnapshot(
+                s => setAcks(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setAcks([])), []);
+
+            const myAck = acks.find(a => a.name === staffName && a.version === MGR_GUIDE.version);
+            const needle = q.trim().toLowerCase();
+            const hit = (s) => !needle || String(s).toLowerCase().indexOf(needle) >= 0;
+            const callNow = (MGR_GUIDE.sections.find(s => s.id.indexOf("what-you-decide") === 0) || { blocks: [] }).blocks.filter(b => b.t === "ul")[0];
+
+            const sign = async () => {
+                if (busy || !agree || typed.trim().length < 3) return;
+                setBusy(true);
+                try {
+                    await db.collection("managerAck").doc(staffName.replace(/\s+/g, "_") + "_" + MGR_GUIDE.version).set({
+                        name: staffName, typedName: typed.trim(), version: MGR_GUIDE.version,
+                        at: new Date().toISOString(), device: pdDeviceLabel(), text: MGR_GUIDE.ack
+                    });
+                    window.showToast("Acknowledgement saved", "success");
+                } catch (e) { window.showToast("Couldn't save: " + (e.message || e), "error"); }
+                setBusy(false);
+            };
+
+            const seg = (id, label) => (
+                <button onClick={() => setView(id)} className={"flex-1 px-2 py-2 rounded-lg text-xs font-bold " + (view === id ? "bg-poke-700 text-white" : "bg-white text-gray-600 border border-gray-200")}>{label}</button>
+            );
+            const decideRows = MGR_GUIDE.decide.filter(r => hit(r.s) || hit(r.you) || hit(r.steve));
+            const secMatches = (s) => hit(s.title) || s.blocks.some(b => (b.t === "p" && hit(b.text)) || (b.t === "ul" && b.items.some(hit)));
+
+            return (
+                <div>
+                    {!myAck && !owner && (
+                        <button onClick={() => setView("sign")} className="w-full text-left rounded-2xl px-3 py-3 mb-3" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+                            <p className="text-sm font-bold" style={{ color: "#92400e" }}>You haven't signed the current version yet</p>
+                            <p className="text-xs" style={{ color: "#92400e" }}>Read it through, then sign at the bottom. Tap here to go there.</p>
+                        </button>
+                    )}
+
+                    <div className="flex gap-1.5 mb-3">
+                        {seg("decide", "Who decides")}
+                        {seg("call", "Call Steve")}
+                        {seg("all", "Full guide")}
+                        {seg("sign", myAck ? "Signed ✓" : "Sign")}
+                    </div>
+
+                    {(view === "decide" || view === "all") && (
+                        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search: call-off, refund, inspector…" className="w-full px-3 py-2.5 border border-gray-200 rounded-xl mb-3" style={{ fontSize: 16 }} />
+                    )}
+
+                    {view === "decide" && (
+                        <div className="space-y-2">
+                            <p className="text-xs text-gray-500">Anything under "You handle" is your decision. Make it without asking, even when Steve is standing in the store.</p>
+                            {decideRows.map((r, i) => (
+                                <div key={i} className="bg-white rounded-xl border border-gray-100 px-3 py-2.5">
+                                    <p className="text-sm font-bold text-gray-800">{r.s}</p>
+                                    <p className="text-sm mt-1" style={{ color: "#166534" }}><span className="font-bold">You handle: </span>{r.you}</p>
+                                    {r.steve && <p className="text-sm mt-0.5" style={{ color: "#9a3412" }}><span className="font-bold">Goes to Steve: </span>{r.steve}</p>}
+                                </div>
+                            ))}
+                            {decideRows.length === 0 && <p className="text-sm text-gray-400 text-center py-4">No situation matches that. Try the full guide.</p>}
+                        </div>
+                    )}
+
+                    {view === "call" && callNow && (
+                        <div className="rounded-2xl p-4" style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
+                            <p className="font-bold mb-2" style={{ color: "#991b1b" }}>Call or text Steve right away for these, and only these:</p>
+                            <ul className="space-y-1.5">
+                                {callNow.items.map((it, i) => <li key={i} className="text-sm flex gap-2" style={{ color: "#7f1d1d" }}><span>•</span><span>{it}</span></li>)}
+                            </ul>
+                            <p className="text-sm font-bold mt-3" style={{ color: "#991b1b" }}>Everything else goes in the shift log, and Steve reads it there.</p>
+                        </div>
+                    )}
+
+                    {view === "all" && (
+                        <div className="space-y-2">
+                            {!needle && <p className="text-sm text-gray-600 bg-white rounded-xl border border-gray-100 px-3 py-3">{MGR_GUIDE.intro}</p>}
+                            {MGR_GUIDE.sections.filter(secMatches).map(s => {
+                                const isOpen = !!needle || openSec === s.id;
+                                return (
+                                    <div key={s.id} className="bg-white rounded-xl border border-gray-100">
+                                        <button onClick={() => setOpenSec(isOpen ? "" : s.id)} className="w-full flex items-center justify-between px-3 py-3 text-left">
+                                            <span className="font-bold text-gray-800 text-sm">{s.title}</span>
+                                            <span className="text-gray-400">{isOpen ? "▼" : "▶"}</span>
+                                        </button>
+                                        {isOpen && (
+                                            <div className="px-3 pb-3 space-y-2">
+                                                {s.blocks.map((b, i) => {
+                                                    if (b.t === "p") return (!needle || hit(b.text)) ? <p key={i} className="text-sm text-gray-600">{b.text}</p> : null;
+                                                    if (b.t === "ul") {
+                                                        const items = needle ? b.items.filter(hit) : b.items;
+                                                        return items.length ? <ul key={i} className="space-y-1.5">{items.map((it, j) => <li key={j} className="text-sm text-gray-700 flex gap-2"><span className="text-poke-600">•</span><span>{it}</span></li>)}</ul> : null;
+                                                    }
+                                                    if (b.t === "table") return !needle ? <button key={i} onClick={() => setView("decide")} className="text-sm font-bold text-poke-700 underline">See the full "who decides" table</button> : null;
+                                                    return null;
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {view === "sign" && (
+                        <div>
+                            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                                <p className="font-bold text-gray-800 mb-2">Acknowledgement</p>
+                                <p className="text-sm text-gray-600">{MGR_GUIDE.ack}</p>
+                                {myAck ? (
+                                    <p className="text-sm font-bold mt-3 rounded-xl px-3 py-2" style={{ background: "#f0fdf4", color: "#166534" }}>
+                                        Signed by {myAck.typedName} on {new Date(myAck.at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                                    </p>
+                                ) : owner ? (
+                                    <p className="text-xs text-gray-400 mt-3">Owners don't sign this. Managers see the signing form here.</p>
+                                ) : (
+                                    <div className="mt-3 space-y-2">
+                                        <label className="flex items-start gap-2 text-sm text-gray-700">
+                                            <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} className="mt-1" />
+                                            <span>I have read the full guide, including every section under "Full guide".</span>
+                                        </label>
+                                        <input value={typed} onChange={e => setTyped(e.target.value)} placeholder="Type your full name to sign" className="w-full px-3 py-2.5 border border-gray-200 rounded-xl" style={{ fontSize: 16 }} />
+                                        <button onClick={sign} disabled={busy || !agree || typed.trim().length < 3} className="w-full py-3 rounded-xl font-bold text-white bg-poke-700 disabled:opacity-50">{busy ? "Saving…" : "Sign"}</button>
+                                    </div>
+                                )}
+                            </div>
+                            {owner && (
+                                <div className="bg-white rounded-2xl border border-gray-200 p-4 mt-3">
+                                    <p className="font-bold text-gray-800 text-sm mb-2">Who has signed version {MGR_GUIDE.version}</p>
+                                    {ADMIN_NAMES.filter(n => !isOwner(n)).map(n => {
+                                        const a = acks.find(x => x.name === n && x.version === MGR_GUIDE.version);
+                                        return (
+                                            <div key={n} className="flex justify-between text-sm py-1">
+                                                <span className="text-gray-700">{n}</span>
+                                                <span className="font-bold" style={{ color: a ? "#166534" : "#b45309" }}>{a ? new Date(a.at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Not yet"}</span>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -9415,7 +10313,8 @@
             useEffect(() => {
                 const fetchHistory = async () => {
                     try {
-                        const snapshot = await db.collection("checklistHistory").get();
+                        const snapshot = await db.collection("checklistHistory")
+                            .orderBy(firebase.firestore.FieldPath.documentId(), "desc").limit(90).get();
                         const dates = snapshot.docs.map(doc => doc.id).filter(d => !d.includes("_")).sort().reverse().slice(0, 30);
                         setHistoryDates(dates);
                         if (dates.length > 0) setSelectedDate(dates[0]);
@@ -9599,7 +10498,8 @@
             useEffect(() => {
                 const fetchHistory = async () => {
                     try {
-                        const snapshot = await db.collection("inventoryHistory").get();
+                        const snapshot = await db.collection("inventoryHistory")
+                            .orderBy(firebase.firestore.FieldPath.documentId(), "desc").limit(30).get();
                         const dates = snapshot.docs.map(doc => doc.id).sort().reverse().slice(0, 30);
                         setHistoryDates(dates);
                         if (dates.length > 0) setSelectedDate(dates[0]);
@@ -18933,6 +19833,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
 
             const staffIsAdmin = isAdmin(staffName);
             const staffIsOwner = isOwner(staffName);
+            const staffIsManager = staffIsAdmin || ["Team Leader", "Manager", "Shift Lead", "General Manager"].includes(((staffList || []).find(x => x.name === staffName) || {}).role);
             // Onboarding lock: new hires see only the onboarding checklist until their packet is signed (or an owner unlocks them)
             const [myOnb, setMyOnb] = useState(undefined);
             useEffect(() => {
@@ -19097,6 +19998,17 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         )}
                         {activeTab === "home" && (
                             <div className="p-4 pb-24 animate-in">
+                                {staffIsManager && (
+                                    <button onClick={() => setActiveTab("manager")} className="w-full mb-4 text-left rounded-2xl p-4 shadow-sm active:scale-95 transition" style={{ background: "#0e7490" }}>
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: "rgba(255,255,255,0.18)" }}>🧭</div>
+                                            <div>
+                                                <div className="font-bold text-white">{language === "es" ? "Centro del gerente" : "Manager Hub"}</div>
+                                                <div className="text-xs" style={{ color: "#cffafe" }}>{language === "es" ? "Bitácora del turno, tareas y tu guía" : "Shift log, what to do when it's slow, your guide"}</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                )}
                                 {/* Inventory Alert Banner — Owner only */}
                                 {staffIsOwner && inventoryAlert && (()=>{
                                     const timeSince = Math.round((Date.now() - new Date(inventoryAlert.date).getTime()) / 3600000);
@@ -19428,6 +20340,7 @@ Teléfonos celulares: El personal que no es gerente no puede usar teléfonos per
                         {activeTab === "messages" && <Messages language={language} staffName={staffName} staffList={staffList} userPrefs={userPrefs} saveUserPref={saveUserPref} />}
                         {activeTab === "recipes" && canViewRecipes && <Recipes language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
+                        {activeTab === "manager" && staffIsManager && <ManagerHub language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} goAddEmployee={()=>{ setEmpAutoAdd(true); setActiveTab("employees"); }} staffName={staffName} />}
                         {activeTab === "timeclock" && <TimeClock language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "checklists" && <Checklists language={language} staffName={staffName} staffList={staffList} />}
